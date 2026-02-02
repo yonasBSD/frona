@@ -12,6 +12,7 @@ pub struct SandboxConfig {
     pub allowed_network_destinations: Vec<String>,
     pub additional_read_paths: Vec<String>,
     pub additional_path_dirs: Vec<String>,
+    pub env_vars: Vec<(String, String)>,
     pub timeout_secs: u64,
     pub max_output_bytes: usize,
 }
@@ -24,6 +25,7 @@ impl Default for SandboxConfig {
             allowed_network_destinations: Vec::new(),
             additional_read_paths: Vec::new(),
             additional_path_dirs: Vec::new(),
+            env_vars: Vec::new(),
             timeout_secs: 30,
             max_output_bytes: 512 * 1024,
         }
@@ -75,6 +77,10 @@ pub async fn execute_sandboxed(
         let existing = std::env::var("PATH").unwrap_or_default();
         let extra = config.additional_path_dirs.join(":");
         cmd.env("PATH", format!("{extra}:{existing}"));
+    }
+
+    for (key, value) in &config.env_vars {
+        cmd.env(key, value);
     }
 
     if stdin_data.is_some() {

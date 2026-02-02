@@ -24,6 +24,8 @@ const SYSTEM_READ_RULES: &[ReadRule] = &[
     ReadRule::Subpath("/private/var/folders"),
     ReadRule::Subpath("/dev"),
     ReadRule::Subpath("/tmp"),
+    ReadRule::Literal("/private"),
+    ReadRule::Literal("/private/var"),
     ReadRule::Literal("/var"),
     ReadRule::Literal("/var/select"),
     ReadRule::Literal("/var/select/developer_dir"),
@@ -78,10 +80,18 @@ impl SandboxProfileBuilder {
         self
     }
 
-    pub fn workspace(self, path: &str) -> Self {
+    pub fn workspace(mut self, path: &str) -> Self {
         let canonical = std::fs::canonicalize(path)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| path.to_string());
+
+        for ancestor in std::path::Path::new(&canonical).ancestors().skip(1) {
+            let s = ancestor.to_string_lossy();
+            if s == "/" {
+                break;
+            }
+            self.read_literals.push(s.into_owned());
+        }
 
         self.read_subpath(&canonical).write_subpath(&canonical)
     }
@@ -202,6 +212,18 @@ mod tests {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "/tmp/test_ws".to_string());
         assert!(profile.contains(&format!("(subpath \"{canonical}\")")));
+
+        // Ancestor directories should have read literals for realpath() support
+        for ancestor in std::path::Path::new(&canonical).ancestors().skip(1) {
+            let s = ancestor.to_string_lossy();
+            if s == "/" {
+                break;
+            }
+            assert!(
+                profile.contains(&format!("(literal \"{s}\")")),
+                "missing ancestor literal for {s}"
+            );
+        }
     }
 
     #[test]

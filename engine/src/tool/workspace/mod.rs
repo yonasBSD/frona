@@ -55,7 +55,11 @@ impl Workspace {
         &self.path
     }
 
-    pub fn ensure(&self) -> Result<(), AppError> {
+    pub fn venv_path(&self) -> PathBuf {
+        self.path.join(".venv")
+    }
+
+    pub fn setup(&self) -> Result<(), AppError> {
         if !self.path.exists() {
             std::fs::create_dir_all(&self.path).map_err(|e| {
                 AppError::Tool(format!(
@@ -64,7 +68,35 @@ impl Workspace {
                 ))
             })?;
         }
+        self.setup_venv();
         Ok(())
+    }
+
+    fn setup_venv(&self) {
+        let venv = self.venv_path();
+        if venv.exists() {
+            return;
+        }
+
+        let result = std::process::Command::new("python3")
+            .args(["-m", "venv", "--system-site-packages", ".venv"])
+            .current_dir(&self.path)
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => {
+                tracing::info!(path = %venv.display(), "Created Python venv");
+            }
+            Ok(output) => {
+                tracing::warn!(
+                    stderr = String::from_utf8_lossy(&output.stderr).as_ref(),
+                    "Failed to create Python venv"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "python3 not available, skipping venv creation");
+            }
+        }
     }
 
     pub async fn execute(
@@ -74,11 +106,23 @@ impl Workspace {
         stdin: Option<&str>,
         timeout_secs: u64,
     ) -> Result<SandboxOutput, AppError> {
-        self.ensure()?;
+        self.setup()?;
+
+        let canonical_path = std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
 
         let mut additional_read_paths = Vec::new();
         let mut additional_path_dirs = Vec::new();
+        let mut env_vars = Vec::new();
         let mut resolved_args: Vec<String> = Vec::new();
+
+        let venv_bin = canonical_path.join(".venv").join("bin");
+        if venv_bin.exists() {
+            additional_path_dirs.push(venv_bin.to_string_lossy().into_owned());
+            env_vars.push((
+                "VIRTUAL_ENV".to_string(),
+                canonical_path.join(".venv").to_string_lossy().into_owned(),
+            ));
+        }
 
         for arg in args {
             let mut resolved = arg.to_string();
@@ -99,15 +143,114 @@ impl Workspace {
         let resolved_refs: Vec<&str> = resolved_args.iter().map(|s| s.as_str()).collect();
 
         let config = SandboxConfig {
-            workspace_dir: self.path.to_string_lossy().into_owned(),
+            workspace_dir: canonical_path.to_string_lossy().into_owned(),
             network_access: self.network_access,
             allowed_network_destinations: self.allowed_network_destinations.clone(),
             additional_read_paths,
             additional_path_dirs,
+            env_vars,
             timeout_secs,
             ..Default::default()
         };
 
         execute_sandboxed(&*self.sandbox, program, &resolved_refs, stdin, &config).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn python3_available() -> bool {
+        std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    fn temp_workspace(name: &str) -> Workspace {
+        let dir = std::env::temp_dir().join("frona_test_workspace").join(name);
+        Workspace {
+            path: dir,
+            sandbox: create_sandbox(),
+            network_access: false,
+            allowed_network_destinations: Vec::new(),
+            skill_dirs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_venv_path() {
+        let ws = temp_workspace("venv_path_test");
+        assert_eq!(ws.venv_path(), ws.path.join(".venv"));
+    }
+
+    #[test]
+    fn test_setup_creates_venv() {
+        if !python3_available() {
+            eprintln!("python3 not found, skipping");
+            return;
+        }
+        let ws = temp_workspace(&format!("setup_venv_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&ws.path);
+
+        ws.setup().unwrap();
+
+        assert!(ws.path.exists());
+        assert!(ws.venv_path().exists());
+        assert!(ws.venv_path().join("bin").join("python3").exists());
+
+        let _ = std::fs::remove_dir_all(&ws.path);
+    }
+
+    #[test]
+    fn test_setup_venv_with_relative_path() {
+        if !python3_available() {
+            eprintln!("python3 not found, skipping");
+            return;
+        }
+        let name = format!("relative_venv_{}", uuid::Uuid::new_v4());
+        let rel_base = PathBuf::from("target").join("test_workspaces");
+        let rel_path = rel_base.join(&name);
+        let _ = std::fs::remove_dir_all(&rel_path);
+
+        let ws = Workspace {
+            path: rel_path.clone(),
+            sandbox: create_sandbox(),
+            network_access: false,
+            allowed_network_destinations: Vec::new(),
+            skill_dirs: Vec::new(),
+        };
+        ws.setup().unwrap();
+
+        assert!(rel_path.join(".venv").exists(), "venv should exist at the workspace root");
+        assert!(
+            rel_path.join(".venv").join("bin").join("python3").exists(),
+            "venv should contain bin/python3"
+        );
+        assert!(
+            !rel_path.join("target").exists(),
+            "no nested dirs should be created inside workspace"
+        );
+
+        let _ = std::fs::remove_dir_all(&rel_path);
+    }
+
+    #[test]
+    fn test_setup_idempotent() {
+        if !python3_available() {
+            eprintln!("python3 not found, skipping");
+            return;
+        }
+        let ws = temp_workspace(&format!("setup_idempotent_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&ws.path);
+
+        ws.setup().unwrap();
+        ws.setup().unwrap();
+
+        assert!(ws.venv_path().exists());
+
+        let _ = std::fs::remove_dir_all(&ws.path);
     }
 }

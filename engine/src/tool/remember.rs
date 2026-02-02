@@ -39,10 +39,10 @@ impl AgentTool for RememberTool {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
             name: "remember_agent_fact".to_string(),
-            description: "Store an important insight for this agent's long-term memory. \
+            description: "Store an insight for this agent's long-term memory. \
 Before calling this tool, check <agent_memory> to avoid storing duplicates. \
 Each insight should be a short, atomic statement — working context, project details, \
-decisions, or anything relevant to this agent's work. Do NOT store trivial conversation. \
+decisions, or anything relevant to this agent's work. \
 Set overrides to true when the new insight contradicts or updates a previously stored one.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -141,10 +141,10 @@ impl AgentTool for RememberUserFactTool {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
             name: "remember_user_fact".to_string(),
-            description: "Store an important fact about the user that persists across ALL agents. \
-Before calling this tool, check <user_memory> to avoid storing duplicates. \
-Use this for facts about the user that should be available regardless of which agent they talk to: \
-their name, preferences, personal details, or important context. \
+            description: "Store a fact about the user that persists across ALL agents. \
+Call this whenever the user shares something about themselves — \
+name, location, job, hobbies, preferences, relationships, goals, opinions. \
+Before calling, check <user_memory> to avoid storing duplicates. \
 Set overrides to true when the new fact contradicts or updates a previously stored one.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
