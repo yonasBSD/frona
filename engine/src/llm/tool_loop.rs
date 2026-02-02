@@ -90,7 +90,7 @@ pub enum ToolLoopOutcome {
         accumulated_text: String,
         tool_calls_json: serde_json::Value,
         tool_results: Vec<ToolCallResult>,
-        external_tool: ToolCallResult,
+        external_tool: Box<ToolCallResult>,
     },
 }
 
@@ -114,7 +114,7 @@ pub async fn run_tool_loop(
     cancel_token: CancellationToken,
 ) -> Result<ToolLoopOutcome, AppError> {
     let tool_defs = &tool_registry.definitions;
-    let rig_tools = to_rig_tool_definitions(&tool_defs);
+    let rig_tools = to_rig_tool_definitions(tool_defs);
 
     let provider = registry
         .get_provider(&model_group.main.provider)
@@ -393,7 +393,7 @@ pub async fn run_tool_loop(
                 accumulated_text,
                 tool_calls_json: serde_json::json!(tool_calls_json),
                 tool_results: internal_tool_results,
-                external_tool,
+                external_tool: Box::new(external_tool),
             });
         }
 

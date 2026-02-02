@@ -20,11 +20,13 @@ fn test_agent(user_id: &str) -> Agent {
         user_id: Some(user_id.to_string()),
         name: "Test Agent".to_string(),
         description: "A test agent".to_string(),
-        system_prompt: "You are a test agent".to_string(),
         model_group: "primary".to_string(),
         enabled: true,
         tools: vec!["browser".to_string()],
         sandbox_config: None,
+        max_concurrent_tasks: None,
+        avatar: None,
+        identity: std::collections::BTreeMap::new(),
         created_at: now,
         updated_at: now,
     }
@@ -41,7 +43,6 @@ async fn test_create_and_find_by_id() {
     assert_eq!(created.user_id, agent.user_id);
     assert_eq!(created.name, agent.name);
     assert_eq!(created.description, agent.description);
-    assert_eq!(created.system_prompt, agent.system_prompt);
     assert_eq!(created.model_group, agent.model_group);
     assert_eq!(created.enabled, agent.enabled);
     assert_eq!(created.created_at, agent.created_at);
@@ -92,11 +93,11 @@ async fn test_update() {
 
     let result = repo.update(&updated_agent).await.unwrap();
     assert_eq!(result.name, "Updated Agent");
-    assert_eq!(result.enabled, false);
+    assert!(!result.enabled);
 
     let found = repo.find_by_id(&agent.id).await.unwrap().unwrap();
     assert_eq!(found.name, "Updated Agent");
-    assert_eq!(found.enabled, false);
+    assert!(!found.enabled);
 }
 
 #[tokio::test]
@@ -119,4 +120,23 @@ async fn test_find_by_id_not_found() {
 
     let found = repo.find_by_id("nonexistent-id").await.unwrap();
     assert!(found.is_none());
+}
+
+#[tokio::test]
+async fn test_seed_config_agents_visible_in_find_by_user_id() {
+    use frona::agent::workspace::AgentWorkspaceManager;
+
+    let db = test_db().await;
+    let workspaces = AgentWorkspaceManager::new("/tmp/frona_test_seed_visible");
+
+    db::seed_config_agents(&db, &workspaces).await.unwrap();
+
+    let repo = SurrealAgentRepo::new(db);
+    let agents = repo.find_by_user_id("any-user").await.unwrap();
+    let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+
+    assert!(names.contains(&"tester"), "Seeded agents should include 'tester', got: {names:?}");
+    assert!(names.contains(&"developer"), "Seeded agents should include 'developer', got: {names:?}");
+    assert!(names.contains(&"researcher"), "Seeded agents should include 'researcher', got: {names:?}");
+    assert!(names.contains(&"system"), "Seeded agents should include 'system', got: {names:?}");
 }

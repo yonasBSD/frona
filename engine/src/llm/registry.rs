@@ -7,9 +7,10 @@ use rig::providers::{
     moonshot, ollama, openai, openrouter, perplexity, together, xai,
 };
 
-use super::config::{ModelGroup, ModelRegistryConfig, ModelProviderConfig};
+use crate::chat::broadcast::BroadcastService;
+use super::config::{ModelGroup, ModelRegistryConfig, ModelProviderConfig, RetryConfig};
 use super::error::LlmError;
-use super::provider::{ModelProvider, RigProvider};
+use super::provider::{InferenceCounter, ModelProvider, ModelRef, RigProvider};
 
 #[derive(Clone)]
 pub struct ModelProviderRegistry {
@@ -18,9 +19,10 @@ pub struct ModelProviderRegistry {
 }
 
 impl ModelProviderRegistry {
-    pub fn from_config(config: ModelRegistryConfig) -> Result<Self, LlmError> {
+    pub fn from_config(config: ModelRegistryConfig, broadcast: BroadcastService) -> Result<Self, LlmError> {
         let model_groups = config.parse_model_groups()?;
         let mut providers: HashMap<String, Arc<dyn ModelProvider>> = HashMap::new();
+        let counter = InferenceCounter::new(broadcast);
 
         for (name, entry) in &config.providers {
             if !entry.enabled {
@@ -28,7 +30,7 @@ impl ModelProviderRegistry {
                 continue;
             }
 
-            match init_provider(name, entry) {
+            match init_provider(name, entry, &counter) {
                 Ok(provider) => {
                     tracing::info!(provider = %name, "Provider initialized");
                     providers.insert(name.clone(), provider);
@@ -62,13 +64,32 @@ impl ModelProviderRegistry {
             .ok_or_else(|| LlmError::ModelGroupNotFound(group_name.to_string()))
     }
 
+    pub fn resolve_model_group(&self, name_or_ref: &str) -> Result<ModelGroup, LlmError> {
+        if name_or_ref.contains('/') {
+            let model_ref = ModelRef::parse(name_or_ref)?;
+            Ok(ModelGroup {
+                main: model_ref,
+                fallbacks: vec![],
+                max_tokens: Some(8192),
+                temperature: None,
+                context_window: None,
+                retry: RetryConfig::default(),
+            })
+        } else {
+            match self.get_model_group(name_or_ref) {
+                Ok(g) => Ok(g.clone()),
+                Err(_) => self.get_model_group("primary").cloned(),
+            }
+        }
+    }
+
     pub fn has_model_group(&self, group_name: &str) -> bool {
         self.model_groups.contains_key(group_name)
     }
 }
 
 macro_rules! init_api_key_provider {
-    ($name:expr, $entry:expr, $mod:ident) => {{
+    ($name:expr, $entry:expr, $mod:ident, $counter:expr) => {{
         let key = require_api_key($name, $entry)?;
         let client: $mod::Client = if let Some(url) = &$entry.base_url {
             $mod::Client::builder()
@@ -80,16 +101,17 @@ macro_rules! init_api_key_provider {
             $mod::Client::new(&key)
                 .map_err(|e| LlmError::ConfigError(format!("{}: {e}", $name)))?
         };
-        Ok(Arc::new(RigProvider::new(client)) as Arc<dyn ModelProvider>)
+        Ok(Arc::new(RigProvider::new(client, $counter.clone())) as Arc<dyn ModelProvider>)
     }};
 }
 
 fn init_provider(
     name: &str,
     entry: &ModelProviderConfig,
+    counter: &InferenceCounter,
 ) -> Result<Arc<dyn ModelProvider>, LlmError> {
     match name {
-        "openai" => init_api_key_provider!(name, entry, openai),
+        "openai" => init_api_key_provider!(name, entry, openai, counter),
         "anthropic" => {
             let key = require_api_key(name, entry)?;
             let client: anthropic::Client = if let Some(url) = &entry.base_url {
@@ -104,7 +126,7 @@ fn init_provider(
                     .build()
                     .map_err(|e| LlmError::ConfigError(format!("anthropic: {e}")))?
             };
-            Ok(Arc::new(RigProvider::new(client)))
+            Ok(Arc::new(RigProvider::new(client, counter.clone())))
         }
         "ollama" => {
             let client: ollama::Client = if let Some(url) = &entry.base_url {
@@ -117,12 +139,12 @@ fn init_provider(
                 ollama::Client::new(Nothing)
                     .map_err(|e| LlmError::ConfigError(format!("ollama: {e}")))?
             };
-            Ok(Arc::new(RigProvider::new(client)))
+            Ok(Arc::new(RigProvider::new(client, counter.clone())))
         }
-        "groq" => init_api_key_provider!(name, entry, groq),
-        "openrouter" => init_api_key_provider!(name, entry, openrouter),
-        "deepseek" => init_api_key_provider!(name, entry, deepseek),
-        "gemini" => init_api_key_provider!(name, entry, gemini),
+        "groq" => init_api_key_provider!(name, entry, groq, counter),
+        "openrouter" => init_api_key_provider!(name, entry, openrouter, counter),
+        "deepseek" => init_api_key_provider!(name, entry, deepseek, counter),
+        "gemini" => init_api_key_provider!(name, entry, gemini, counter),
         "cohere" => {
             let key = require_api_key(name, entry)?;
             let client: cohere::Client = if let Some(url) = &entry.base_url {
@@ -135,15 +157,15 @@ fn init_provider(
                 cohere::Client::new(&key)
                     .map_err(|e| LlmError::ConfigError(format!("cohere: {e}")))?
             };
-            Ok(Arc::new(RigProvider::new(client)))
+            Ok(Arc::new(RigProvider::new(client, counter.clone())))
         }
-        "mistral" => init_api_key_provider!(name, entry, mistral),
-        "perplexity" => init_api_key_provider!(name, entry, perplexity),
-        "together" => init_api_key_provider!(name, entry, together),
-        "xai" => init_api_key_provider!(name, entry, xai),
-        "hyperbolic" => init_api_key_provider!(name, entry, hyperbolic),
-        "moonshot" => init_api_key_provider!(name, entry, moonshot),
-        "mira" => init_api_key_provider!(name, entry, mira),
+        "mistral" => init_api_key_provider!(name, entry, mistral, counter),
+        "perplexity" => init_api_key_provider!(name, entry, perplexity, counter),
+        "together" => init_api_key_provider!(name, entry, together, counter),
+        "xai" => init_api_key_provider!(name, entry, xai, counter),
+        "hyperbolic" => init_api_key_provider!(name, entry, hyperbolic, counter),
+        "moonshot" => init_api_key_provider!(name, entry, moonshot, counter),
+        "mira" => init_api_key_provider!(name, entry, mira, counter),
         "galadriel" => {
             let key = require_api_key(name, entry)?;
             let client: galadriel::Client = if let Some(url) = &entry.base_url {
@@ -158,9 +180,9 @@ fn init_provider(
                     .build()
                     .map_err(|e| LlmError::ConfigError(format!("galadriel: {e}")))?
             };
-            Ok(Arc::new(RigProvider::new(client)))
+            Ok(Arc::new(RigProvider::new(client, counter.clone())))
         }
-        "huggingface" => init_api_key_provider!(name, entry, huggingface),
+        "huggingface" => init_api_key_provider!(name, entry, huggingface, counter),
         _ => Err(LlmError::ProviderNotConfigured(format!(
             "Unknown provider: {name}"
         ))),

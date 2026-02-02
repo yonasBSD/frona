@@ -1,14 +1,14 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::config::resolver::AgentConfigResolver;
-use crate::agent::config::source::AgentConfigSource;
-use crate::agent::prompt::resolver::PromptResolver;
+use crate::agent::task::executor::TaskExecutor;
+
 use crate::agent::service::AgentService;
 use crate::agent::skill::resolver::SkillResolver;
+use crate::agent::workspace::AgentWorkspaceManager;
 use crate::auth::AuthService;
 use crate::chat::broadcast::BroadcastService;
 use crate::chat::service::ChatService;
@@ -16,8 +16,10 @@ use crate::credential::service::CredentialService;
 use crate::llm::ModelProviderRegistry;
 use crate::llm::config::ModelRegistryConfig;
 use crate::memory::service::MemoryService;
+use crate::prompt::PromptLoader;
+use crate::schedule::service::ScheduleService;
 use crate::space::service::SpaceService;
-use crate::task::service::TaskService;
+use crate::agent::task::service::TaskService;
 use crate::tool::browser::config::BrowserConfig;
 use crate::tool::browser::session::BrowserSessionManager;
 use crate::tool::cli::{CliToolConfig, load_cli_tool_configs};
@@ -70,6 +72,7 @@ pub struct AppState {
     pub space_service: SpaceService,
     pub chat_service: ChatService,
     pub task_service: TaskService,
+    pub schedule_service: ScheduleService,
     pub credential_service: CredentialService,
     pub broadcast_service: BroadcastService,
     pub browser_session_manager: Arc<BrowserSessionManager>,
@@ -79,22 +82,20 @@ pub struct AppState {
     pub cli_tools_config: Arc<Vec<CliToolConfig>>,
     pub search_provider: Option<Arc<dyn SearchProvider>>,
     pub skill_resolver: SkillResolver,
+    pub task_executor: Arc<OnceLock<Arc<TaskExecutor>>>,
+    pub max_concurrent_tasks: usize,
 }
 
 impl AppState {
-    pub fn new(db: Surreal<Db>, config: &Config) -> Self {
+    pub fn new(db: Surreal<Db>, config: &Config, workspaces: AgentWorkspaceManager) -> Self {
+        let broadcast_service = BroadcastService::new();
         let llm_config = load_models_config(&config.models_config_path);
-        let provider_registry = ModelProviderRegistry::from_config(llm_config)
+        let provider_registry = ModelProviderRegistry::from_config(llm_config, broadcast_service.clone())
             .expect("Failed to initialize provider registry");
 
         let agent_repo = SurrealRepo::new(db.clone());
         let chat_repo = SurrealRepo::new(db.clone());
         let message_repo = SurrealRepo::new(db.clone());
-        let prompt_repo = SurrealRepo::new(db.clone());
-
-        let config_source = AgentConfigSource::load(&config.agents_config_dir);
-        let config_resolver = AgentConfigResolver::new(config_source);
-        let prompt_resolver = PromptResolver::new(prompt_repo, config_resolver);
 
         let browser_config = BrowserConfig {
             browserless_ws_url: config.browserless_ws_url.clone(),
@@ -109,16 +110,19 @@ impl AppState {
         let search_provider = create_search_provider();
 
         let provider_registry_arc = Arc::new(provider_registry.clone());
+        let prompt_loader = PromptLoader::new(&config.prompts_override_dir);
 
         let memory_service = MemoryService::new(
             SurrealRepo::new(db.clone()),
             SurrealRepo::new(db.clone()),
             SurrealRepo::new(db.clone()),
             provider_registry_arc,
+            prompt_loader.clone(),
+            workspaces.clone(),
         );
 
         let skill_repo = SurrealRepo::new(db.clone());
-        let skill_resolver = SkillResolver::new(skill_repo, &config.skills_config_dir);
+        let skill_resolver = SkillResolver::new(skill_repo, &config.skills_config_dir, workspaces.clone());
 
         Self {
             db: db.clone(),
@@ -131,12 +135,14 @@ impl AppState {
                 message_repo,
                 agent_repo,
                 provider_registry,
-                prompt_resolver,
+                workspaces,
                 memory_service.clone(),
+                prompt_loader,
             ),
             task_service: TaskService::new(SurrealRepo::new(db.clone())),
+            schedule_service: ScheduleService::new(SurrealRepo::new(db.clone())),
             credential_service: CredentialService::new(SurrealRepo::new(db.clone())),
-            broadcast_service: BroadcastService::new(),
+            broadcast_service: broadcast_service.clone(),
             browser_session_manager: Arc::new(BrowserSessionManager::new(browser_config)),
             active_sessions: ActiveSessions::default(),
             memory_service,
@@ -144,7 +150,26 @@ impl AppState {
             cli_tools_config,
             search_provider,
             skill_resolver,
+            task_executor: Arc::new(OnceLock::new()),
+            max_concurrent_tasks: config.max_concurrent_tasks,
         }
+    }
+
+    pub fn init_task_executor(&self) {
+        let executor = TaskExecutor::new(
+            self.task_service.clone(),
+            self.chat_service.clone(),
+            self.broadcast_service.clone(),
+            self.memory_service.clone(),
+            self.skill_resolver.clone(),
+            self.clone(),
+            self.max_concurrent_tasks,
+        );
+        let _ = self.task_executor.set(Arc::new(executor));
+    }
+
+    pub fn task_executor(&self) -> Option<Arc<TaskExecutor>> {
+        self.task_executor.get().cloned()
     }
 }
 

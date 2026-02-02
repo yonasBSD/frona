@@ -67,4 +67,14 @@ impl MessageRepository for SurrealRepo<Message> {
 
         Ok(())
     }
+
+    async fn delete_by_chat_id(&self, chat_id: &str) -> Result<(), AppError> {
+        self.db()
+            .query("DELETE FROM message WHERE chat_id = $chat_id")
+            .bind(("chat_id", chat_id.to_string()))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
 }

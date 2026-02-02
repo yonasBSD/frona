@@ -8,6 +8,7 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+use frona::agent::workspace::AgentWorkspaceManager;
 use frona::api::config::Config;
 use frona::api::db;
 use frona::api::repo::generic::SurrealRepo;
@@ -26,10 +27,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cors_origin = std::env::var("CORS_ORIGIN")
         .unwrap_or_else(|_| "http://localhost:3000".into());
 
+    let workspaces = AgentWorkspaceManager::new(&config.workspaces_base_path);
+
     let surreal = db::init(&config.surreal_path).await?;
-    db::seed_config_agents(&surreal).await?;
-    let state = AppState::new(surreal.clone(), &config);
+    db::seed_config_agents(&surreal, &workspaces).await?;
+    let state = AppState::new(surreal.clone(), &config, workspaces);
     state.browser_session_manager.kill_all_sessions().await;
+
+    state.init_task_executor();
+    if let Some(executor) = state.task_executor() {
+        let executor = executor.clone();
+        tokio::spawn(async move {
+            executor.resume_all().await;
+        });
+        info!("Task executor initialized, resuming pending tasks");
+    }
 
     if let Ok(compaction_group) = state.chat_service.provider_registry()
         .get_model_group("compaction")
@@ -42,9 +54,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             SurrealRepo::new(surreal.clone()),
             compaction_group.clone(),
             std::time::Duration::from_secs(3600),
+            state.task_service.clone(),
+            state.schedule_service.clone(),
+            state.clone(),
         ));
         scheduler.start();
-        info!("Scheduler started (space compaction: 1h, fact compaction: 2h)");
+        info!("Scheduler started (space compaction: 1h, insight compaction: 2h, cron+routines: 60s)");
     }
 
     let cors = CorsLayer::new()

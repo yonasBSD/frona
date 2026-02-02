@@ -3,7 +3,7 @@
 import { Suspense } from "react";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { NavigationProvider } from "@/lib/navigation-context";
-import { ChatProvider } from "@/lib/chat-context";
+import { SessionProvider } from "@/lib/session-context";
 import { NavigationPanel } from "@/components/layout/navigation-panel";
 import { ConversationPanel } from "@/components/chat/conversation-panel";
 
@@ -16,12 +16,12 @@ export default function ChatLayout({
     <AuthGuard>
       <NavigationProvider>
         <Suspense>
-          <ChatProvider>
+          <SessionProvider>
             <div className="flex h-screen">
               <NavigationPanel />
               <ConversationPanel>{children}</ConversationPanel>
             </div>
-          </ChatProvider>
+          </SessionProvider>
         </Suspense>
       </NavigationProvider>
     </AuthGuard>

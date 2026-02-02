@@ -22,6 +22,7 @@ interface AuthContextValue {
   login: (req: LoginRequest) => Promise<void>;
   register: (req: RegisterRequest) => Promise<void>;
   logout: () => void;
+  revalidate: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -76,9 +77,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
+  const revalidate = useCallback(async () => {
+    const u = await fetchCurrentUser();
+    if (u) setUser(u);
+  }, []);
+
   return createElement(
     AuthContext.Provider,
-    { value: { user, loading, login, register, logout } },
+    { value: { user, loading, login, register, logout, revalidate } },
     children,
   );
 }

@@ -30,11 +30,13 @@ impl AgentService {
             user_id: Some(user_id.to_string()),
             name: req.name,
             description: req.description,
-            system_prompt: req.system_prompt,
             model_group: req.model_group.unwrap_or_else(|| "primary".to_string()),
             enabled: true,
             tools,
             sandbox_config: req.sandbox_config,
+            max_concurrent_tasks: None,
+            avatar: None,
+            identity: std::collections::BTreeMap::new(),
             created_at: now,
             updated_at: now,
         };
@@ -91,9 +93,6 @@ impl AgentService {
         if let Some(description) = req.description {
             agent.description = description;
         }
-        if let Some(system_prompt) = req.system_prompt {
-            agent.system_prompt = system_prompt;
-        }
         if let Some(model_group) = req.model_group {
             agent.model_group = model_group;
         }
@@ -110,6 +109,14 @@ impl AgentService {
 
         let agent = self.repo.update(&agent).await?;
         Ok(agent.into())
+    }
+
+    pub async fn find_by_name(
+        &self,
+        user_id: &str,
+        name: &str,
+    ) -> Result<Option<super::models::Agent>, AppError> {
+        self.repo.find_by_name(user_id, name).await
     }
 
     pub async fn delete(

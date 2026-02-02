@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useChat } from "@/lib/chat-context";
+import { useSession } from "@/lib/session-context";
 import type { MessageResponse } from "@/lib/types";
 
 function QuestionMessage({
@@ -11,7 +11,7 @@ function QuestionMessage({
   message: MessageResponse;
   agentName: string;
 }) {
-  const { resolveToolMessage } = useChat();
+  const { resolveToolMessage } = useSession();
   const [loading, setLoading] = useState(false);
   const [answered, setAnswered] = useState<string | null>(null);
 
@@ -77,7 +77,7 @@ function HumanInTheLoopMessage({
   message: MessageResponse;
   agentName: string;
 }) {
-  const { resolveToolMessage } = useChat();
+  const { resolveToolMessage } = useSession();
   const [loading, setLoading] = useState(false);
 
   if (!message.tool || message.tool.type !== "HumanInTheLoop") return null;
@@ -153,6 +153,25 @@ function InfoMessage({ message }: { message: MessageResponse }) {
   );
 }
 
+function TaskCompletionMessage({ message }: { message: MessageResponse }) {
+  if (!message.tool || message.tool.type !== "TaskCompletion") return null;
+
+  const { status } = message.tool.data;
+  const isError = status === "failed";
+
+  return (
+    <div
+      className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${
+        isError
+          ? "border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+          : "border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200"
+      }`}
+    >
+      <span className="flex-1">{message.content}</span>
+    </div>
+  );
+}
+
 export function ToolMessage({
   message,
   agentName,
@@ -171,6 +190,8 @@ export function ToolMessage({
       return <WarningMessage message={message} />;
     case "Info":
       return <InfoMessage message={message} />;
+    case "TaskCompletion":
+      return <TaskCompletionMessage message={message} />;
     default:
       return null;
   }

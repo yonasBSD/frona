@@ -23,9 +23,13 @@ use crate::tool::web_search::WebSearchTool;
 use crate::tool::cli::CliTool;
 use crate::tool::notify_human::NotifyHumanTool;
 use crate::tool::registry::AgentToolRegistry;
-use crate::tool::remember::RememberTool;
+use crate::tool::remember::{RememberTool, RememberUserFactTool};
 use crate::tool::skill::SkillTool;
+use crate::tool::delegate::DelegateTaskTool;
+use crate::tool::routine::{UpdateRoutineTool, UpdateRoutineFrequencyTool};
+use crate::tool::schedule::ScheduleTaskTool;
 use crate::tool::update_entity::UpdateEntityTool;
+use crate::tool::update_identity::UpdateIdentityTool;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
@@ -49,7 +53,7 @@ pub fn router() -> Router<AppState> {
             "/api/chats/{chat_id}/cancel",
             post(cancel_generation),
         )
-        .route("/api/chats/stream", get(chat_stream))
+        .route("/api/stream", get(event_stream))
 }
 
 async fn send_message(
@@ -120,6 +124,13 @@ pub async fn build_tool_registry(
         agent_id,
         user_id,
         "update_agent",
+        event_tx.clone(),
+    )));
+
+    registry.register(Arc::new(UpdateIdentityTool::new(
+        state.db.clone(),
+        agent_id,
+        user_id,
         event_tx,
     )));
 
@@ -130,19 +141,26 @@ pub async fn build_tool_registry(
         get_compaction_model_group(state),
     )));
 
+    registry.register(Arc::new(RememberUserFactTool::new(
+        state.memory_service.clone(),
+        user_id.to_string(),
+        chat_id.to_string(),
+        get_compaction_model_group(state),
+    )));
+
     registry.register(Arc::new(SkillTool::new(
         state.skill_resolver.clone(),
         agent_id.to_string(),
     )));
 
-    if allowed_tools.iter().any(|t| t == "browser") {
-        if let Some(credential) = credential {
-            registry.register(Arc::new(BrowserTool::new(
-                state.browser_session_manager.clone(),
-                user_id.to_string(),
-                credential.provider,
-            )));
-        }
+    if allowed_tools.iter().any(|t| t == "browser")
+        && let Some(credential) = credential
+    {
+        registry.register(Arc::new(BrowserTool::new(
+            state.browser_session_manager.clone(),
+            user_id.to_string(),
+            credential.provider,
+        )));
     }
 
     if allowed_tools.iter().any(|t| t == "web_fetch") {
@@ -154,6 +172,51 @@ pub async fn build_tool_registry(
 
     if allowed_tools.iter().any(|t| t == "web_search") {
         registry.register(Arc::new(WebSearchTool::new(state.search_provider.clone())));
+    }
+
+    let agent_repo: Arc<dyn crate::agent::repository::AgentRepository> =
+        Arc::new(crate::api::repo::generic::SurrealRepo::new(state.db.clone()));
+
+    if allowed_tools.iter().any(|t| t == "delegate")
+        && let Some(executor) = state.task_executor()
+    {
+        let chat = state.chat_service.find_chat(chat_id).await.ok().flatten();
+        let space_id = chat.and_then(|c| c.space_id);
+
+        registry.register(Arc::new(DelegateTaskTool::new(
+            state.task_service.clone(),
+            agent_repo.clone(),
+            executor,
+            user_id.to_string(),
+            agent_id.to_string(),
+            chat_id.to_string(),
+            space_id,
+        )));
+    }
+
+    if allowed_tools.iter().any(|t| t == "schedule") {
+        registry.register(Arc::new(ScheduleTaskTool::new(
+            state.task_service.clone(),
+            agent_repo.clone(),
+            user_id.to_string(),
+            agent_id.to_string(),
+            chat_id.to_string(),
+        )));
+    }
+
+    if allowed_tools.iter().any(|t| t == "routine") {
+        registry.register(Arc::new(UpdateRoutineTool::new(
+            state.schedule_service.clone(),
+            agent_repo.clone(),
+            user_id.to_string(),
+            agent_id.to_string(),
+        )));
+        registry.register(Arc::new(UpdateRoutineFrequencyTool::new(
+            state.schedule_service.clone(),
+            agent_repo.clone(),
+            user_id.to_string(),
+            agent_id.to_string(),
+        )));
     }
 
     let skill_dirs: Vec<(String, String)> = state
@@ -278,7 +341,7 @@ async fn stream_message(
     let agent_config = state
         .chat_service
         .resolve_agent_config(&chat.agent_id)
-        .await;
+        .await?;
     let base_system_prompt = agent_config.system_prompt;
     let model_group_name = agent_config.model_group;
 
@@ -290,13 +353,18 @@ async fn stream_message(
         .map(|s| (s.name, s.description))
         .collect();
 
+    let agent_summaries = build_agent_summaries_from_state(&state, &auth.user_id, &chat.agent_id, &agent_config.tools).await;
+
     let system_prompt = match state
         .memory_service
         .build_augmented_system_prompt(
             &base_system_prompt,
             &chat.agent_id,
+            &auth.user_id,
             chat.space_id.as_deref(),
             &skill_summaries,
+            &agent_summaries,
+            &agent_config.identity,
         )
         .await
     {
@@ -310,14 +378,14 @@ async fn stream_message(
     let model_group = state
         .chat_service
         .provider_registry()
-        .get_model_group(&model_group_name)
-        .map_err(|e| ApiError::from(crate::error::AppError::from(e)))?
-        .clone();
+        .resolve_model_group(&model_group_name)
+        .map_err(|e| ApiError::from(crate::error::AppError::from(e)))?;
 
     if let Some(compaction_group) = get_compaction_model_group(&state) {
         let max_output = model_group.max_tokens.unwrap_or(8192) as usize;
         if let Err(e) = state.memory_service.compact_chat_if_needed(
             &chat_id,
+            &chat.agent_id,
             &system_prompt,
             &model_group.main.model_id,
             model_group.context_window,
@@ -343,7 +411,7 @@ async fn stream_message(
             "Understood. I have context from our previous conversation. How can I help?",
         ));
     }
-    rig_history.extend(to_rig_messages(&context_messages));
+    rig_history.extend(to_rig_messages(&context_messages, &chat.agent_id));
 
     let registry = state.chat_service.provider_registry().clone();
     let (tool_event_tx, mut tool_event_rx) = tokio::sync::mpsc::channel::<ToolLoopEvent>(32);
@@ -391,7 +459,7 @@ async fn stream_message(
             }
 
             let stored_messages = chat_service.get_stored_messages(&chat_id).await;
-            let rig_history = to_rig_messages(&stored_messages);
+            let rig_history = to_rig_messages(&stored_messages, &agent_id);
 
             let tool_handle = {
                 let registry = registry.clone();
@@ -741,7 +809,7 @@ async fn resume_tool_loop(
     let chat = state.chat_service.find_chat(chat_id).await?
         .ok_or_else(|| crate::error::AppError::NotFound("Chat not found".into()))?;
 
-    let agent_config = state.chat_service.resolve_agent_config(&chat.agent_id).await;
+    let agent_config = state.chat_service.resolve_agent_config(&chat.agent_id).await?;
     let base_system_prompt = agent_config.system_prompt;
     let model_group_name = agent_config.model_group;
 
@@ -753,13 +821,18 @@ async fn resume_tool_loop(
         .map(|s| (s.name, s.description))
         .collect();
 
+    let agent_summaries = build_agent_summaries_from_state(state, user_id, &chat.agent_id, &agent_config.tools).await;
+
     let system_prompt = match state
         .memory_service
         .build_augmented_system_prompt(
             &base_system_prompt,
             &chat.agent_id,
+            user_id,
             chat.space_id.as_deref(),
             &skill_summaries,
+            &agent_summaries,
+            &agent_config.identity,
         )
         .await
     {
@@ -771,11 +844,10 @@ async fn resume_tool_loop(
     };
 
     let stored_messages = state.chat_service.get_stored_messages(chat_id).await;
-    let rig_history = to_rig_messages(&stored_messages);
+    let rig_history = to_rig_messages(&stored_messages, &chat.agent_id);
 
     let model_group = state.chat_service.provider_registry()
-        .get_model_group(&model_group_name)?
-        .clone();
+        .resolve_model_group(&model_group_name)?;
 
     let registry = state.chat_service.provider_registry().clone();
     let (tool_event_tx, mut tool_event_rx) = tokio::sync::mpsc::channel::<ToolLoopEvent>(32);
@@ -814,11 +886,8 @@ async fn resume_tool_loop(
 
     let mut accumulated = String::new();
     while let Some(event) = tool_event_rx.recv().await {
-        match event.kind {
-            tool_loop::ToolLoopEventKind::Text(text) => {
-                accumulated.push_str(&text);
-            }
-            _ => {}
+        if let tool_loop::ToolLoopEventKind::Text(text) = event.kind {
+            accumulated.push_str(&text);
         }
     }
 
@@ -826,17 +895,16 @@ async fn resume_tool_loop(
         Ok(Ok(outcome)) => {
             match outcome {
                 ToolLoopOutcome::Completed(_) => {
-                    if !accumulated.is_empty() {
-                        if let Ok(msg) = state.chat_service
+                    if !accumulated.is_empty()
+                        && let Ok(msg) = state.chat_service
                             .save_assistant_message(&chat_id_owned, accumulated)
                             .await
-                        {
-                            state.broadcast_service.broadcast_chat_message(
-                                &user_id_owned,
-                                &chat_id_owned,
-                                msg,
-                            );
-                        }
+                    {
+                        state.broadcast_service.broadcast_chat_message(
+                            &user_id_owned,
+                            &chat_id_owned,
+                            msg,
+                        );
                     }
                 }
                 ToolLoopOutcome::Cancelled(_) => {
@@ -921,7 +989,37 @@ async fn resume_tool_loop(
     Ok(())
 }
 
-async fn chat_stream(
+pub async fn resume_tool_loop_background(
+    state: &AppState,
+    user_id: &str,
+    chat_id: &str,
+) -> Result<(), crate::error::AppError> {
+    resume_tool_loop(state, user_id, chat_id).await
+}
+
+pub async fn build_agent_summaries_from_state(
+    state: &AppState,
+    user_id: &str,
+    current_agent_id: &str,
+    tools: &[String],
+) -> Vec<(String, String)> {
+    if !tools.iter().any(|t| t == "delegate") {
+        return Vec::new();
+    }
+
+    let agents = match state.agent_service.list(user_id).await {
+        Ok(agents) => agents,
+        Err(_) => return Vec::new(),
+    };
+
+    agents
+        .into_iter()
+        .filter(|a| a.id != current_agent_id && a.enabled)
+        .map(|a| (a.name, a.description))
+        .collect()
+}
+
+async fn event_stream(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
@@ -938,6 +1036,33 @@ async fn chat_stream(
                         "chat_id": chat_id,
                         "message": message,
                     }))
+                    .unwrap()))
+            }
+            Ok(BroadcastEvent::TaskUpdate {
+                user_id: uid,
+                task_id,
+                status,
+                title,
+                chat_id,
+                source_chat_id,
+                result_summary,
+            }) if uid == user_id => {
+                Some(Ok(Event::default()
+                    .event("task_update")
+                    .json_data(serde_json::json!({
+                        "task_id": task_id,
+                        "status": status,
+                        "title": title,
+                        "chat_id": chat_id,
+                        "source_chat_id": source_chat_id,
+                        "result_summary": result_summary,
+                    }))
+                    .unwrap()))
+            }
+            Ok(BroadcastEvent::InferenceCount { count }) => {
+                Some(Ok(Event::default()
+                    .event("inference_count")
+                    .json_data(serde_json::json!({ "count": count }))
                     .unwrap()))
             }
             _ => None,

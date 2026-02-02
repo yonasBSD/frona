@@ -400,20 +400,18 @@ impl AgentTool for BrowserTool {
             .execute_tool(&self.user_id, &self.provider, browser_tool_name, arguments)
             .await?;
 
-        if tool_name == "browser_screenshot" {
-            if let Ok(parsed) = serde_json::from_str::<Value>(&result) {
-                if let Some(path) = parsed.get("path").and_then(|p| p.as_str()) {
-                    if let Ok(bytes) = std::fs::read(path) {
-                        return Ok(ToolOutput::Mixed {
-                            text: result,
-                            images: vec![ImageData {
-                                bytes,
-                                media_type: "image/png".into(),
-                            }],
-                        });
-                    }
-                }
-            }
+        if tool_name == "browser_screenshot"
+            && let Ok(parsed) = serde_json::from_str::<Value>(&result)
+            && let Some(path) = parsed.get("path").and_then(|p| p.as_str())
+            && let Ok(bytes) = std::fs::read(path)
+        {
+            return Ok(ToolOutput::Mixed {
+                text: result,
+                images: vec![ImageData {
+                    bytes,
+                    media_type: "image/png".into(),
+                }],
+            });
         }
 
         Ok(ToolOutput::text(result))

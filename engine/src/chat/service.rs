@@ -1,4 +1,5 @@
-use crate::agent::prompt::resolver::PromptResolver;
+use crate::agent::config::parse_frontmatter;
+use crate::agent::workspace::{AgentPromptLoader, AgentWorkspaceManager};
 use crate::api::repo::agents::SurrealAgentRepo;
 use crate::api::repo::chats::SurrealChatRepo;
 use crate::api::repo::messages::SurrealMessageRepo;
@@ -8,6 +9,7 @@ use crate::llm::convert::to_rig_messages;
 use crate::llm::fallback::inference_with_fallback;
 use crate::llm::provider::ModelRef;
 use crate::memory::service::MemoryService;
+use crate::prompt::PromptLoader;
 use crate::repository::Repository;
 use rig::completion::Message as RigMessage;
 
@@ -16,6 +18,7 @@ pub struct AgentConfig {
     pub model_group: String,
     pub tools: Vec<String>,
     pub sandbox_config: Option<crate::agent::models::SandboxSettings>,
+    pub identity: std::collections::BTreeMap<String, String>,
 }
 
 use super::dto::{ChatResponse, CreateChatRequest, UpdateChatRequest};
@@ -31,8 +34,9 @@ pub struct ChatService {
     message_repo: SurrealMessageRepo,
     agent_repo: SurrealAgentRepo,
     provider_registry: ModelProviderRegistry,
-    prompt_resolver: PromptResolver,
+    workspaces: AgentWorkspaceManager,
     memory_service: MemoryService,
+    prompts: PromptLoader,
 }
 
 impl ChatService {
@@ -41,25 +45,23 @@ impl ChatService {
         message_repo: SurrealMessageRepo,
         agent_repo: SurrealAgentRepo,
         provider_registry: ModelProviderRegistry,
-        prompt_resolver: PromptResolver,
+        workspaces: AgentWorkspaceManager,
         memory_service: MemoryService,
+        prompts: PromptLoader,
     ) -> Self {
         Self {
             chat_repo,
             message_repo,
             agent_repo,
             provider_registry,
-            prompt_resolver,
+            workspaces,
             memory_service,
+            prompts,
         }
     }
 
     pub fn provider_registry(&self) -> &ModelProviderRegistry {
         &self.provider_registry
-    }
-
-    pub fn prompt_resolver(&self) -> &PromptResolver {
-        &self.prompt_resolver
     }
 
     pub fn memory_service(&self) -> &MemoryService {
@@ -76,8 +78,10 @@ impl ChatService {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),
             space_id: req.space_id,
+            task_id: req.task_id,
             agent_id: req.agent_id,
             title: req.title,
+            archived_at: None,
             created_at: now,
             updated_at: now,
         };
@@ -147,6 +151,56 @@ impl ChatService {
         self.chat_repo.delete(chat_id).await
     }
 
+    pub async fn archive_chat(
+        &self,
+        user_id: &str,
+        chat_id: &str,
+    ) -> Result<ChatResponse, AppError> {
+        let mut chat = self
+            .chat_repo
+            .find_by_id(chat_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Chat not found".into()))?;
+
+        if chat.user_id != user_id {
+            return Err(AppError::Forbidden("Not your chat".into()));
+        }
+
+        chat.archived_at = Some(chrono::Utc::now());
+        chat.updated_at = chrono::Utc::now();
+        let chat = self.chat_repo.update(&chat).await?;
+        Ok(chat.into())
+    }
+
+    pub async fn unarchive_chat(
+        &self,
+        user_id: &str,
+        chat_id: &str,
+    ) -> Result<ChatResponse, AppError> {
+        let mut chat = self
+            .chat_repo
+            .find_by_id(chat_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Chat not found".into()))?;
+
+        if chat.user_id != user_id {
+            return Err(AppError::Forbidden("Not your chat".into()));
+        }
+
+        chat.archived_at = None;
+        chat.updated_at = chrono::Utc::now();
+        let chat = self.chat_repo.update(&chat).await?;
+        Ok(chat.into())
+    }
+
+    pub async fn list_archived_chats(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<ChatResponse>, AppError> {
+        let chats = self.chat_repo.find_archived_by_user_id(user_id).await?;
+        Ok(chats.into_iter().map(Into::into).collect())
+    }
+
     pub async fn send_message(
         &self,
         user_id: &str,
@@ -187,6 +241,7 @@ impl ChatService {
             chat_id: chat_id.to_string(),
             role: MessageRole::User,
             content: req.content.clone(),
+            agent_id: None,
             tool_calls: None,
             tool_call_id: None,
             tool: None,
@@ -194,12 +249,12 @@ impl ChatService {
         };
         let user_message = self.message_repo.create(&user_message).await?;
 
-        let agent_config = self.resolve_agent_config(&chat.agent_id).await;
+        let agent_config = self.resolve_agent_config(&chat.agent_id).await?;
         let system_prompt = agent_config.system_prompt;
         let model_group_name = agent_config.model_group;
 
         let stored_messages = self.message_repo.find_by_chat_id(chat_id).await?;
-        let rig_history = to_rig_messages(&stored_messages);
+        let rig_history = to_rig_messages(&stored_messages, &chat.agent_id);
 
         let model_group = self.provider_registry.get_model_group(&model_group_name)?;
 
@@ -216,8 +271,9 @@ impl ChatService {
         let assistant_message = Message {
             id: uuid::Uuid::new_v4().to_string(),
             chat_id: chat_id.to_string(),
-            role: MessageRole::Assistant,
+            role: MessageRole::Agent,
             content: response_text,
+            agent_id: Some(chat.agent_id.clone()),
             tool_calls: None,
             tool_call_id: None,
             tool: None,
@@ -272,6 +328,7 @@ impl ChatService {
             chat_id: chat_id.to_string(),
             role: MessageRole::User,
             content: content.to_string(),
+            agent_id: None,
             tool_calls: None,
             tool_call_id: None,
             tool: None,
@@ -295,17 +352,42 @@ impl ChatService {
         content: String,
         tool_calls: Option<serde_json::Value>,
     ) -> Result<MessageResponse, AppError> {
+        let chat = self.chat_repo.find_by_id(chat_id).await?.ok_or_else(|| {
+            AppError::NotFound("Chat not found".into())
+        })?;
         let assistant_message = Message {
             id: uuid::Uuid::new_v4().to_string(),
             chat_id: chat_id.to_string(),
-            role: MessageRole::Assistant,
+            role: MessageRole::Agent,
             content,
+            agent_id: Some(chat.agent_id),
             tool_calls,
             tool_call_id: None,
             tool: None,
             created_at: chrono::Utc::now(),
         };
         let saved = self.message_repo.create(&assistant_message).await?;
+        Ok(saved.into())
+    }
+
+    pub async fn save_agent_message(
+        &self,
+        chat_id: &str,
+        agent_id: &str,
+        content: String,
+    ) -> Result<MessageResponse, AppError> {
+        let message = Message {
+            id: uuid::Uuid::new_v4().to_string(),
+            chat_id: chat_id.to_string(),
+            role: MessageRole::Agent,
+            content,
+            agent_id: Some(agent_id.to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            tool: None,
+            created_at: chrono::Utc::now(),
+        };
+        let saved = self.message_repo.create(&message).await?;
         Ok(saved.into())
     }
 
@@ -330,6 +412,7 @@ impl ChatService {
             chat_id: chat_id.to_string(),
             role: MessageRole::ToolResult,
             content,
+            agent_id: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id.to_string()),
             tool,
@@ -371,11 +454,35 @@ impl ChatService {
         Ok(updated.into())
     }
 
+    pub async fn save_task_completion_message(
+        &self,
+        chat_id: &str,
+        agent_id: &str,
+        content: String,
+        tool: MessageTool,
+    ) -> Result<MessageResponse, AppError> {
+        let message = Message {
+            id: uuid::Uuid::new_v4().to_string(),
+            chat_id: chat_id.to_string(),
+            role: MessageRole::TaskCompletion,
+            content,
+            agent_id: Some(agent_id.to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            tool: Some(tool),
+            created_at: chrono::Utc::now(),
+        };
+        let saved = self.message_repo.create(&message).await?;
+        Ok(saved.into())
+    }
+
     pub async fn find_chat(&self, chat_id: &str) -> Result<Option<Chat>, AppError> {
         self.chat_repo.find_by_id(chat_id).await
     }
 
-    pub async fn resolve_agent_config(&self, agent_id: &str) -> AgentConfig {
+    pub async fn resolve_agent_config(&self, agent_id: &str) -> Result<AgentConfig, AppError> {
+        let ws = self.workspaces.get(agent_id);
+
         if let Ok(Some(agent)) = self.agent_repo.find_by_id(agent_id).await {
             tracing::info!(agent_id, ?agent.tools, user_id = ?agent.user_id, "Resolved agent from DB");
             let tools = if agent.tools.is_empty() {
@@ -384,47 +491,32 @@ impl ChatService {
                 agent.tools
             };
 
-            let raw_prompt = if !agent.system_prompt.is_empty() {
-                agent.system_prompt
-            } else if let Some(resolved) = self
-                .prompt_resolver
-                .resolve(agent_id, "system_prompt")
-                .await
-            {
-                resolved.template
-            } else {
-                "You are a helpful assistant.".to_string()
-            };
+            let raw_prompt = ws.read("AGENT.md")
+                .map(|c| parse_frontmatter(&c).template)
+                .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?;
 
             let system_prompt = raw_prompt.replace("{{agent_name}}", &agent.name);
 
-            return AgentConfig {
+            return Ok(AgentConfig {
                 system_prompt,
                 model_group: agent.model_group,
                 tools,
                 sandbox_config: agent.sandbox_config,
-            };
+                identity: agent.identity,
+            });
         }
 
-        if let Some(resolved) = self
-            .prompt_resolver
-            .resolve(agent_id, "system_prompt")
-            .await
-        {
-            return AgentConfig {
-                system_prompt: resolved.template,
-                model_group: "primary".to_string(),
-                tools: crate::tool::configurable_tools().to_vec(),
-                sandbox_config: None,
-            };
-        }
+        let raw_prompt = ws.read("AGENT.md")
+            .map(|c| parse_frontmatter(&c).template)
+            .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?;
 
-        AgentConfig {
-            system_prompt: "You are a helpful assistant.".to_string(),
+        Ok(AgentConfig {
+            system_prompt: raw_prompt,
             model_group: "primary".to_string(),
             tools: crate::tool::configurable_tools().to_vec(),
             sandbox_config: None,
-        }
+            identity: std::collections::BTreeMap::new(),
+        })
     }
 
     pub async fn generate_title(
@@ -433,15 +525,13 @@ impl ChatService {
         agent_id: &str,
         user_content: &str,
     ) -> Result<String, AppError> {
-        let prompt_agent_id = agent_id;
-
-        let resolved = self
-            .prompt_resolver
-            .resolve(prompt_agent_id, "title_generation")
-            .await
+        let ws = self.workspaces.get(agent_id);
+        let prompts = AgentPromptLoader::new(&ws, &self.prompts);
+        let content = prompts.read("TITLE.md")
             .ok_or_else(|| AppError::Internal("No title generation prompt found".into()))?;
+        let parsed = parse_frontmatter(&content);
 
-        let model_group_name = match &resolved.model {
+        let model_group_name = match parsed.metadata.get("model") {
             Some(m) if m.contains('/') => {
                 let model_ref = ModelRef::parse(m)
                     .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -457,7 +547,7 @@ impl ChatService {
                 let result = inference_with_fallback(
                     &self.provider_registry,
                     &model_group,
-                    &resolved.template,
+                    &parsed.template,
                     vec![],
                     user_msg,
                 )
@@ -484,7 +574,7 @@ impl ChatService {
         let result = inference_with_fallback(
             &self.provider_registry,
             &title_group,
-            &resolved.template,
+            &parsed.template,
             vec![],
             user_msg,
         )
@@ -541,10 +631,10 @@ fn try_extract_title(response: &str) -> Option<String> {
 
     let open = trimmed.find('{')?;
     let close = trimmed.rfind('}')?;
-    if open < close {
-        if let Some(title) = try_parse_title_json(&trimmed[open..=close]) {
-            return Some(title);
-        }
+    if open < close
+        && let Some(title) = try_parse_title_json(&trimmed[open..=close])
+    {
+        return Some(title);
     }
 
     None

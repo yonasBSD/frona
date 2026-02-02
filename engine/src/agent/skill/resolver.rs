@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::agent::config::source::parse_frontmatter;
+use crate::agent::config::parse_frontmatter;
+use crate::agent::workspace::AgentWorkspaceManager;
 use crate::api::repo::skills::SurrealSkillRepo;
 
 use super::repository::SkillRepository;
@@ -24,13 +25,15 @@ pub struct ResolvedSkill {
 pub struct SkillResolver {
     skill_repo: SurrealSkillRepo,
     config_dir: PathBuf,
+    workspaces: AgentWorkspaceManager,
 }
 
 impl SkillResolver {
-    pub fn new(skill_repo: SurrealSkillRepo, config_dir: impl Into<PathBuf>) -> Self {
+    pub fn new(skill_repo: SurrealSkillRepo, config_dir: impl Into<PathBuf>, workspaces: AgentWorkspaceManager) -> Self {
         Self {
             skill_repo,
             config_dir: config_dir.into(),
+            workspaces,
         }
     }
 
@@ -46,8 +49,24 @@ impl SkillResolver {
             }
         }
 
-        for summary in self.scan_fs_skills(&self.config_dir.join("agents").join(agent_id).join("skills")) {
-            seen.entry(summary.name.clone()).or_insert(summary);
+        let ws = self.workspaces.get(agent_id);
+        for name in ws.read_dir("skills") {
+            if seen.contains_key(&name) {
+                continue;
+            }
+            let skill_path = format!("skills/{name}/SKILL.md");
+            if let Some(content) = ws.read(&skill_path) {
+                let parsed = parse_frontmatter(&content);
+                let description = parsed
+                    .metadata
+                    .get("description")
+                    .cloned()
+                    .unwrap_or_default();
+                seen.insert(name.clone(), SkillSummary {
+                    name,
+                    description,
+                });
+            }
         }
 
         if let Ok(db_globals) = self.skill_repo.find_by_agent(None).await {
@@ -76,9 +95,31 @@ impl SkillResolver {
             });
         }
 
-        let agent_skill_dir = self.config_dir.join("agents").join(agent_id).join("skills").join(name);
-        if let Some(resolved) = self.read_fs_skill(name, &agent_skill_dir) {
-            return Some(resolved);
+        let ws = self.workspaces.get(agent_id);
+        let skill_path = format!("skills/{name}/SKILL.md");
+        if let Some(content) = ws.read(&skill_path) {
+            let parsed = parse_frontmatter(&content);
+            let description = parsed
+                .metadata
+                .get("description")
+                .cloned()
+                .unwrap_or_default();
+
+            let dir_path = ws.resolve_path(&format!("skills/{name}"))
+                .and_then(|p| std::fs::canonicalize(&p).ok())
+                .map(|p| p.to_string_lossy().into_owned());
+
+            let mut full_content = parsed.template.clone();
+            if !full_content.ends_with('\n') {
+                full_content.push('\n');
+            }
+
+            return Some(ResolvedSkill {
+                name: name.to_string(),
+                description,
+                content: full_content,
+                path: dir_path,
+            });
         }
 
         if let Ok(Some(skill)) = self.skill_repo.find_by_name(None, name).await {
@@ -95,9 +136,9 @@ impl SkillResolver {
     }
 
     pub fn skill_dir_path(&self, agent_id: &str, name: &str) -> Option<PathBuf> {
-        let agent_path = self.config_dir.join("agents").join(agent_id).join("skills").join(name);
-        if agent_path.join("SKILL.md").exists() {
-            return Some(agent_path);
+        let ws = self.workspaces.get(agent_id);
+        if let Some(path) = ws.resolve_path(&format!("skills/{name}/SKILL.md")) {
+            return path.parent().map(|p| p.to_path_buf());
         }
 
         let global_path = self.config_dir.join("skills").join(name);

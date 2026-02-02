@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use crate::Entity;
 use serde::{Deserialize, Serialize};
@@ -34,13 +36,18 @@ pub struct Agent {
     pub user_id: Option<String>,
     pub name: String,
     pub description: String,
-    pub system_prompt: String,
     pub model_group: String,
     pub enabled: bool,
     #[serde(default)]
     pub tools: Vec<String>,
     #[serde(default)]
     pub sandbox_config: Option<SandboxSettings>,
+    #[serde(default)]
+    pub max_concurrent_tasks: Option<u32>,
+    #[serde(default)]
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub identity: BTreeMap<String, String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

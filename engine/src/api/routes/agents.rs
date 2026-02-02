@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -29,7 +31,29 @@ async fn list_agents(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AgentResponse>>, ApiError> {
-    let agents = state.agent_service.list(&auth.user_id).await?;
+    let mut agents = state.agent_service.list(&auth.user_id).await?;
+
+    let count_map: HashMap<String, u64> = state
+        .db
+        .query("SELECT agent_id, count() AS count FROM chat WHERE user_id = $user_id GROUP BY agent_id")
+        .bind(("user_id", auth.user_id.clone()))
+        .await
+        .and_then(|mut r| r.take::<Vec<serde_json::Value>>(0))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| {
+            let agent_id = v.get("agent_id")?.as_str()?.to_string();
+            let count = v.get("count")?.as_u64()?;
+            Some((agent_id, count))
+        })
+        .collect();
+
+    for agent in &mut agents {
+        if let Some(&count) = count_map.get(agent.id.as_str()) {
+            agent.chat_count = count;
+        }
+    }
+
     Ok(Json(agents))
 }
 

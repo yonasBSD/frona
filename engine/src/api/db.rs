@@ -3,7 +3,8 @@ use surrealdb::engine::local::{Db, RocksDb};
 use surrealdb::types::RecordId;
 use tracing::info;
 
-use crate::agent::config::defaults::embedded_agent_ids;
+use crate::agent::config::parse_frontmatter;
+use crate::agent::workspace::AgentWorkspaceManager;
 
 pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
     db.use_ns("frona").use_db("frona").await?;
@@ -28,10 +29,8 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
 
         DEFINE TABLE IF NOT EXISTS task SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_task_user ON TABLE task COLUMNS user_id;
-
-        DEFINE TABLE IF NOT EXISTS prompt SCHEMALESS;
-        DEFINE INDEX IF NOT EXISTS idx_prompt_agent ON TABLE prompt COLUMNS agent_id;
-        DEFINE INDEX IF NOT EXISTS idx_prompt_agent_name ON TABLE prompt COLUMNS agent_id, name UNIQUE;
+        DEFINE INDEX IF NOT EXISTS idx_task_agent ON TABLE task COLUMNS agent_id;
+        DEFINE INDEX IF NOT EXISTS idx_task_status ON TABLE task COLUMNS status;
 
         DEFINE TABLE IF NOT EXISTS credential SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_credential_user ON TABLE credential COLUMNS user_id;
@@ -40,12 +39,25 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE TABLE IF NOT EXISTS memory SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_memory_source ON TABLE memory COLUMNS source_type, source_id;
 
-        DEFINE TABLE IF NOT EXISTS fact SCHEMALESS;
-        DEFINE INDEX IF NOT EXISTS idx_fact_agent ON TABLE fact COLUMNS agent_id;
+        DEFINE TABLE IF NOT EXISTS insight SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_insight_agent ON TABLE insight COLUMNS agent_id;
+        DEFINE INDEX IF NOT EXISTS idx_insight_user ON TABLE insight COLUMNS user_id;
 
         DEFINE TABLE IF NOT EXISTS skill SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_skill_agent ON TABLE skill COLUMNS agent_id;
         DEFINE INDEX IF NOT EXISTS idx_skill_agent_name ON TABLE skill COLUMNS agent_id, name UNIQUE;
+
+        DEFINE TABLE IF NOT EXISTS routine SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_routine_agent ON TABLE routine COLUMNS agent_id;
+        DEFINE INDEX IF NOT EXISTS idx_routine_user_agent ON TABLE routine COLUMNS user_id, agent_id UNIQUE;
+
+        DEFINE EVENT IF NOT EXISTS cascade_delete_chat_messages ON TABLE chat
+          WHEN $event = 'DELETE'
+          THEN (DELETE FROM message WHERE chat_id = meta::id($before.id));
+
+        DEFINE EVENT IF NOT EXISTS cascade_delete_task_chat ON TABLE task
+          WHEN $event = 'DELETE' AND $before.chat_id IS NOT NONE
+          THEN (DELETE type::record('chat', $before.chat_id));
         ",
     )
     .await?;
@@ -53,9 +65,11 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
     Ok(())
 }
 
-pub async fn seed_config_agents(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
-    for agent_id in embedded_agent_ids() {
-        let rid = RecordId::new("agent", agent_id);
+pub async fn seed_config_agents(db: &Surreal<Db>, workspaces: &AgentWorkspaceManager) -> Result<(), surrealdb::Error> {
+    let agent_ids: Vec<String> = workspaces.builtin_agent_ids().into_iter().map(String::from).collect();
+    info!(agents = ?agent_ids, "Builtin agent IDs from config");
+    for agent_id in agent_ids {
+        let rid = RecordId::new("agent", agent_id.as_str());
         let mut result = db
             .query("SELECT meta::id(id) as id FROM agent WHERE id = $id LIMIT 1")
             .bind(("id", rid))
@@ -63,21 +77,35 @@ pub async fn seed_config_agents(db: &Surreal<Db>) -> Result<(), surrealdb::Error
 
         let existing: Option<serde_json::Value> = result.take(0)?;
         if existing.is_some() {
+            info!(agent_id = %agent_id, "Config agent already exists, skipping");
             continue;
         }
+
+        let ws = workspaces.get(&agent_id);
+        let (description, model_group) = ws
+            .read("AGENT.md")
+            .map(|content| {
+                let entry = parse_frontmatter(&content);
+                let desc = entry.metadata.get("description").cloned().unwrap_or_default();
+                let mg = entry.metadata.get("model_group").cloned().unwrap_or_else(|| "primary".to_string());
+                (desc, mg)
+            })
+            .unwrap_or_default();
 
         db.query(
             "CREATE type::record('agent', $id) SET
                 name = $id,
-                description = '',
-                system_prompt = '',
-                model_group = 'primary',
+                description = $description,
+                model_group = $model_group,
                 enabled = true,
                 tools = [],
+                identity = {},
                 created_at = time::now(),
                 updated_at = time::now()"
         )
-        .bind(("id", agent_id))
+        .bind(("id", agent_id.clone()))
+        .bind(("description", description))
+        .bind(("model_group", model_group))
         .await?;
 
         info!(agent_id = %agent_id, "Seeded config agent into database");

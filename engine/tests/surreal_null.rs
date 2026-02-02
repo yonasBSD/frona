@@ -26,11 +26,13 @@ fn test_agent(user_id: Option<&str>) -> Agent {
         user_id: user_id.map(|s| s.to_string()),
         name: "Test Agent".to_string(),
         description: "A test agent".to_string(),
-        system_prompt: "You are a test agent".to_string(),
         model_group: "primary".to_string(),
         enabled: true,
         tools: vec![],
         sandbox_config: None,
+        max_concurrent_tasks: None,
+        avatar: None,
+        identity: std::collections::BTreeMap::new(),
         created_at: now,
         updated_at: now,
     }
@@ -42,8 +44,10 @@ fn test_chat(user_id: &str, space_id: Option<&str>, title: Option<&str>) -> Chat
         id: uuid::Uuid::new_v4().to_string(),
         user_id: user_id.to_string(),
         space_id: space_id.map(|s| s.to_string()),
+        task_id: None,
         agent_id: "some-agent".to_string(),
         title: title.map(|s| s.to_string()),
+        archived_at: None,
         created_at: now,
         updated_at: now,
     }
@@ -76,10 +80,10 @@ async fn test_seeded_agent_with_absent_user_id_round_trips() {
         "CREATE type::record('agent', $id) SET
             name = $id,
             description = '',
-            system_prompt = '',
             model_group = 'primary',
             enabled = true,
             tools = [],
+            identity = {},
             created_at = time::now(),
             updated_at = time::now()"
     )
@@ -110,7 +114,7 @@ async fn test_agent_none_user_id_round_trips_via_repo() {
 
     let found = repo.find_by_id(&agent.id).await.unwrap().unwrap();
     assert_eq!(found.user_id, None);
-    assert_eq!(found.sandbox_config.is_none(), true);
+    assert!(found.sandbox_config.is_none());
 
     let agents = repo.find_by_user_id("any-user").await.unwrap();
     assert!(
@@ -212,7 +216,6 @@ async fn test_json_null_user_id_fails_deserialization() {
         "user_id": null,
         "name": "broken-agent",
         "description": "",
-        "system_prompt": "",
         "model_group": "primary",
         "enabled": true,
         "tools": [],

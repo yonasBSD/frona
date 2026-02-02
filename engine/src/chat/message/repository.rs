@@ -18,4 +18,5 @@ pub trait MessageRepository: Repository<Message> {
         chat_id: &str,
         before: DateTime<Utc>,
     ) -> Result<(), AppError>;
+    async fn delete_by_chat_id(&self, chat_id: &str) -> Result<(), AppError>;
 }

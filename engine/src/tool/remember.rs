@@ -33,17 +33,17 @@ impl RememberTool {
 #[async_trait]
 impl AgentTool for RememberTool {
     fn name(&self) -> &str {
-        "remember"
+        "remember_agent_fact"
     }
 
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
-            name: "remember_fact".to_string(),
-            description: "Store an important fact about the user for long-term memory. \
+            name: "remember_agent_fact".to_string(),
+            description: "Store an important insight for this agent's long-term memory. \
 Before calling this tool, check <agent_memory> to avoid storing duplicates. \
-Each fact should be a short, atomic statement about the USER — their preferences, personal details, \
-project context, or decisions. Do NOT store your own responses, observations, or trivial conversation. \
-Set overrides to true when the new fact contradicts or updates a previously stored fact.".to_string(),
+Each insight should be a short, atomic statement — working context, project details, \
+decisions, or anything relevant to this agent's work. Do NOT store trivial conversation. \
+Set overrides to true when the new insight contradicts or updates a previously stored one.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -77,11 +77,11 @@ Set overrides to true when the new fact contradicts or updates a previously stor
             agent_id = %self.agent_id,
             fact = %fact,
             overrides = overrides,
-            "remember_fact tool called"
+            "remember tool called"
         );
 
         self.memory_service
-            .store_fact(&self.agent_id, fact, Some(&self.chat_id))
+            .store_insight(&self.agent_id, fact, Some(&self.chat_id))
             .await?;
 
         if let Some(ref group) = self.compaction_group {
@@ -89,22 +89,124 @@ Set overrides to true when the new fact contradicts or updates a previously stor
             let aid = self.agent_id.clone();
             let group = group.clone();
             if overrides {
-                tracing::debug!(agent_id = %self.agent_id, "Spawning forced fact compaction (overrides=true)");
+                tracing::debug!(agent_id = %self.agent_id, "Spawning forced insight compaction (overrides=true)");
                 tokio::spawn(async move {
-                    if let Err(e) = ms.compact_facts_forced(&aid, &group).await {
-                        tracing::warn!(error = %e, agent_id = %aid, "Background forced fact compaction failed");
+                    if let Err(e) = ms.compact_insights_forced(&aid, &group).await {
+                        tracing::warn!(error = %e, agent_id = %aid, "Background forced insight compaction failed");
                     }
                 });
             } else {
-                tracing::debug!(agent_id = %self.agent_id, "Spawning background fact compaction");
+                tracing::debug!(agent_id = %self.agent_id, "Spawning background insight compaction");
                 tokio::spawn(async move {
-                    if let Err(e) = ms.compact_facts_if_needed(&aid, &group).await {
-                        tracing::warn!(error = %e, agent_id = %aid, "Background fact compaction failed");
+                    if let Err(e) = ms.compact_insights_if_needed(&aid, &group).await {
+                        tracing::warn!(error = %e, agent_id = %aid, "Background insight compaction failed");
                     }
                 });
             }
         }
 
         Ok(ToolOutput::text(format!("Remembered: {fact}")))
+    }
+}
+
+pub struct RememberUserFactTool {
+    memory_service: MemoryService,
+    user_id: String,
+    chat_id: String,
+    compaction_group: Option<ModelGroup>,
+}
+
+impl RememberUserFactTool {
+    pub fn new(
+        memory_service: MemoryService,
+        user_id: String,
+        chat_id: String,
+        compaction_group: Option<ModelGroup>,
+    ) -> Self {
+        Self {
+            memory_service,
+            user_id,
+            chat_id,
+            compaction_group,
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for RememberUserFactTool {
+    fn name(&self) -> &str {
+        "remember_user_fact"
+    }
+
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        vec![ToolDefinition {
+            name: "remember_user_fact".to_string(),
+            description: "Store an important fact about the user that persists across ALL agents. \
+Before calling this tool, check <user_memory> to avoid storing duplicates. \
+Use this for facts about the user that should be available regardless of which agent they talk to: \
+their name, preferences, personal details, or important context. \
+Set overrides to true when the new fact contradicts or updates a previously stored one.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": "A short, atomic fact about the user to remember across all agents"
+                    },
+                    "overrides": {
+                        "type": "boolean",
+                        "description": "Set to true if this fact contradicts or supersedes a previously stored fact",
+                        "default": false
+                    }
+                },
+                "required": ["fact"]
+            }),
+        }]
+    }
+
+    async fn execute(&self, _tool_name: &str, arguments: Value) -> Result<ToolOutput, AppError> {
+        let fact = arguments
+            .get("fact")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Validation("Missing 'fact' parameter".into()))?;
+
+        let overrides = arguments
+            .get("overrides")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        tracing::debug!(
+            user_id = %self.user_id,
+            fact = %fact,
+            overrides = overrides,
+            "remember_user_fact tool called"
+        );
+
+        self.memory_service
+            .store_user_insight(&self.user_id, fact, Some(&self.chat_id))
+            .await?;
+
+        if let Some(ref group) = self.compaction_group {
+            let ms = self.memory_service.clone();
+            let uid = self.user_id.clone();
+            let group = group.clone();
+            if overrides {
+                tracing::debug!(user_id = %self.user_id, "Spawning forced user insight compaction (overrides=true)");
+                tokio::spawn(async move {
+                    if let Err(e) = ms.compact_user_insights_forced(&uid, &group).await {
+                        tracing::warn!(error = %e, user_id = %uid, "Background forced user insight compaction failed");
+                    }
+                });
+            } else {
+                tracing::debug!(user_id = %self.user_id, "Spawning background user insight compaction");
+                tokio::spawn(async move {
+                    if let Err(e) = ms.compact_user_insights_if_needed(&uid, &group).await {
+                        tracing::warn!(error = %e, user_id = %uid, "Background user insight compaction failed");
+                    }
+                });
+            }
+        }
+
+        Ok(ToolOutput::text(format!("Remembered for user: {fact}")))
     }
 }

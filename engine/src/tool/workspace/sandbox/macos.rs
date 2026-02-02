@@ -37,6 +37,12 @@ pub struct SandboxProfileBuilder {
     network_rules: String,
 }
 
+impl Default for SandboxProfileBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SandboxProfileBuilder {
     pub fn new() -> Self {
         Self {

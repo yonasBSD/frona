@@ -2,23 +2,25 @@
 
 import { useRef, useState, useEffect } from "react";
 import { PaperAirplaneIcon, StopIcon } from "@heroicons/react/24/solid";
-import { useChat } from "@/lib/chat-context";
+import { useSession } from "@/lib/session-context";
 
 export function MessageInput() {
-  const { sendMessage, stopGeneration, sending, activeChatId } = useChat();
+  const { sendMessage, stopGeneration, sending, activeChatId, pendingAgentId } = useSession();
+  const canSend = !!(activeChatId || pendingAgentId);
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (activeChatId && !sending) {
-      requestAnimationFrame(() => textareaRef.current?.focus());
+    if (canSend && !sending) {
+      const id = setTimeout(() => textareaRef.current?.focus(), 0);
+      return () => clearTimeout(id);
     }
-  }, [activeChatId, sending]);
+  }, [canSend, sending, pendingAgentId, activeChatId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const content = text.trim();
-    if (!content || !activeChatId) return;
+    if (!content || !canSend) return;
     setText("");
     await sendMessage(content);
     // Re-focus after React re-renders with sending=false
@@ -43,7 +45,7 @@ export function MessageInput() {
           placeholder="Send a message..."
           rows={1}
           className="flex-1 resize-none bg-transparent text-sm leading-5 text-text-primary placeholder:text-text-tertiary focus:outline-none m-0 p-0"
-          disabled={!activeChatId || sending}
+          disabled={!canSend || sending}
         />
         {sending ? (
           <button
@@ -56,7 +58,7 @@ export function MessageInput() {
         ) : (
           <button
             type="submit"
-            disabled={!text.trim() || !activeChatId}
+            disabled={!text.trim() || !canSend}
             className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary disabled:opacity-30 transition"
           >
             <PaperAirplaneIcon className="h-5 w-5" />

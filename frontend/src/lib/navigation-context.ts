@@ -8,7 +8,7 @@ import {
   useCallback,
   createElement,
 } from "react";
-import { api } from "./api-client";
+import { api, archiveChat as apiArchiveChat, unarchiveChat as apiUnarchiveChat, deleteChat as apiDeleteChat, deleteTask as apiDeleteTask, getArchivedChats } from "./api-client";
 import type {
   SpaceWithChats,
   ChatResponse,
@@ -23,6 +23,9 @@ interface NavigationContextValue {
   standaloneChats: ChatResponse[];
   tasks: TaskResponse[];
   agents: Agent[];
+  archivedChats: ChatResponse[];
+  showArchived: boolean;
+  setShowArchived: (show: boolean) => void;
   activeTab: ActiveTab;
   loading: boolean;
   setActiveTab: (tab: ActiveTab) => void;
@@ -30,6 +33,10 @@ interface NavigationContextValue {
   addStandaloneChat: (chat: ChatResponse) => void;
   updateChatTitle: (chatId: string, title: string) => void;
   updateAgent: (agentId: string, fields: Record<string, unknown>) => void;
+  archiveChat: (chatId: string) => Promise<void>;
+  unarchiveChat: (chatId: string) => Promise<void>;
+  deleteChat: (chatId: string) => Promise<void>;
+  deleteTask: (taskId: string) => Promise<void>;
 }
 
 const NavigationContext = createContext<NavigationContextValue | null>(null);
@@ -48,6 +55,8 @@ export function NavigationProvider({
   const [standaloneChats, setStandaloneChats] = useState<ChatResponse[]>([]);
   const [tasks, setTasks] = useState<TaskResponse[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [archivedChats, setArchivedChats] = useState<ChatResponse[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>("chat");
   const [loading, setLoading] = useState(true);
 
@@ -83,6 +92,59 @@ export function NavigationProvider({
     );
   }, []);
 
+  const archiveChat = useCallback(async (chatId: string) => {
+    await apiArchiveChat(chatId);
+    setStandaloneChats((prev) => prev.filter((c) => c.id !== chatId));
+    setSpaces((prev) =>
+      prev.map((space) => ({
+        ...space,
+        chats: space.chats.filter((c) => c.id !== chatId),
+      })),
+    );
+    const archived = await getArchivedChats();
+    setArchivedChats(archived);
+  }, []);
+
+  const unarchiveChat = useCallback(async (chatId: string) => {
+    await apiUnarchiveChat(chatId);
+    setArchivedChats((prev) => prev.filter((c) => c.id !== chatId));
+    await refresh();
+  }, [refresh]);
+
+  const deleteChatAction = useCallback(async (chatId: string) => {
+    await apiDeleteChat(chatId);
+    setStandaloneChats((prev) => prev.filter((c) => c.id !== chatId));
+    setSpaces((prev) =>
+      prev.map((space) => ({
+        ...space,
+        chats: space.chats.filter((c) => c.id !== chatId),
+      })),
+    );
+    setArchivedChats((prev) => prev.filter((c) => c.id !== chatId));
+  }, []);
+
+  const deleteTaskAction = useCallback(async (taskId: string) => {
+    const task = tasks.find((t) => t.id === taskId);
+    await apiDeleteTask(taskId);
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    if (task?.chat_id) {
+      const chatId = task.chat_id;
+      setStandaloneChats((prev) => prev.filter((c) => c.id !== chatId));
+      setSpaces((prev) =>
+        prev.map((space) => ({
+          ...space,
+          chats: space.chats.filter((c) => c.id !== chatId),
+        })),
+      );
+    }
+  }, [tasks]);
+
+  useEffect(() => {
+    if (showArchived) {
+      getArchivedChats().then(setArchivedChats).catch(() => {});
+    }
+  }, [showArchived]);
+
   const updateChatTitle = useCallback((chatId: string, title: string) => {
     setStandaloneChats((prev) =>
       prev.map((c) => (c.id === chatId ? { ...c, title } : c)),
@@ -105,6 +167,9 @@ export function NavigationProvider({
         standaloneChats,
         tasks,
         agents,
+        archivedChats,
+        showArchived,
+        setShowArchived,
         activeTab,
         loading,
         setActiveTab,
@@ -112,6 +177,10 @@ export function NavigationProvider({
         addStandaloneChat,
         updateChatTitle,
         updateAgent,
+        archiveChat,
+        unarchiveChat,
+        deleteChat: deleteChatAction,
+        deleteTask: deleteTaskAction,
       },
     },
     children,
@@ -123,4 +192,15 @@ export function useNavigation(): NavigationContextValue {
   if (!ctx)
     throw new Error("useNavigation must be used within NavigationProvider");
   return ctx;
+}
+
+export function neighborRoute(
+  items: { id: string }[],
+  deletedId: string,
+  urlFn: (id: string) => string,
+): string | null {
+  const idx = items.findIndex((item) => item.id === deletedId);
+  if (idx === -1) return null;
+  const neighbor = items[idx + 1] ?? items[idx - 1];
+  return neighbor ? urlFn(neighbor.id) : null;
 }

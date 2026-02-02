@@ -1,13 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import { Logo } from "@/components/logo";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, user, revalidate } = useAuth();
+
+  useEffect(() => {
+    revalidate();
+  }, [revalidate]);
+
+  useEffect(() => {
+    if (user) router.replace("/chat");
+  }, [user, router]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -30,8 +39,9 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm space-y-6">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-text-primary">Sign in to Frona</h1>
+        <div className="flex items-center justify-center gap-2">
+          <Logo size={80} animate />
+          <span className="text-3xl font-bold text-text-primary tracking-wide" style={{ fontFamily: "var(--font-brand)" }}>FRONA</span>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (

@@ -1,10 +1,14 @@
 pub mod browser;
 pub mod cli;
+pub mod delegate;
 pub mod notify_human;
 pub mod registry;
 pub mod remember;
+pub mod routine;
+pub mod schedule;
 pub mod skill;
 pub mod update_entity;
+pub mod update_identity;
 pub mod web_fetch;
 pub mod web_search;
 pub mod workspace;
@@ -26,6 +30,9 @@ pub fn init_configurable_tools(cli_tools: &[CliToolConfig]) {
     names.push("browser".to_string());
     names.push("web_fetch".to_string());
     names.push("web_search".to_string());
+    names.push("delegate".to_string());
+    names.push("schedule".to_string());
+    names.push("routine".to_string());
     let _ = CONFIGURABLE_TOOLS.set(names);
 }
 

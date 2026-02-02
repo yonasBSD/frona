@@ -4,13 +4,14 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { PlusIcon } from "@heroicons/react/24/outline";
 import { useNavigation } from "@/lib/navigation-context";
-import { useChat } from "@/lib/chat-context";
+import { useSession } from "@/lib/session-context";
 import { TabBar } from "./tab-bar";
 import { PanelFooter } from "./panel-footer";
 import { ChatsTab } from "../nav/chats-tab";
 import { TasksTab } from "../nav/tasks-tab";
 import { AgentsTab } from "../nav/agents-tab";
 import { SettingsModal } from "../settings/settings-modal";
+import { Logo } from "../logo";
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 480;
@@ -18,7 +19,7 @@ const DEFAULT_WIDTH = 288; // w-72
 
 export function NavigationPanel() {
   const { activeTab, addStandaloneChat } = useNavigation();
-  const { createChat } = useChat();
+  const { createChat, inferring } = useSession();
   const router = useRouter();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -67,8 +68,11 @@ export function NavigationPanel() {
         className="relative flex h-full flex-col border-r border-border bg-surface-nav"
         style={{ width }}
       >
-        <div className="flex items-center justify-between px-4 py-3">
-          <span className="text-base font-bold text-text-primary">Frona</span>
+        <div className="flex items-center px-2 py-1">
+          <div className="flex flex-1 items-center justify-center gap-1">
+            <Logo size={52} animate={inferring} />
+            <span className="text-2xl font-bold text-text-primary tracking-wide" style={{ fontFamily: "var(--font-brand)" }}>FRONA</span>
+          </div>
           <button
             onClick={handleNewChat}
             className="rounded-lg p-1.5 text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"

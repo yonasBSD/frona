@@ -29,11 +29,16 @@ async function request<T>(
     throw new ApiError(res.status, body.error || "Request failed");
   }
 
-  if (res.status === 204) {
+  if (res.status === 204 || res.headers.get("content-length") === "0") {
     return undefined as T;
   }
 
-  return res.json();
+  const text = await res.text();
+  if (!text) {
+    return undefined as T;
+  }
+
+  return JSON.parse(text);
 }
 
 import type { MessageResponse } from "./types";
@@ -184,6 +189,34 @@ export async function cancelGeneration(chatId: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
   });
+}
+
+export async function cancelTask(taskId: string): Promise<void> {
+  await request(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+}
+
+export function deleteTask(taskId: string) {
+  return request<void>(`/api/tasks/${taskId}`, { method: "DELETE" });
+}
+
+export function getTask(id: string) {
+  return api.get<import("./types").TaskResponse>(`/api/tasks/${id}`);
+}
+
+export function archiveChat(chatId: string) {
+  return request<import("./types").ChatResponse>(`/api/chats/${chatId}/archive`, { method: "POST" });
+}
+
+export function unarchiveChat(chatId: string) {
+  return request<import("./types").ChatResponse>(`/api/chats/${chatId}/unarchive`, { method: "POST" });
+}
+
+export function deleteChat(chatId: string) {
+  return request<void>(`/api/chats/${chatId}`, { method: "DELETE" });
+}
+
+export function getArchivedChats() {
+  return request<import("./types").ChatResponse[]>("/api/chats/archived");
 }
 
 export const api = {

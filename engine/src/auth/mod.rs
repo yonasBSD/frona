@@ -30,7 +30,7 @@ impl AuthService {
         repo: &dyn UserRepository,
         req: RegisterRequest,
     ) -> Result<AuthResponse, AppError> {
-        if let Some(_) = repo.find_by_email(&req.email).await? {
+        if repo.find_by_email(&req.email).await?.is_some() {
             return Err(AppError::Validation("Email already registered".into()));
         }
 

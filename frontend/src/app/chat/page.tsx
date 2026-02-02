@@ -4,13 +4,13 @@ import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PaperAirplaneIcon } from "@heroicons/react/24/solid";
 import { api } from "@/lib/api-client";
-import { useChat } from "@/lib/chat-context";
+import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
 import type { ChatResponse } from "@/lib/types";
 
 function SpaceView({ spaceId }: { spaceId: string }) {
   const { spaces, refresh } = useNavigation();
-  const { activeChatId, setPendingMessage } = useChat();
+  const { activeChatId, setPendingMessage } = useSession();
   const router = useRouter();
   const [newMessage, setNewMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -113,7 +113,7 @@ function SpaceView({ spaceId }: { spaceId: string }) {
 }
 
 function LandingView() {
-  const { createChat, setPendingMessage } = useChat();
+  const { createChat, setPendingMessage } = useSession();
   const { addStandaloneChat } = useNavigation();
   const router = useRouter();
   const [newMessage, setNewMessage] = useState("");
@@ -171,10 +171,10 @@ function LandingView() {
 
 export default function ChatPage() {
   const searchParams = useSearchParams();
-  const { activeChatId } = useChat();
+  const { activeChatId, activeTaskId } = useSession();
   const spaceId = searchParams.get("space");
 
-  if (activeChatId) {
+  if (activeChatId || activeTaskId) {
     return null;
   }
 

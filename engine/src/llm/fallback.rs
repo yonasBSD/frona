@@ -144,6 +144,7 @@ pub async fn stream_inference_with_fallback(
     Err(LlmError::AllFallbacksFailed(errors))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn retry_inference(
     registry: &ModelProviderRegistry,
     model_ref: &super::provider::ModelRef,
@@ -167,6 +168,7 @@ async fn retry_inference(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn retry_stream_inference(
     registry: &ModelProviderRegistry,
     model_ref: &super::provider::ModelRef,
@@ -213,6 +215,7 @@ async fn try_inference(
         .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn try_stream_inference(
     registry: &ModelProviderRegistry,
     model_ref: &super::provider::ModelRef,

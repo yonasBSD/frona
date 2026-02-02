@@ -10,10 +10,11 @@ pub mod error;
 pub mod llm;
 pub mod memory;
 pub mod models;
+pub mod prompt;
 pub mod repository;
+pub mod schedule;
 pub mod scheduler;
 pub mod space;
-pub mod task;
 pub mod tool;
 
 pub use frona_derive::Entity;

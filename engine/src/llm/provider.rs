@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use async_trait::async_trait;
 use rig::completion::{
     AssistantContent, CompletionModel, CompletionRequest, CompletionResponse,
@@ -7,6 +10,7 @@ use rig::completion::{
 use rig::completion::request::ToolDefinition as RigToolDefinition;
 use tokio::sync::mpsc;
 
+use crate::chat::broadcast::BroadcastService;
 use super::error::LlmError;
 
 #[derive(Debug, Clone)]
@@ -40,6 +44,49 @@ impl ModelRef {
     }
 }
 
+#[derive(Clone)]
+pub struct InferenceCounter {
+    count: Arc<AtomicUsize>,
+    broadcast: BroadcastService,
+}
+
+impl InferenceCounter {
+    pub fn new(broadcast: BroadcastService) -> Self {
+        Self {
+            count: Arc::new(AtomicUsize::new(0)),
+            broadcast,
+        }
+    }
+
+    fn increment(&self) {
+        let val = self.count.fetch_add(1, Ordering::Relaxed) + 1;
+        self.broadcast.broadcast_inference_count(val);
+    }
+
+    fn decrement(&self) {
+        let val = self.count.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+            Some(v.saturating_sub(1))
+        }).unwrap_or(0).saturating_sub(1);
+        self.broadcast.broadcast_inference_count(val);
+    }
+
+    pub fn guard(&self) -> InferenceGuard {
+        self.increment();
+        InferenceGuard { counter: self.clone() }
+    }
+}
+
+pub struct InferenceGuard {
+    counter: InferenceCounter,
+}
+
+impl Drop for InferenceGuard {
+    fn drop(&mut self) {
+        self.counter.decrement();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub trait ModelProvider: Send + Sync {
     async fn inference(
@@ -87,11 +134,12 @@ pub trait ModelProvider: Send + Sync {
 
 pub struct RigProvider<C> {
     client: C,
+    counter: InferenceCounter,
 }
 
 impl<C> RigProvider<C> {
-    pub fn new(client: C) -> Self {
-        Self { client }
+    pub fn new(client: C, counter: InferenceCounter) -> Self {
+        Self { client, counter }
     }
 }
 
@@ -115,6 +163,7 @@ where
     ) -> Result<String, LlmError> {
         use rig::completion::CompletionModel as _;
 
+        let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
 
         chat_history.push(user_message);
@@ -166,6 +215,7 @@ where
         use futures::StreamExt;
         use rig::completion::CompletionModel as _;
 
+        let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
 
         chat_history.push(user_message);
@@ -203,7 +253,7 @@ where
                 Ok(_) => {}
                 Err(e) => {
                     let _ = token_tx
-                        .send(Err(LlmError::StreamingFailed(format!("{e}"))))
+                        .send(Err(LlmError::CompletionFailed(e)))
                         .await;
                     break;
                 }
@@ -224,6 +274,7 @@ where
     ) -> Result<(Vec<AssistantContent>, Vec<RigMessage>), LlmError> {
         use rig::completion::CompletionModel as _;
 
+        let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
 
         tracing::debug!(
@@ -274,6 +325,7 @@ where
         use futures::StreamExt;
         use rig::completion::CompletionModel as _;
 
+        let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
 
         tracing::debug!(
@@ -332,7 +384,7 @@ where
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    return Err(LlmError::StreamingFailed(format!("{e}")));
+                    return Err(LlmError::CompletionFailed(e));
                 }
             }
         }
@@ -396,7 +448,7 @@ fn is_word_boundary(text: &str, pos: usize) -> bool {
     text[..pos]
         .chars()
         .next_back()
-        .map_or(true, |ch| !ch.is_alphanumeric() && ch != '_')
+        .is_none_or(|ch| !ch.is_alphanumeric() && ch != '_')
 }
 
 fn try_extract_tool_calls_from_text(

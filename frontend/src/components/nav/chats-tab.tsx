@@ -2,25 +2,42 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FolderPlusIcon, PlusIcon } from "@heroicons/react/24/outline";
+import {
+  FolderPlusIcon,
+  PlusIcon,
+  ArchiveBoxIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+} from "@heroicons/react/24/outline";
 import { api } from "@/lib/api-client";
-import { useNavigation } from "@/lib/navigation-context";
-import { useChat } from "@/lib/chat-context";
+import { useNavigation, neighborRoute } from "@/lib/navigation-context";
+import { useSession } from "@/lib/session-context";
+import { ChatActions } from "./chat-actions";
+import { DeleteConfirmDialog } from "./delete-confirm-dialog";
 import type { SpaceResponse } from "@/lib/types";
 
 export function ChatsTab() {
-  const { spaces, standaloneChats, refresh, addStandaloneChat } = useNavigation();
-  const { activeChatId, createChat } = useChat();
+  const {
+    spaces,
+    standaloneChats,
+    archivedChats,
+    showArchived,
+    setShowArchived,
+    refresh,
+    archiveChat,
+    unarchiveChat,
+    deleteChat,
+  } = useNavigation();
+  const { activeChatId } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeSpaceId = searchParams.get("space");
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [spaceName, setSpaceName] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
-  const handleNewChat = async () => {
-    const chat = await createChat({ agent_id: "system" });
-    addStandaloneChat(chat);
-    router.push(`/chat?id=${chat.id}`);
+  const handleNewChat = () => {
+    router.push("/chat?agent=system");
   };
 
   const handleCreateSpace = async (e: React.FormEvent) => {
@@ -31,6 +48,30 @@ export function ChatsTab() {
     setSpaceName("");
     setCreatingSpace(false);
     refresh();
+  };
+
+  const handleArchive = async (chatId: string) => {
+    await archiveChat(chatId);
+    if (activeChatId === chatId) {
+      router.push("/chat?agent=system");
+    }
+  };
+
+  const handleUnarchive = async (chatId: string) => {
+    await unarchiveChat(chatId);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    const wasActive = activeChatId === deleteTarget;
+    const next =
+      neighborRoute(standaloneChats, deleteTarget, (id) => `/chat?id=${id}`) ??
+      neighborRoute(archivedChats, deleteTarget, (id) => `/chat?id=${id}`);
+    await deleteChat(deleteTarget);
+    setDeleteTarget(null);
+    if (wasActive) {
+      router.push(next ?? "/chat?agent=system");
+    }
   };
 
   return (
@@ -95,25 +136,86 @@ export function ChatsTab() {
             </button>
           </div>
           {standaloneChats.map((chat) => (
-            <button
+            <div
               key={chat.id}
-              onClick={() => router.push(`/chat?id=${chat.id}`)}
-              className={`w-full rounded-lg px-3 py-2 text-left text-sm transition truncate ${
+              className={`group flex items-center rounded-lg pr-1 transition ${
                 activeChatId === chat.id
                   ? "bg-surface-tertiary text-text-primary"
                   : "text-text-secondary hover:bg-surface-secondary"
               }`}
             >
-              {chat.title ?? "New chat"}
-            </button>
+              <button
+                onClick={() => router.push(`/chat?id=${chat.id}`)}
+                className="flex-1 min-w-0 px-3 py-2 text-left text-sm truncate"
+              >
+                {chat.title ?? "New chat"}
+              </button>
+              <ChatActions
+                isArchived={false}
+                onArchive={() => handleArchive(chat.id)}
+                onUnarchive={() => {}}
+                onDelete={() => setDeleteTarget(chat.id)}
+              />
+            </div>
           ))}
         </div>
       )}
+
+      <div className="pt-2">
+        <button
+          onClick={() => setShowArchived(!showArchived)}
+          className="flex w-full items-center gap-1.5 px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary hover:text-text-secondary transition"
+        >
+          <ArchiveBoxIcon className="h-3 w-3" />
+          Archived
+          {showArchived ? (
+            <ChevronDownIcon className="ml-auto h-3 w-3" />
+          ) : (
+            <ChevronRightIcon className="ml-auto h-3 w-3" />
+          )}
+        </button>
+        {showArchived &&
+          archivedChats.map((chat) => (
+            <div
+              key={chat.id}
+              className={`group flex items-center rounded-lg pr-1 transition ${
+                activeChatId === chat.id
+                  ? "bg-surface-tertiary text-text-primary"
+                  : "text-text-secondary hover:bg-surface-secondary"
+              }`}
+            >
+              <button
+                onClick={() => router.push(`/chat?id=${chat.id}`)}
+                className="flex-1 min-w-0 px-3 py-2 text-left text-sm truncate"
+              >
+                {chat.title ?? "New chat"}
+              </button>
+              <ChatActions
+                isArchived
+                onArchive={() => {}}
+                onUnarchive={() => handleUnarchive(chat.id)}
+                onDelete={() => setDeleteTarget(chat.id)}
+              />
+            </div>
+          ))}
+        {showArchived && archivedChats.length === 0 && (
+          <p className="px-3 py-2 text-xs text-text-tertiary">
+            No archived chats
+          </p>
+        )}
+      </div>
+
       {spaces.length === 0 && standaloneChats.length === 0 && !creatingSpace && (
         <p className="px-2 py-4 text-center text-xs text-text-tertiary">
           No chats yet. Start a new conversation!
         </p>
       )}
+
+      <DeleteConfirmDialog
+        open={deleteTarget !== null}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteConfirm}
+      />
     </div>
   );
 }

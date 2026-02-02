@@ -110,10 +110,10 @@ impl AgentTool for UpdateEntityTool {
 
         let owner = record.get("user_id").and_then(|v| v.as_str());
 
-        if let Some(uid) = owner {
-            if uid != self.user_id {
-                return Err(AppError::Forbidden("Not your record".into()));
-            }
+        if let Some(uid) = owner
+            && uid != self.user_id
+        {
+            return Err(AppError::Forbidden("Not your record".into()));
         }
 
         fields.insert(

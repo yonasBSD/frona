@@ -20,6 +20,8 @@ pub struct MessageResponse {
     pub role: MessageRole,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -35,6 +37,7 @@ impl From<super::models::Message> for MessageResponse {
             chat_id: msg.chat_id,
             role: msg.role,
             content: msg.content,
+            agent_id: msg.agent_id,
             tool_calls: msg.tool_calls,
             tool_call_id: msg.tool_call_id,
             tool: msg.tool,

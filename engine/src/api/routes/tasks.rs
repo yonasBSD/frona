@@ -1,7 +1,7 @@
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use crate::task::dto::{CreateTaskRequest, TaskResponse, UpdateTaskRequest};
+use crate::agent::task::dto::{CreateTaskRequest, TaskResponse, UpdateTaskRequest};
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
@@ -12,8 +12,27 @@ pub fn router() -> Router<AppState> {
         .route("/api/tasks", get(list_active_tasks).post(create_task))
         .route(
             "/api/tasks/{id}",
-            axum::routing::put(update_task).delete(delete_task),
+            get(get_task).put(update_task).delete(delete_task),
         )
+        .route("/api/tasks/{id}/cancel", axum::routing::post(cancel_task))
+}
+
+async fn get_task(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<TaskResponse>, ApiError> {
+    let task = state
+        .task_service
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| crate::error::AppError::NotFound("Task not found".into()))?;
+
+    if task.user_id != auth.user_id {
+        return Err(crate::error::AppError::Forbidden("Not your task".into()).into());
+    }
+
+    Ok(Json(task.into()))
 }
 
 async fn create_task(
@@ -29,7 +48,7 @@ async fn list_active_tasks(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<TaskResponse>>, ApiError> {
-    let tasks = state.task_service.list_active(&auth.user_id).await?;
+    let tasks = state.task_service.list_all(&auth.user_id).await?;
     Ok(Json(tasks))
 }
 
@@ -50,4 +69,18 @@ async fn delete_task(
 ) -> Result<(), ApiError> {
     state.task_service.delete(&auth.user_id, &id).await?;
     Ok(())
+}
+
+async fn cancel_task(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<TaskResponse>, ApiError> {
+    let task = state.task_service.cancel(&auth.user_id, &id).await?;
+
+    if let Some(executor) = state.task_executor() {
+        executor.cancel_task(&id).await;
+    }
+
+    Ok(Json(task.into()))
 }

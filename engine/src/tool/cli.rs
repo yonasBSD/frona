@@ -149,10 +149,10 @@ impl AgentTool for CliTool {
             ));
         }
 
-        if let Some(code) = output.exit_code {
-            if code != 0 {
-                result.push_str(&format!("Exit code: {code}\n"));
-            }
+        if let Some(code) = output.exit_code
+            && code != 0
+        {
+            result.push_str(&format!("Exit code: {code}\n"));
         }
 
         if !output.stdout.is_empty() {

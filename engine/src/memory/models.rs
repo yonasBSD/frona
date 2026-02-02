@@ -11,6 +11,7 @@ pub enum MemorySourceType {
     Chat,
     Agent,
     Space,
+    User,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]

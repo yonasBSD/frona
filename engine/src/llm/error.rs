@@ -30,12 +30,15 @@ pub enum LlmError {
     ConfigError(String),
 }
 
+fn provider_error_contains_status(msg: &str, codes: &[u16]) -> bool {
+    codes.iter().any(|code| msg.contains(&code.to_string()))
+}
+
 impl LlmError {
     pub fn is_retryable(&self) -> bool {
         match self {
             LlmError::RateLimited { .. } => true,
-            LlmError::CompletionFailed(err) => match err {
-                rig::completion::CompletionError::HttpError(http_err) => {
+            LlmError::CompletionFailed(rig::completion::CompletionError::HttpError(http_err)) => {
                     use rig::http_client::Error;
                     match http_err {
                         Error::InvalidStatusCode(s)
@@ -50,9 +53,11 @@ impl LlmError {
                         Error::Instance(_) => true,
                         _ => false,
                     }
-                }
-                _ => false,
-            },
+            }
+            LlmError::CompletionFailed(rig::completion::CompletionError::ProviderError(msg)) => {
+                provider_error_contains_status(msg, &[429, 500, 502, 503, 504])
+            }
+            LlmError::CompletionFailed(_) => false,
             LlmError::InferenceFailed(msg) | LlmError::StreamingFailed(msg) => {
                 let lower = msg.to_lowercase();
                 lower.contains("429")
@@ -73,6 +78,9 @@ impl LlmError {
                     Error::InvalidStatusCode(s) | Error::InvalidStatusCodeWithMessage(s, _)
                     if s.as_u16() == 429
                 )
+            }
+            LlmError::CompletionFailed(rig::completion::CompletionError::ProviderError(msg)) => {
+                provider_error_contains_status(msg, &[429])
             }
             _ => false,
         }

@@ -8,8 +8,9 @@ use surrealdb::types::SurrealValue;
 #[surreal(crate = "surrealdb::types", lowercase)]
 pub enum MessageRole {
     User,
-    Assistant,
+    Agent,
     ToolResult,
+    TaskCompletion,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
@@ -42,6 +43,11 @@ pub enum MessageTool {
     Info {
         message: String,
     },
+    TaskCompletion {
+        task_id: String,
+        chat_id: Option<String>,
+        status: crate::agent::task::models::TaskStatus,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
@@ -52,8 +58,102 @@ pub struct Message {
     pub chat_id: String,
     pub role: MessageRole,
     pub content: String,
+    pub agent_id: Option<String>,
     pub tool_calls: Option<serde_json::Value>,
     pub tool_call_id: Option<String>,
     pub tool: Option<MessageTool>,
     pub created_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::task::models::TaskStatus;
+
+    #[test]
+    fn agent_role_serializes_lowercase() {
+        let json = serde_json::to_string(&MessageRole::Agent).unwrap();
+        assert_eq!(json, r#""agent""#);
+    }
+
+    #[test]
+    fn agent_role_deserializes_from_lowercase() {
+        let role: MessageRole = serde_json::from_str(r#""agent""#).unwrap();
+        assert_eq!(role, MessageRole::Agent);
+    }
+
+    #[test]
+    fn task_completion_role_serializes_lowercase() {
+        let json = serde_json::to_string(&MessageRole::TaskCompletion).unwrap();
+        assert_eq!(json, r#""taskcompletion""#);
+    }
+
+    #[test]
+    fn task_completion_role_deserializes_from_lowercase() {
+        let role: MessageRole = serde_json::from_str(r#""taskcompletion""#).unwrap();
+        assert_eq!(role, MessageRole::TaskCompletion);
+    }
+
+    #[test]
+    fn task_completion_tool_round_trips() {
+        let tool = MessageTool::TaskCompletion {
+            task_id: "t-123".to_string(),
+            chat_id: Some("chat-456".to_string()),
+            status: TaskStatus::Completed,
+        };
+
+        let json = serde_json::to_string(&tool).unwrap();
+        let parsed: MessageTool = serde_json::from_str(&json).unwrap();
+
+        match parsed {
+            MessageTool::TaskCompletion {
+                task_id,
+                chat_id,
+                status,
+            } => {
+                assert_eq!(task_id, "t-123");
+                assert_eq!(chat_id, Some("chat-456".to_string()));
+                assert_eq!(status, TaskStatus::Completed);
+            }
+            _ => panic!("Expected TaskCompletion variant"),
+        }
+    }
+
+    #[test]
+    fn task_completion_tool_with_null_chat_id() {
+        let tool = MessageTool::TaskCompletion {
+            task_id: "t-789".to_string(),
+            chat_id: None,
+            status: TaskStatus::Failed,
+        };
+
+        let json = serde_json::to_string(&tool).unwrap();
+        assert!(json.contains(r#""type":"TaskCompletion""#));
+
+        let parsed: MessageTool = serde_json::from_str(&json).unwrap();
+        match parsed {
+            MessageTool::TaskCompletion { chat_id, status, .. } => {
+                assert_eq!(chat_id, None);
+                assert_eq!(status, TaskStatus::Failed);
+            }
+            _ => panic!("Expected TaskCompletion variant"),
+        }
+    }
+
+    #[test]
+    fn task_completion_tool_with_task_status() {
+        for status in [TaskStatus::Completed, TaskStatus::Failed] {
+            let tool = MessageTool::TaskCompletion {
+                task_id: "t-1".to_string(),
+                chat_id: None,
+                status: status.clone(),
+            };
+            let json = serde_json::to_string(&tool).unwrap();
+            let parsed: MessageTool = serde_json::from_str(&json).unwrap();
+            match parsed {
+                MessageTool::TaskCompletion { status: s, .. } => assert_eq!(s, status),
+                _ => panic!("Expected TaskCompletion"),
+            }
+        }
+    }
 }

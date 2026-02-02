@@ -24,10 +24,12 @@ export interface Agent {
   id: string;
   name: string;
   description: string;
-  system_prompt: string;
   model_group: string;
   enabled: boolean;
   tools: string[];
+  avatar: string | null;
+  identity: Record<string, string>;
+  chat_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -35,7 +37,6 @@ export interface Agent {
 export interface CreateAgentRequest {
   name: string;
   description: string;
-  system_prompt: string;
   model_group?: string;
   tools?: string[];
 }
@@ -43,7 +44,6 @@ export interface CreateAgentRequest {
 export interface UpdateAgentRequest {
   name?: string;
   description?: string;
-  system_prompt?: string;
   model_group?: string;
   enabled?: boolean;
   tools?: string[];
@@ -71,6 +71,7 @@ export interface ChatResponse {
   space_id: string | null;
   agent_id: string;
   title: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -88,13 +89,15 @@ export type MessageTool =
   | { type: "HumanInTheLoop"; data: { reason: string; debugger_url: string; status: MessageToolStatus; response: string | null } }
   | { type: "Question"; data: { question: string; options: string[]; status: MessageToolStatus; response: string | null } }
   | { type: "Warning"; data: { message: string } }
-  | { type: "Info"; data: { message: string } };
+  | { type: "Info"; data: { message: string } }
+  | { type: "TaskCompletion"; data: { task_id: string; chat_id: string | null; status: string } };
 
 export interface MessageResponse {
   id: string;
   chat_id: string;
-  role: "user" | "assistant" | "toolresult";
+  role: "user" | "agent" | "toolresult" | "taskcompletion";
   content: string;
+  agent_id?: string;
   tool_calls?: unknown[];
   tool_call_id?: string;
   tool?: MessageTool;
@@ -102,20 +105,42 @@ export interface MessageResponse {
 }
 
 // Task types
+export type TaskKind =
+  | { type: "Direct" }
+  | { type: "Delegation"; source_agent_id: string; source_chat_id: string };
+
 export interface TaskResponse {
   id: string;
+  agent_id: string;
+  space_id: string | null;
   chat_id: string | null;
   title: string;
   description: string;
   status: string;
+  kind: TaskKind;
+  result_summary: string | null;
+  error_message: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface CreateTaskRequest {
+  agent_id: string;
+  space_id?: string;
   chat_id?: string;
   title: string;
   description?: string;
+  source_agent_id?: string;
+  source_chat_id?: string;
+}
+
+export interface TaskUpdateEvent {
+  task_id: string;
+  status: string;
+  title: string;
+  chat_id: string | null;
+  source_chat_id: string | null;
+  result_summary: string | null;
 }
 
 // Tool call types

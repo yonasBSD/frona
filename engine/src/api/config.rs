@@ -4,12 +4,13 @@ pub struct Config {
     pub surreal_path: String,
     pub static_dir: String,
     pub models_config_path: String,
-    pub agents_config_dir: String,
     pub browserless_ws_url: String,
     pub browser_profiles_path: String,
     pub workspaces_base_path: String,
     pub tools_config_path: String,
     pub skills_config_dir: String,
+    pub prompts_override_dir: String,
+    pub max_concurrent_tasks: usize,
 }
 
 impl Config {
@@ -25,8 +26,6 @@ impl Config {
             static_dir: std::env::var("STATIC_DIR").unwrap_or_else(|_| "frontend/out".into()),
             models_config_path: std::env::var("FRONA_MODELS_CONFIG")
                 .unwrap_or_else(|_| "data/models.json".into()),
-            agents_config_dir: std::env::var("FRONA_AGENTS_CONFIG_DIR")
-                .unwrap_or_else(|_| "data/agents".into()),
             browserless_ws_url: std::env::var("BROWSERLESS_WS_URL")
                 .unwrap_or_else(|_| "ws://localhost:3333".into()),
             browser_profiles_path: std::env::var("BROWSER_PROFILES_PATH")
@@ -37,6 +36,12 @@ impl Config {
                 .unwrap_or_else(|_| "data/tools.json".into()),
             skills_config_dir: std::env::var("FRONA_SKILLS_CONFIG_DIR")
                 .unwrap_or_else(|_| "engine/config".into()),
+            prompts_override_dir: std::env::var("FRONA_PROMPTS_DIR")
+                .unwrap_or_else(|_| "data/config/prompts".into()),
+            max_concurrent_tasks: std::env::var("MAX_CONCURRENT_TASKS")
+                .unwrap_or_else(|_| "10".into())
+                .parse()
+                .expect("MAX_CONCURRENT_TASKS must be a number"),
         }
     }
 }
