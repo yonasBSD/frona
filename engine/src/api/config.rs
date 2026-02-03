@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct Config {
     pub port: u16,
     pub jwt_secret: String,
@@ -7,6 +8,7 @@ pub struct Config {
     pub browserless_ws_url: String,
     pub browser_profiles_path: String,
     pub workspaces_base_path: String,
+    pub files_base_path: String,
     pub tools_config_path: String,
     pub skills_config_dir: String,
     pub prompts_override_dir: String,
@@ -32,6 +34,8 @@ impl Config {
                 .unwrap_or_else(|_| "/profiles".into()),
             workspaces_base_path: std::env::var("WORKSPACES_BASE_PATH")
                 .unwrap_or_else(|_| "data/workspaces".into()),
+            files_base_path: std::env::var("FILES_BASE_PATH")
+                .unwrap_or_else(|_| "data/files".into()),
             tools_config_path: std::env::var("FRONA_TOOLS_CONFIG")
                 .unwrap_or_else(|_| "data/tools.json".into()),
             skills_config_dir: std::env::var("FRONA_SKILLS_CONFIG_DIR")

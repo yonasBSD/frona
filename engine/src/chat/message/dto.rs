@@ -1,11 +1,14 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::api::files::Attachment;
 use super::models::{MessageRole, MessageTool};
 
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
     pub content: String,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +30,8 @@ pub struct MessageResponse {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<MessageTool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -41,6 +46,7 @@ impl From<super::models::Message> for MessageResponse {
             tool_calls: msg.tool_calls,
             tool_call_id: msg.tool_call_id,
             tool: msg.tool,
+            attachments: msg.attachments,
             created_at: msg.created_at,
         }
     }

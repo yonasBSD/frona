@@ -387,6 +387,7 @@ impl TaskExecutor {
                             &chat_id,
                             accumulated_text,
                             Some(tool_calls_json),
+                            vec![],
                         )
                         .await;
 
@@ -462,6 +463,16 @@ impl TaskExecutor {
 
         let message_text = summary.unwrap_or_default().to_string();
 
+        let attachments = if let Some(ref chat_id) = task.chat_id {
+            self.state
+                .chat_service
+                .find_attachments_by_chat_id(chat_id)
+                .await
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
         match self
             .state
             .chat_service
@@ -474,6 +485,7 @@ impl TaskExecutor {
                     chat_id: task.chat_id.clone(),
                     status: TaskStatus::Completed,
                 },
+                attachments,
             )
             .await
         {
@@ -519,6 +531,7 @@ impl TaskExecutor {
                     chat_id: task.chat_id.clone(),
                     status: TaskStatus::Failed,
                 },
+                vec![],
             )
             .await
         {

@@ -84,6 +84,7 @@ pub struct AppState {
     pub skill_resolver: SkillResolver,
     pub task_executor: Arc<OnceLock<Arc<TaskExecutor>>>,
     pub max_concurrent_tasks: usize,
+    pub config: Arc<Config>,
 }
 
 impl AppState {
@@ -152,6 +153,7 @@ impl AppState {
             skill_resolver,
             task_executor: Arc::new(OnceLock::new()),
             max_concurrent_tasks: config.max_concurrent_tasks,
+            config: Arc::new(config.clone()),
         }
     }
 

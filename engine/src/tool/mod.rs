@@ -2,6 +2,8 @@ pub mod browser;
 pub mod cli;
 pub mod delegate;
 pub mod notify_human;
+pub mod produce_file;
+pub mod read_file;
 pub mod registry;
 pub mod remember;
 pub mod routine;

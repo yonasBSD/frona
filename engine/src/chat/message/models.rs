@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use crate::Entity;
+use crate::api::files::Attachment;
 use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
@@ -62,6 +63,8 @@ pub struct Message {
     pub tool_calls: Option<serde_json::Value>,
     pub tool_call_id: Option<String>,
     pub tool: Option<MessageTool>,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -155,5 +158,83 @@ mod tests {
                 _ => panic!("Expected TaskCompletion"),
             }
         }
+    }
+
+    #[test]
+    fn attachment_round_trips() {
+        let attachment = Attachment {
+            filename: "report.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            size_bytes: 1024,
+            path: "user://uid-123/report.pdf".to_string(),
+        };
+        let json = serde_json::to_string(&attachment).unwrap();
+        let parsed: Attachment = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.filename, "report.pdf");
+        assert_eq!(parsed.path, "user://uid-123/report.pdf");
+        assert_eq!(parsed.size_bytes, 1024);
+    }
+
+    #[test]
+    fn message_with_empty_attachments_round_trips() {
+        let msg = Message {
+            id: "m1".to_string(),
+            chat_id: "c1".to_string(),
+            role: MessageRole::User,
+            content: "hello".to_string(),
+            agent_id: None,
+            tool_calls: None,
+            tool_call_id: None,
+            tool: None,
+            attachments: vec![],
+            created_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert!(parsed.attachments.is_empty());
+    }
+
+    #[test]
+    fn message_with_attachments_round_trips() {
+        let msg = Message {
+            id: "m1".to_string(),
+            chat_id: "c1".to_string(),
+            role: MessageRole::User,
+            content: "see attached".to_string(),
+            agent_id: None,
+            tool_calls: None,
+            tool_call_id: None,
+            tool: None,
+            attachments: vec![
+                Attachment {
+                    filename: "photo.png".to_string(),
+                    content_type: "image/png".to_string(),
+                    size_bytes: 2048,
+                    path: "user://uid/photo.png".to_string(),
+                },
+            ],
+            created_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.attachments.len(), 1);
+        assert_eq!(parsed.attachments[0].filename, "photo.png");
+    }
+
+    #[test]
+    fn message_without_attachments_field_defaults_to_empty() {
+        let json = r#"{
+            "id": "m1",
+            "chat_id": "c1",
+            "role": "user",
+            "content": "old message",
+            "agent_id": null,
+            "tool_calls": null,
+            "tool_call_id": null,
+            "tool": null,
+            "created_at": "2024-01-01T00:00:00Z"
+        }"#;
+        let parsed: Message = serde_json::from_str(json).unwrap();
+        assert!(parsed.attachments.is_empty());
     }
 }

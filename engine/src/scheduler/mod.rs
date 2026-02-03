@@ -353,7 +353,7 @@ async fn execute_routine(
 
     state
         .chat_service
-        .create_stream_user_message(user_id, &chat_id, &message_content)
+        .create_stream_user_message(user_id, &chat_id, &message_content, vec![])
         .await?;
 
     let agent_config = state

@@ -3,11 +3,22 @@ use rig::completion::{AssistantContent, Message as RigMessage};
 use crate::chat::message::models::Message;
 use crate::chat::message::models::MessageRole;
 
+fn format_content_with_attachments(content: &str, attachments: &[crate::api::files::Attachment]) -> String {
+    if attachments.is_empty() {
+        return content.to_string();
+    }
+    let paths: Vec<&str> = attachments.iter().map(|a| a.path.as_str()).collect();
+    format!("{content}\n<files>\n{}\n</files>", paths.join("\n"))
+}
+
 pub fn to_rig_messages(messages: &[Message], chat_agent_id: &str) -> Vec<RigMessage> {
     messages
         .iter()
         .filter_map(|msg| match msg.role {
-            MessageRole::User => Some(RigMessage::user(&msg.content)),
+            MessageRole::User => {
+                let content = format_content_with_attachments(&msg.content, &msg.attachments);
+                Some(RigMessage::user(&content))
+            }
             MessageRole::Agent => {
                 let is_self = msg.agent_id.as_deref() == Some(chat_agent_id);
                 if is_self {
@@ -40,7 +51,10 @@ pub fn to_rig_messages(messages: &[Message], chat_agent_id: &str) -> Vec<RigMess
                 let tool_call_id = msg.tool_call_id.as_deref().unwrap_or_default();
                 Some(RigMessage::tool_result(tool_call_id, &msg.content))
             }
-            MessageRole::TaskCompletion => Some(RigMessage::user(&msg.content)),
+            MessageRole::TaskCompletion => {
+                let content = format_content_with_attachments(&msg.content, &msg.attachments);
+                Some(RigMessage::user(&content))
+            }
         })
         .collect()
 }
@@ -62,6 +76,7 @@ mod tests {
             tool_calls: None,
             tool_call_id: None,
             tool: None,
+            attachments: vec![],
             created_at: Utc::now(),
         }
     }
@@ -158,5 +173,74 @@ mod tests {
         assert!(matches!(result[0], RigMessage::User { .. }));
         assert!(matches!(result[1], RigMessage::Assistant { .. }));
         assert!(matches!(result[2], RigMessage::User { .. }));
+    }
+
+    fn extract_user_text(msg: &RigMessage) -> String {
+        match msg {
+            RigMessage::User { content } => {
+                match content.first() {
+                    rig::message::UserContent::Text(t) => t.text.clone(),
+                    _ => panic!("Expected text content"),
+                }
+            }
+            _ => panic!("Expected User message"),
+        }
+    }
+
+    #[test]
+    fn user_message_with_attachments_appends_files_block() {
+        let msg = Message {
+            attachments: vec![
+                crate::api::files::Attachment {
+                    filename: "report.pdf".to_string(),
+                    content_type: "application/pdf".to_string(),
+                    size_bytes: 1024,
+                    path: "user://uid/report.pdf".to_string(),
+                },
+            ],
+            ..make_message(MessageRole::User, "check this file")
+        };
+
+        let result = to_rig_messages(&[msg], "agent-1");
+        assert_eq!(result.len(), 1);
+        let text = extract_user_text(&result[0]);
+        assert!(text.contains("check this file"));
+        assert!(text.contains("<files>"));
+        assert!(text.contains("user://uid/report.pdf"));
+        assert!(text.contains("</files>"));
+    }
+
+    #[test]
+    fn user_message_without_attachments_unchanged() {
+        let msg = make_message(MessageRole::User, "hello world");
+        let result = to_rig_messages(&[msg], "agent-1");
+        let text = extract_user_text(&result[0]);
+        assert_eq!(text, "hello world");
+        assert!(!text.contains("<files>"));
+    }
+
+    #[test]
+    fn task_completion_with_attachments_appends_files_block() {
+        let msg = Message {
+            tool: Some(MessageTool::TaskCompletion {
+                task_id: "t1".to_string(),
+                chat_id: None,
+                status: TaskStatus::Completed,
+            }),
+            attachments: vec![
+                crate::api::files::Attachment {
+                    filename: "output.csv".to_string(),
+                    content_type: "text/csv".to_string(),
+                    size_bytes: 512,
+                    path: "agent://dev/output.csv".to_string(),
+                },
+            ],
+            ..make_message(MessageRole::TaskCompletion, "Task done")
+        };
+
+        let result = to_rig_messages(&[msg], "agent-1");
+        let text = extract_user_text(&result[0]);
+        assert!(text.contains("Task done"));
+        assert!(text.contains("agent://dev/output.csv"));
     }
 }

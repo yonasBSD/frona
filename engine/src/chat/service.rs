@@ -245,6 +245,7 @@ impl ChatService {
             tool_calls: None,
             tool_call_id: None,
             tool: None,
+            attachments: vec![],
             created_at: now,
         };
         let user_message = self.message_repo.create(&user_message).await?;
@@ -277,6 +278,7 @@ impl ChatService {
             tool_calls: None,
             tool_call_id: None,
             tool: None,
+            attachments: vec![],
             created_at: chrono::Utc::now(),
         };
         let assistant_message = self.message_repo.create(&assistant_message).await?;
@@ -312,6 +314,7 @@ impl ChatService {
         user_id: &str,
         chat_id: &str,
         content: &str,
+        attachments: Vec<crate::api::files::Attachment>,
     ) -> Result<MessageResponse, AppError> {
         let chat = self
             .chat_repo
@@ -332,6 +335,7 @@ impl ChatService {
             tool_calls: None,
             tool_call_id: None,
             tool: None,
+            attachments,
             created_at: chrono::Utc::now(),
         };
         let saved = self.message_repo.create(&user_message).await?;
@@ -343,7 +347,7 @@ impl ChatService {
         chat_id: &str,
         content: String,
     ) -> Result<MessageResponse, AppError> {
-        self.save_assistant_message_with_tool_calls(chat_id, content, None).await
+        self.save_assistant_message_with_tool_calls(chat_id, content, None, vec![]).await
     }
 
     pub async fn save_assistant_message_with_tool_calls(
@@ -351,6 +355,7 @@ impl ChatService {
         chat_id: &str,
         content: String,
         tool_calls: Option<serde_json::Value>,
+        attachments: Vec<crate::api::files::Attachment>,
     ) -> Result<MessageResponse, AppError> {
         let chat = self.chat_repo.find_by_id(chat_id).await?.ok_or_else(|| {
             AppError::NotFound("Chat not found".into())
@@ -364,6 +369,7 @@ impl ChatService {
             tool_calls,
             tool_call_id: None,
             tool: None,
+            attachments,
             created_at: chrono::Utc::now(),
         };
         let saved = self.message_repo.create(&assistant_message).await?;
@@ -385,6 +391,7 @@ impl ChatService {
             tool_calls: None,
             tool_call_id: None,
             tool: None,
+            attachments: vec![],
             created_at: chrono::Utc::now(),
         };
         let saved = self.message_repo.create(&message).await?;
@@ -416,6 +423,7 @@ impl ChatService {
             tool_calls: None,
             tool_call_id: Some(tool_call_id.to_string()),
             tool,
+            attachments: vec![],
             created_at: chrono::Utc::now(),
         };
         let saved = self.message_repo.create(&message).await?;
@@ -460,6 +468,7 @@ impl ChatService {
         agent_id: &str,
         content: String,
         tool: MessageTool,
+        attachments: Vec<crate::api::files::Attachment>,
     ) -> Result<MessageResponse, AppError> {
         let message = Message {
             id: uuid::Uuid::new_v4().to_string(),
@@ -470,6 +479,7 @@ impl ChatService {
             tool_calls: None,
             tool_call_id: None,
             tool: Some(tool),
+            attachments,
             created_at: chrono::Utc::now(),
         };
         let saved = self.message_repo.create(&message).await?;
@@ -610,6 +620,13 @@ impl ChatService {
         user_id: &str,
     ) -> Result<Vec<Chat>, AppError> {
         self.chat_repo.find_standalone_by_user_id(user_id).await
+    }
+
+    pub async fn find_attachments_by_chat_id(
+        &self,
+        chat_id: &str,
+    ) -> Result<Vec<crate::api::files::Attachment>, AppError> {
+        self.message_repo.find_attachments_by_chat_id(chat_id).await
     }
 }
 

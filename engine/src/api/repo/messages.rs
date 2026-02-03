@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use crate::api::files::Attachment;
 use crate::error::AppError;
 use crate::chat::message::models::Message;
 use crate::chat::message::repository::MessageRepository;
@@ -76,5 +77,16 @@ impl MessageRepository for SurrealRepo<Message> {
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
+    }
+
+    async fn find_attachments_by_chat_id(
+        &self,
+        chat_id: &str,
+    ) -> Result<Vec<Attachment>, AppError> {
+        let messages: Vec<Message> = self.find_by_chat_id(chat_id).await?;
+        Ok(messages
+            .into_iter()
+            .flat_map(|m| m.attachments)
+            .collect())
     }
 }

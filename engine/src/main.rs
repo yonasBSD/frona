@@ -88,6 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::browser::router())
         .merge(routes::navigation::router())
         .merge(routes::tools::router())
+        .merge(routes::files::router())
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

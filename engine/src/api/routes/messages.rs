@@ -27,6 +27,8 @@ use crate::tool::remember::{RememberTool, RememberUserFactTool};
 use crate::tool::skill::SkillTool;
 use crate::tool::delegate::DelegateTaskTool;
 use crate::tool::routine::{UpdateRoutineTool, UpdateRoutineFrequencyTool};
+use crate::tool::produce_file::ProduceFileTool;
+use crate::tool::read_file::ReadFileTool;
 use crate::tool::schedule::ScheduleTaskTool;
 use crate::tool::update_entity::UpdateEntityTool;
 use crate::tool::update_identity::UpdateIdentityTool;
@@ -117,6 +119,16 @@ pub async fn build_tool_registry(
     let credential_id = credential.as_ref().map(|c| c.id.clone());
 
     registry.register(Arc::new(NotifyHumanTool::new(credential_id)));
+
+    registry.register(Arc::new(ReadFileTool::new(
+        state.config.as_ref().clone(),
+    )));
+
+    let workspace_path = std::path::Path::new(&state.config.workspaces_base_path).join(agent_id);
+    registry.register(Arc::new(ProduceFileTool::new(
+        agent_id.to_string(),
+        workspace_path,
+    )));
 
     registry.register(Arc::new(UpdateEntityTool::new(
         state.db.clone(),
@@ -428,7 +440,7 @@ async fn stream_message(
     if let Some(pending_id) = pending_tool_id {
         let user_response = state
             .chat_service
-            .create_stream_user_message(&auth.user_id, &chat_id, &user_content)
+            .create_stream_user_message(&auth.user_id, &chat_id, &user_content, vec![])
             .await
             .map_err(ApiError::from)?;
 
@@ -488,7 +500,7 @@ async fn stream_message(
 
         let user_response = state
             .chat_service
-            .create_stream_user_message(&auth.user_id, &chat_id, &user_content)
+            .create_stream_user_message(&auth.user_id, &chat_id, &user_content, req.attachments)
             .await
             .map_err(ApiError::from)?;
 
@@ -647,6 +659,7 @@ async fn stream_tool_loop_events(
     chat_id: &str,
 ) {
     let mut accumulated = String::new();
+    let mut produced_attachments: Vec<crate::api::files::Attachment> = Vec::new();
     while let Some(event) = tool_event_rx.recv().await {
         match event.kind {
             ToolLoopEventKind::Text(text) => {
@@ -675,6 +688,11 @@ async fn stream_tool_loop_events(
                 }
             }
             ToolLoopEventKind::ToolResult { name, result } => {
+                if name == "produce_file"
+                    && let Ok(attachment) = serde_json::from_str::<crate::api::files::Attachment>(&result)
+                {
+                    produced_attachments.push(attachment);
+                }
                 let result_event = Event::default()
                     .event("tool_result")
                     .json_data(serde_json::json!({
@@ -722,7 +740,9 @@ async fn stream_tool_loop_events(
                 ToolLoopOutcome::Completed(_) => {
                     if !accumulated.is_empty()
                         && let Ok(assistant_response) =
-                            chat_service.save_assistant_message(chat_id, accumulated).await
+                            chat_service.save_assistant_message_with_tool_calls(
+                                chat_id, accumulated, None, produced_attachments,
+                            ).await
                     {
                         let done_event = Event::default()
                             .event("done")
@@ -754,6 +774,7 @@ async fn stream_tool_loop_events(
                             chat_id,
                             accumulated_text,
                             Some(tool_calls_json),
+                            vec![],
                         )
                         .await;
 
@@ -926,6 +947,7 @@ async fn resume_tool_loop(
                                 &chat_id_owned,
                                 accumulated,
                                 Some(tool_calls_json),
+                                vec![],
                             )
                             .await;
                     } else {
@@ -934,6 +956,7 @@ async fn resume_tool_loop(
                                 &chat_id_owned,
                                 accumulated_text,
                                 Some(tool_calls_json),
+                                vec![],
                             )
                             .await;
                     }
