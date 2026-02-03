@@ -36,11 +36,7 @@ export function MessageBubble({ message, agentName }: MessageBubbleProps) {
             {displayName}
           </p>
           <div className="text-sm text-text-primary">
-            {isUser ? (
-              <p className="whitespace-pre-wrap">{message.content}</p>
-            ) : (
-              <MarkdownContent content={message.content} />
-            )}
+            <MarkdownContent content={message.content} />
           </div>
         </div>
       </div>
