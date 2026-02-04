@@ -41,11 +41,39 @@ async function request<T>(
   return JSON.parse(text);
 }
 
-import type { MessageResponse } from "./types";
+import type { MessageResponse, Attachment } from "./types";
+
+export async function uploadFile(file: File, relativePath?: string): Promise<Attachment> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (relativePath) {
+    formData.append("path", relativePath);
+  }
+
+  const res = await fetch(`${API_URL}/api/files`, {
+    method: "POST",
+    body: formData,
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new ApiError(res.status, body.error || "Upload failed");
+  }
+
+  return res.json();
+}
+
+export function fileDownloadUrl(virtualPath: string): string {
+  // user://uid/file.txt → /api/files/user/uid/file.txt
+  // agent://aid/path/file.txt → /api/files/agent/aid/path/file.txt
+  const withoutScheme = virtualPath.replace("://", "/");
+  return `${API_URL}/api/files/${withoutScheme}`;
+}
 
 export async function streamMessage(
   chatId: string,
-  body: { content: string },
+  body: { content: string; attachments?: Attachment[] },
   callbacks: {
     onUserMessage: (msg: MessageResponse) => void;
     onToken: (content: string) => void;

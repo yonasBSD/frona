@@ -12,7 +12,7 @@ import {
 import { useSearchParams, useRouter } from "next/navigation";
 import { api, streamMessage, cancelGeneration, getTask } from "./api-client";
 import { useNavigation } from "./navigation-context";
-import type { ChatResponse, MessageResponse, CreateChatRequest, ToolCallStatus, TaskResponse } from "./types";
+import type { ChatResponse, MessageResponse, CreateChatRequest, ToolCallStatus, TaskResponse, Attachment } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -27,7 +27,7 @@ interface SessionContextValue {
   inferring: boolean;
   streamingContent: string | null;
   activeToolCalls: ToolCallStatus[];
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, attachments?: Attachment[]) => Promise<void>;
   stopGeneration: () => void;
   createChat: (req: CreateChatRequest) => Promise<ChatResponse>;
   setPendingMessage: (message: string) => void;
@@ -195,7 +195,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   );
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, attachments?: Attachment[]) => {
       if (!activeChatId && pendingAgentId) {
         const chat = await api.post<ChatResponse>("/api/chats", { agent_id: pendingAgentId });
         addStandaloneChat(chat);
@@ -213,7 +213,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      await streamMessage(activeChatId, { content }, {
+      const body = attachments?.length
+        ? { content, attachments }
+        : { content };
+
+      await streamMessage(activeChatId, body, {
         onUserMessage: (msg) => {
           setMessages((prev) => [...prev, msg]);
         },

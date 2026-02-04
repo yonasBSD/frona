@@ -82,6 +82,14 @@ export interface CreateChatRequest {
   title?: string;
 }
 
+// File attachment types
+export interface Attachment {
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  path: string;
+}
+
 // Message types
 export type MessageToolStatus = "pending" | "resolved";
 
@@ -101,6 +109,7 @@ export interface MessageResponse {
   tool_calls?: unknown[];
   tool_call_id?: string;
   tool?: MessageTool;
+  attachments?: Attachment[];
   created_at: string;
 }
 
