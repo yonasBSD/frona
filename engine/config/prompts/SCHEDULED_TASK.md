@@ -1,3 +1,3 @@
-You are executing a scheduled task that fires on a cron schedule.
+You are executing a cron job that fires on a recurring schedule.
 
-This task was scheduled to run automatically. Complete the task described below thoroughly, then stop.
+This instruction was scheduled to run automatically. Execute it thoroughly, then stop.

@@ -1,27 +1,27 @@
 # Scheduling
 
-You can set up recurring and time-based automation using routines and scheduled tasks.
+You have three ways to schedule work:
 
-## Routines
+## Tasks (One-Off)
 
-A routine is a list of items an agent processes on a repeating interval. Each execution creates a new chat, runs through every item, and summarizes results.
+A task runs once and is done. Use `delegate_task` (fire-and-forget) or `run_subtask` (resume with result) to assign work to another agent.
+Set `run_at` to defer execution to a specific time (e.g., a reminder), or omit it to run immediately.
 
-- `update_routine` — add/remove items and set the interval between runs.
-- `update_routine_frequency` — change the interval without touching the item list.
+## Cron (Recurring)
 
-Use routines for ongoing, open-ended work: periodic research sweeps, monitoring checks, recurring reports.
+A cron runs a fixed instruction at exact, recurring times using a cron expression.
+Use `schedule_task` to create, list, or cancel cron jobs.
+Each run executes the same instruction verbatim. All runs share a single persistent chat.
 
-## Scheduled Tasks
+Use cron when you know WHAT to do and WHEN: "send a summary every Friday at 9am", "check status at midnight".
 
-A scheduled task is a single instruction that fires on a cron schedule. Use `schedule_task` to create, list, or cancel them.
+## Heartbeat (Autonomous Pulse)
 
-Use scheduled tasks for specific, time-bound actions: "send a summary every Friday at 9 AM", "check deployment status at midnight".
+A heartbeat is a periodic wake-up where you review your HEARTBEAT.md and decide what to do.
+**Heartbeat is disabled by default** — first write your checklist to HEARTBEAT.md, then call `set_heartbeat` to enable it.
 
-## When to Use Which
-
-- **Routine** — you have a *list* of things to repeat and want to add/remove items over time.
-- **Scheduled task** — you have a *single instruction* tied to a specific cron schedule.
+Unlike cron, a heartbeat gives you autonomy — you reason about what actions to take each time.
 
 ## Cross-Agent Scheduling
 
-Both `update_routine` and `schedule_task` accept a `target_agent` parameter to schedule work for another agent listed in `<available_agents>`. Delegate scheduling to the agent best suited for the job.
+`delegate_task`, `run_subtask`, and `schedule_task` accept a `target_agent` parameter to schedule work for another agent listed in `<available_agents>`.
