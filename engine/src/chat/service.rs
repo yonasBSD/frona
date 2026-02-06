@@ -487,6 +487,43 @@ impl ChatService {
         Ok(saved.into())
     }
 
+    pub async fn save_external_tool_pending(
+        &self,
+        chat_id: &str,
+        accumulated_text: String,
+        tool_calls_json: serde_json::Value,
+        tool_results: &[crate::llm::tool_loop::ToolCallResult],
+        external_tool: Box<crate::llm::tool_loop::ToolCallResult>,
+    ) -> Result<MessageResponse, AppError> {
+        let _ = self
+            .save_assistant_message_with_tool_calls(
+                chat_id,
+                accumulated_text,
+                Some(tool_calls_json),
+                vec![],
+            )
+            .await;
+
+        for tr in tool_results {
+            let _ = self
+                .save_tool_result_message_with_tool(
+                    chat_id,
+                    &tr.tool_call_id,
+                    tr.result.clone(),
+                    tr.tool_data.clone(),
+                )
+                .await;
+        }
+
+        self.save_tool_result_message_with_tool(
+            chat_id,
+            &external_tool.tool_call_id,
+            external_tool.result,
+            external_tool.tool_data,
+        )
+        .await
+    }
+
     pub async fn find_chat(&self, chat_id: &str) -> Result<Option<Chat>, AppError> {
         self.chat_repo.find_by_id(chat_id).await
     }

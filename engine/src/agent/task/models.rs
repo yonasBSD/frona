@@ -34,6 +34,16 @@ pub enum TaskKind {
     },
 }
 
+impl TaskKind {
+    pub fn source_chat_id(&self) -> Option<&str> {
+        match self {
+            TaskKind::Direct => None,
+            TaskKind::Delegation { source_chat_id, .. } => Some(source_chat_id),
+            TaskKind::Cron { source_chat_id, .. } => source_chat_id.as_deref(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]
 #[entity(table = "task")]
@@ -139,5 +149,42 @@ mod tests {
             TaskKind::Delegation { deliver_directly, .. } => assert!(!deliver_directly),
             _ => panic!("Expected Delegation"),
         }
+    }
+
+    #[test]
+    fn source_chat_id_direct() {
+        assert_eq!(TaskKind::Direct.source_chat_id(), None);
+    }
+
+    #[test]
+    fn source_chat_id_delegation() {
+        let kind = TaskKind::Delegation {
+            source_agent_id: "a1".to_string(),
+            source_chat_id: "c1".to_string(),
+            deliver_directly: false,
+        };
+        assert_eq!(kind.source_chat_id(), Some("c1"));
+    }
+
+    #[test]
+    fn source_chat_id_cron_with_value() {
+        let kind = TaskKind::Cron {
+            cron_expression: "0 9 * * *".to_string(),
+            next_run_at: None,
+            source_agent_id: None,
+            source_chat_id: Some("c2".to_string()),
+        };
+        assert_eq!(kind.source_chat_id(), Some("c2"));
+    }
+
+    #[test]
+    fn source_chat_id_cron_without_value() {
+        let kind = TaskKind::Cron {
+            cron_expression: "0 9 * * *".to_string(),
+            next_run_at: None,
+            source_agent_id: None,
+            source_chat_id: None,
+        };
+        assert_eq!(kind.source_chat_id(), None);
     }
 }

@@ -6,48 +6,28 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::execution;
 use crate::agent::task::models::{Task, TaskKind, TaskStatus};
+use crate::api::files::Attachment;
+use crate::api::state::AppState;
 use crate::chat::dto::CreateChatRequest;
 use crate::chat::message::models::MessageTool;
 use crate::error::AppError;
 use crate::llm::tool_loop::ToolLoopOutcome;
 
-use super::service::TaskService;
-
 pub struct TaskExecutor {
-    task_service: TaskService,
-    state: Arc<ExecutorState>,
+    app_state: AppState,
     active_tasks: Mutex<HashMap<String, CancellationToken>>,
-    max_global_concurrent: usize,
-}
-
-struct ExecutorState {
-    chat_service: crate::chat::service::ChatService,
-    broadcast_service: crate::chat::broadcast::BroadcastService,
-    app_state: crate::api::state::AppState,
 }
 
 impl TaskExecutor {
-    pub fn new(
-        task_service: TaskService,
-        chat_service: crate::chat::service::ChatService,
-        broadcast_service: crate::chat::broadcast::BroadcastService,
-        app_state: crate::api::state::AppState,
-        max_global_concurrent: usize,
-    ) -> Self {
+    pub fn new(app_state: AppState) -> Self {
         Self {
-            task_service,
-            state: Arc::new(ExecutorState {
-                chat_service,
-                broadcast_service,
-                app_state,
-            }),
+            app_state,
             active_tasks: Mutex::new(HashMap::new()),
-            max_global_concurrent,
         }
     }
 
     pub async fn resume_all(self: &Arc<Self>) {
-        let tasks = match self.task_service.find_resumable().await {
+        let tasks = match self.app_state.task_service.find_resumable().await {
             Ok(tasks) => tasks,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to query resumable tasks");
@@ -74,11 +54,11 @@ impl TaskExecutor {
 
     pub async fn spawn_execution(self: &Arc<Self>, task: Task) -> Result<(), AppError> {
         let active = self.active_tasks.lock().await;
-        if active.len() >= self.max_global_concurrent {
+        if active.len() >= self.app_state.max_concurrent_tasks {
             tracing::info!(
                 task_id = %task.id,
                 active = active.len(),
-                limit = self.max_global_concurrent,
+                limit = self.app_state.max_concurrent_tasks,
                 "Global concurrency limit reached, task stays Pending"
             );
             return Ok(());
@@ -140,7 +120,7 @@ impl TaskExecutor {
         use crate::repository::Repository;
 
         let repo: SurrealRepo<crate::agent::models::Agent> = SurrealRepo::new(
-            self.state.app_state.db.clone(),
+            self.app_state.db.clone(),
         );
 
         if let Ok(Some(agent)) = repo.find_by_id(agent_id).await {
@@ -156,10 +136,9 @@ impl TaskExecutor {
         cancel_token: CancellationToken,
     ) -> Result<(), AppError> {
         let task_id = task.id.clone();
-        let user_id = task.user_id.clone();
-        let agent_id = task.agent_id.clone();
 
         let current_status = self
+            .app_state
             .task_service
             .find_by_id(&task_id)
             .await?
@@ -170,50 +149,20 @@ impl TaskExecutor {
             return Ok(());
         }
 
-        let chat_id = if let Some(ref cid) = task.chat_id {
-            cid.clone()
-        } else {
-            let chat = self
-                .state
-                .chat_service
-                .create_chat(
-                    &user_id,
-                    CreateChatRequest {
-                        space_id: task.space_id.clone(),
-                        task_id: Some(task_id.clone()),
-                        agent_id: agent_id.clone(),
-                        title: Some(format!("Task: {}", task.title)),
-                    },
-                )
-                .await?;
-            task.chat_id = Some(chat.id.clone());
-            chat.id
-        };
+        let chat_id = self.ensure_task_chat(&mut task).await?;
 
-        self.task_service
+        self.app_state
+            .task_service
             .mark_in_progress(&task_id, Some(&chat_id))
             .await?;
 
-        self.broadcast_task_status(&task, "inprogress");
-
-        let stored_messages = self.state.chat_service.get_stored_messages(&chat_id).await;
-        let is_first_run = stored_messages.is_empty();
-
-        if is_first_run {
-            let source_agent_id = match &task.kind {
-                TaskKind::Delegation { source_agent_id, .. } => source_agent_id.as_str(),
-                _ => &task.agent_id,
-            };
-            self.state
-                .chat_service
-                .save_agent_message(&chat_id, source_agent_id, task.description.clone())
-                .await?;
-        }
+        self.broadcast_task_status(&task, "inprogress", None);
+        self.save_initial_message_if_needed(&task, &chat_id).await?;
 
         let result = execution::run_agent_loop(
-            &self.state.app_state,
-            &agent_id,
-            &user_id,
+            &self.app_state,
+            &task.agent_id,
+            &task.user_id,
             &chat_id,
             task.space_id.as_deref(),
             cancel_token,
@@ -227,65 +176,11 @@ impl TaskExecutor {
                 last_segment,
             }) => match tool_loop_outcome {
                 ToolLoopOutcome::Completed { attachments, .. } => {
-                    if !accumulated_text.is_empty() {
-                        let _ = self
-                            .state
-                            .chat_service
-                            .save_assistant_message_with_tool_calls(
-                                &chat_id, accumulated_text.clone(), None, attachments,
-                            )
-                            .await;
-                    }
-
-                    let children = self
-                        .task_service
-                        .find_by_source_chat_id(&chat_id)
-                        .await
-                        .unwrap_or_default();
-
-                    let has_incomplete_children = children
-                        .iter()
-                        .any(|c| matches!(c.status, TaskStatus::Pending | TaskStatus::InProgress));
-
-                    if has_incomplete_children {
-                        tracing::info!(
-                            task_id = %task_id,
-                            incomplete_children = children.iter().filter(|c| matches!(c.status, TaskStatus::Pending | TaskStatus::InProgress)).count(),
-                            "Task has incomplete children, staying InProgress"
-                        );
-                    } else {
-                        let result_text = if last_segment.is_empty() { &accumulated_text } else { &last_segment };
-                        let summary = if result_text.is_empty() {
-                            None
-                        } else {
-                            Some(result_text.to_string())
-                        };
-
-                        self.task_service
-                            .mark_completed(&task_id, summary.clone())
-                            .await?;
-
-                        self.deliver_result_to_source(&task, summary.as_deref())
-                            .await;
-
-                        self.broadcast_task_status_with_summary(
-                            &task,
-                            "completed",
-                            summary.as_deref(),
-                        );
-                    }
+                    self.handle_completed(&task, &chat_id, accumulated_text, last_segment, attachments)
+                        .await?;
                 }
                 ToolLoopOutcome::Cancelled(_) => {
-                    if !accumulated_text.is_empty() {
-                        let _ = self
-                            .state
-                            .chat_service
-                            .save_assistant_message(&chat_id, accumulated_text)
-                            .await;
-                    }
-
-                    self.task_service.mark_cancelled(&task_id).await?;
-                    self.broadcast_task_status(&task, "cancelled");
+                    self.handle_cancelled(&task, &chat_id, accumulated_text).await?;
                 }
                 ToolLoopOutcome::ExternalToolPending {
                     accumulated_text: ext_text,
@@ -294,68 +189,155 @@ impl TaskExecutor {
                     external_tool,
                 } => {
                     let _ = self
-                        .state
+                        .app_state
                         .chat_service
-                        .save_assistant_message_with_tool_calls(
-                            &chat_id,
-                            ext_text,
-                            Some(tool_calls_json),
-                            vec![],
-                        )
-                        .await;
-
-                    for tr in &tool_results {
-                        if tr.tool_data.is_some() {
-                            let _ = self
-                                .state
-                                .chat_service
-                                .save_tool_result_message_with_tool(
-                                    &chat_id,
-                                    &tr.tool_call_id,
-                                    tr.result.clone(),
-                                    tr.tool_data.clone(),
-                                )
-                                .await;
-                        } else {
-                            let _ = self
-                                .state
-                                .chat_service
-                                .save_tool_result_message(
-                                    &chat_id,
-                                    &tr.tool_call_id,
-                                    tr.result.clone(),
-                                )
-                                .await;
-                        }
-                    }
-
-                    let _ = self
-                        .state
-                        .chat_service
-                        .save_tool_result_message_with_tool(
-                            &chat_id,
-                            &external_tool.tool_call_id,
-                            external_tool.result,
-                            external_tool.tool_data,
+                        .save_external_tool_pending(
+                            &chat_id, ext_text, tool_calls_json, &tool_results, external_tool,
                         )
                         .await;
                 }
             },
             Err(e) => {
-                let error_msg = format!("Task execution error: {}", e);
-                tracing::error!(error = %e, task_id = %task_id, "Task execution failed");
-                self.task_service
-                    .mark_failed(&task_id, error_msg)
-                    .await?;
-                self.deliver_error_to_source(&task, &e.to_string()).await;
-                self.broadcast_task_status(&task, "failed");
+                self.handle_error(&task, &e).await?;
             }
         }
 
         Ok(())
     }
 
-    async fn deliver_result_to_source(&self, task: &Task, summary: Option<&str>) {
+    pub async fn ensure_task_chat(&self, task: &mut Task) -> Result<String, AppError> {
+        if let Some(ref cid) = task.chat_id {
+            return Ok(cid.clone());
+        }
+
+        let chat = self
+            .app_state
+            .chat_service
+            .create_chat(
+                &task.user_id,
+                CreateChatRequest {
+                    space_id: task.space_id.clone(),
+                    task_id: Some(task.id.clone()),
+                    agent_id: task.agent_id.clone(),
+                    title: Some(format!("Task: {}", task.title)),
+                },
+            )
+            .await?;
+        task.chat_id = Some(chat.id.clone());
+        Ok(chat.id)
+    }
+
+    pub async fn save_initial_message_if_needed(
+        &self,
+        task: &Task,
+        chat_id: &str,
+    ) -> Result<(), AppError> {
+        let stored_messages = self.app_state.chat_service.get_stored_messages(chat_id).await;
+        if !stored_messages.is_empty() {
+            return Ok(());
+        }
+
+        let source_agent_id = match &task.kind {
+            TaskKind::Delegation { source_agent_id, .. } => source_agent_id.as_str(),
+            _ => &task.agent_id,
+        };
+        self.app_state
+            .chat_service
+            .save_agent_message(chat_id, source_agent_id, task.description.clone())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn handle_completed(
+        &self,
+        task: &Task,
+        chat_id: &str,
+        accumulated_text: String,
+        last_segment: String,
+        attachments: Vec<Attachment>,
+    ) -> Result<(), AppError> {
+        if !accumulated_text.is_empty() {
+            let _ = self
+                .app_state
+                .chat_service
+                .save_assistant_message_with_tool_calls(
+                    chat_id, accumulated_text.clone(), None, attachments,
+                )
+                .await;
+        }
+
+        let children = self
+            .app_state
+            .task_service
+            .find_by_source_chat_id(chat_id)
+            .await
+            .unwrap_or_default();
+
+        let has_incomplete_children = children
+            .iter()
+            .any(|c| matches!(c.status, TaskStatus::Pending | TaskStatus::InProgress));
+
+        if has_incomplete_children {
+            tracing::info!(
+                task_id = %task.id,
+                incomplete_children = children.iter().filter(|c| matches!(c.status, TaskStatus::Pending | TaskStatus::InProgress)).count(),
+                "Task has incomplete children, staying InProgress"
+            );
+            return Ok(());
+        }
+
+        let result_text = if last_segment.is_empty() { &accumulated_text } else { &last_segment };
+        let summary = if result_text.is_empty() {
+            None
+        } else {
+            Some(result_text.to_string())
+        };
+
+        self.app_state
+            .task_service
+            .mark_completed(&task.id, summary.clone())
+            .await?;
+
+        self.deliver_to_source(task, TaskStatus::Completed, summary.clone().unwrap_or_default())
+            .await;
+
+        self.broadcast_task_status(task, "completed", summary.as_deref());
+        Ok(())
+    }
+
+    pub async fn handle_cancelled(
+        &self,
+        task: &Task,
+        chat_id: &str,
+        accumulated_text: String,
+    ) -> Result<(), AppError> {
+        if !accumulated_text.is_empty() {
+            let _ = self
+                .app_state
+                .chat_service
+                .save_assistant_message(chat_id, accumulated_text)
+                .await;
+        }
+
+        self.app_state.task_service.mark_cancelled(&task.id).await?;
+        self.broadcast_task_status(task, "cancelled", None);
+        Ok(())
+    }
+
+    pub async fn handle_error(&self, task: &Task, error: &AppError) -> Result<(), AppError> {
+        let error_msg = format!("Task execution error: {}", error);
+        tracing::error!(error = %error, task_id = %task.id, "Task execution failed");
+        self.app_state
+            .task_service
+            .mark_failed(&task.id, error_msg)
+            .await?;
+        self.deliver_to_source(task, TaskStatus::Failed, error.to_string())
+            .await;
+        self.broadcast_task_status(task, "failed", None);
+        Ok(())
+    }
+
+    pub async fn deliver_to_source(&self, task: &Task, status: TaskStatus, text: String) {
         let TaskKind::Delegation {
             ref source_chat_id,
             deliver_directly,
@@ -365,89 +347,48 @@ impl TaskExecutor {
             return;
         };
 
-        let message_text = summary.unwrap_or_default().to_string();
-
-        let attachments = if let Some(ref chat_id) = task.chat_id {
-            self.state
-                .chat_service
-                .find_attachments_by_chat_id(chat_id)
-                .await
-                .unwrap_or_default()
+        let attachments = if status == TaskStatus::Completed {
+            task.chat_id
+                .as_ref()
+                .map(|cid| {
+                    self.app_state
+                        .chat_service
+                        .find_attachments_by_chat_id(cid)
+                })
         } else {
-            vec![]
+            None
+        };
+
+        let attachments = match attachments {
+            Some(fut) => fut.await.unwrap_or_default(),
+            None => vec![],
         };
 
         match self
-            .state
+            .app_state
             .chat_service
             .save_task_completion_message(
                 source_chat_id,
                 &task.agent_id,
-                message_text,
+                text,
                 MessageTool::TaskCompletion {
                     task_id: task.id.clone(),
                     chat_id: task.chat_id.clone(),
-                    status: TaskStatus::Completed,
+                    status,
                 },
                 attachments,
             )
             .await
         {
             Ok(msg) => {
-                self.state.broadcast_service.broadcast_chat_message(
+                self.app_state.broadcast_service.broadcast_chat_message(
                     &task.user_id,
                     source_chat_id,
                     msg,
                 );
             }
             Err(e) => {
-                tracing::warn!(error = %e, task_id = %task.id, "Failed to save task result to source chat");
-            }
-        }
-
-        if !deliver_directly {
-            self.check_and_resume_parent(source_chat_id, &task.user_id)
-                .await;
-        }
-    }
-
-    async fn deliver_error_to_source(&self, task: &Task, error: &str) {
-        let TaskKind::Delegation {
-            ref source_chat_id,
-            deliver_directly,
-            ..
-        } = task.kind
-        else {
-            return;
-        };
-
-        let message_text = error.to_string();
-
-        match self
-            .state
-            .chat_service
-            .save_task_completion_message(
-                source_chat_id,
-                &task.agent_id,
-                message_text,
-                MessageTool::TaskCompletion {
-                    task_id: task.id.clone(),
-                    chat_id: task.chat_id.clone(),
-                    status: TaskStatus::Failed,
-                },
-                vec![],
-            )
-            .await
-        {
-            Ok(msg) => {
-                self.state.broadcast_service.broadcast_chat_message(
-                    &task.user_id,
-                    source_chat_id,
-                    msg,
-                );
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, task_id = %task.id, "Failed to save task error to source chat");
+                tracing::warn!(error = %e, task_id = %task.id, "Failed to deliver task result to source chat");
             }
         }
 
@@ -459,6 +400,7 @@ impl TaskExecutor {
 
     async fn check_and_resume_parent(&self, source_chat_id: &str, user_id: &str) {
         let siblings = match self
+            .app_state
             .task_service
             .find_by_source_chat_id(source_chat_id)
             .await
@@ -491,7 +433,7 @@ impl TaskExecutor {
             "All child tasks complete, resuming parent tool loop"
         );
 
-        let state = self.state.app_state.clone();
+        let state = self.app_state.clone();
         let user_id = user_id.to_string();
         let chat_id = source_chat_id.to_string();
         tokio::spawn(async move {
@@ -504,45 +446,14 @@ impl TaskExecutor {
         });
     }
 
-    fn broadcast_task_status(&self, task: &Task, status: &str) {
-        let source_chat_id = match &task.kind {
-            TaskKind::Delegation {
-                source_chat_id, ..
-            } => Some(source_chat_id.as_str()),
-            _ => None,
-        };
-
-        self.state.broadcast_service.broadcast_task_update(
+    pub fn broadcast_task_status(&self, task: &Task, status: &str, summary: Option<&str>) {
+        self.app_state.broadcast_service.broadcast_task_update(
             &task.user_id,
             &task.id,
             status,
             &task.title,
             task.chat_id.as_deref(),
-            source_chat_id,
-            None,
-        );
-    }
-
-    fn broadcast_task_status_with_summary(
-        &self,
-        task: &Task,
-        status: &str,
-        summary: Option<&str>,
-    ) {
-        let source_chat_id = match &task.kind {
-            TaskKind::Delegation {
-                source_chat_id, ..
-            } => Some(source_chat_id.as_str()),
-            _ => None,
-        };
-
-        self.state.broadcast_service.broadcast_task_update(
-            &task.user_id,
-            &task.id,
-            status,
-            &task.title,
-            task.chat_id.as_deref(),
-            source_chat_id,
+            task.kind.source_chat_id(),
             summary,
         );
     }

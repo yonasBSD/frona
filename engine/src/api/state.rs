@@ -157,13 +157,7 @@ impl AppState {
     }
 
     pub fn init_task_executor(&self) {
-        let executor = TaskExecutor::new(
-            self.task_service.clone(),
-            self.chat_service.clone(),
-            self.broadcast_service.clone(),
-            self.clone(),
-            self.max_concurrent_tasks,
-        );
+        let executor = TaskExecutor::new(self.clone());
         let _ = self.task_executor.set(Arc::new(executor));
     }
 

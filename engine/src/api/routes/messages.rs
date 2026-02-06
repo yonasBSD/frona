@@ -769,42 +769,13 @@ async fn stream_tool_loop_events(
                     tool_results,
                     external_tool,
                 } => {
-                    let _ = chat_service
-                        .save_assistant_message_with_tool_calls(
+                    if let Ok(tool_msg) = chat_service
+                        .save_external_tool_pending(
                             chat_id,
                             accumulated_text,
-                            Some(tool_calls_json),
-                            vec![],
-                        )
-                        .await;
-
-                    for tr in &tool_results {
-                        if tr.tool_data.is_some() {
-                            let _ = chat_service
-                                .save_tool_result_message_with_tool(
-                                    chat_id,
-                                    &tr.tool_call_id,
-                                    tr.result.clone(),
-                                    tr.tool_data.clone(),
-                                )
-                                .await;
-                        } else {
-                            let _ = chat_service
-                                .save_tool_result_message(
-                                    chat_id,
-                                    &tr.tool_call_id,
-                                    tr.result.clone(),
-                                )
-                                .await;
-                        }
-                    }
-
-                    if let Ok(tool_msg) = chat_service
-                        .save_tool_result_message_with_tool(
-                            chat_id,
-                            &external_tool.tool_call_id,
-                            external_tool.result,
-                            external_tool.tool_data,
+                            tool_calls_json,
+                            &tool_results,
+                            external_tool,
                         )
                         .await
                     {
@@ -949,53 +920,14 @@ async fn resume_tool_loop(
                     tool_results,
                     external_tool,
                 } => {
-                    if !accumulated.is_empty() {
-                        let _ = state.chat_service
-                            .save_assistant_message_with_tool_calls(
-                                &chat_id_owned,
-                                accumulated,
-                                Some(tool_calls_json),
-                                vec![],
-                            )
-                            .await;
-                    } else {
-                        let _ = state.chat_service
-                            .save_assistant_message_with_tool_calls(
-                                &chat_id_owned,
-                                accumulated_text,
-                                Some(tool_calls_json),
-                                vec![],
-                            )
-                            .await;
-                    }
-
-                    for tr in &tool_results {
-                        if tr.tool_data.is_some() {
-                            let _ = state.chat_service
-                                .save_tool_result_message_with_tool(
-                                    &chat_id_owned,
-                                    &tr.tool_call_id,
-                                    tr.result.clone(),
-                                    tr.tool_data.clone(),
-                                )
-                                .await;
-                        } else {
-                            let _ = state.chat_service
-                                .save_tool_result_message(
-                                    &chat_id_owned,
-                                    &tr.tool_call_id,
-                                    tr.result.clone(),
-                                )
-                                .await;
-                        }
-                    }
-
+                    let text = if accumulated.is_empty() { accumulated_text } else { accumulated };
                     if let Ok(tool_msg) = state.chat_service
-                        .save_tool_result_message_with_tool(
+                        .save_external_tool_pending(
                             &chat_id_owned,
-                            &external_tool.tool_call_id,
-                            external_tool.result,
-                            external_tool.tool_data,
+                            text,
+                            tool_calls_json,
+                            &tool_results,
+                            external_tool,
                         )
                         .await
                     {
