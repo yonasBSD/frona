@@ -4,13 +4,13 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use crate::api::cookie::{make_auth_cookie, make_clear_cookie};
-use crate::dto::{AuthResponse, LoginRequest, RegisterRequest, UserInfo};
-use crate::error::AppError;
-use crate::repository::Repository;
+use crate::auth::dto::{AuthResponse, LoginRequest, RegisterRequest, UserInfo};
+use crate::core::error::AppError;
+use crate::core::repository::Repository;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
-use super::super::state::AppState;
+use crate::core::state::AppState;
 
 const TOKEN_MAX_AGE: u64 = 24 * 3600;
 

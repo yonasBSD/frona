@@ -2,7 +2,7 @@ pub mod sandbox;
 
 use std::path::{Path, PathBuf};
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use self::sandbox::{SandboxConfig, SandboxOutput, create_sandbox, execute_sandboxed};
 

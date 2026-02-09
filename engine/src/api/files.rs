@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 
-use super::config::Config;
+use crate::core::config::Config;
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[surreal(crate = "surrealdb::types")]
@@ -162,8 +162,7 @@ mod tests {
             workspaces_base_path: "data/workspaces".into(),
             files_base_path: "data/files".into(),
             tools_config_path: "data/tools.json".into(),
-            skills_config_dir: "engine/config".into(),
-            prompts_override_dir: "data/config/prompts".into(),
+            shared_config_dir: concat!(env!("CARGO_MANIFEST_DIR"), "/config").into(),
             max_concurrent_tasks: 10,
             scheduler_space_compaction_secs: 3600,
             scheduler_insight_compaction_secs: 7200,

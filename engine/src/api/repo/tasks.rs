@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::agent::task::models::Task;
 use crate::agent::task::repository::TaskRepository;
 

@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use crate::error::AppError;
+use crate::core::error::AppError;
 use serde_json::json;
 
 pub struct ApiError(pub AppError);

@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::{Sandbox, SandboxConfig};
 

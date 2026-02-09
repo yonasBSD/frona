@@ -8,7 +8,7 @@ use crate::space::dto::SpaceResponse;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
-use super::super::state::AppState;
+use crate::core::state::AppState;
 
 #[derive(Debug, Serialize)]
 pub struct SpaceWithChats {

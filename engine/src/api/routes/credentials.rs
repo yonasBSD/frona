@@ -6,7 +6,7 @@ use crate::credential::dto::{CreateCredentialRequest, CredentialResponse};
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
-use super::super::state::AppState;
+use crate::core::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()

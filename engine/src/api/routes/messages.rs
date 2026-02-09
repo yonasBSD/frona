@@ -34,11 +34,11 @@ use crate::tool::time::TimeTool;
 use crate::tool::update_entity::UpdateEntityTool;
 use crate::tool::update_identity::UpdateIdentityTool;
 use crate::tool::ToolContext;
-use crate::repository::Repository;
+use crate::core::repository::Repository;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
-use super::super::state::AppState;
+use crate::core::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -333,7 +333,7 @@ async fn stream_message(
         .find_chat(&chat_id)
         .await
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::from(crate::error::AppError::NotFound("Chat not found".into())))?;
+        .ok_or_else(|| ApiError::from(crate::core::error::AppError::NotFound("Chat not found".into())))?;
 
     let stored_messages = state.chat_service.get_stored_messages(&chat_id).await;
     let pending_tool_id = stored_messages.iter().rev().find_map(|m| match &m.tool {
@@ -385,7 +385,7 @@ async fn stream_message(
         .chat_service
         .provider_registry()
         .resolve_model_group(&model_group_name)
-        .map_err(|e| ApiError::from(crate::error::AppError::from(e)))?;
+        .map_err(|e| ApiError::from(crate::core::error::AppError::from(e)))?;
 
     if let Some(compaction_group) = get_compaction_model_group(&state) {
         let max_output = model_group.max_tokens.unwrap_or(8192) as usize;
@@ -425,10 +425,10 @@ async fn stream_message(
 
     let user = state.user_repo.find_by_id(&auth.user_id).await
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::from(crate::error::AppError::NotFound("User not found".into())))?;
+        .ok_or_else(|| ApiError::from(crate::core::error::AppError::NotFound("User not found".into())))?;
     let agent = state.agent_service.find_by_id(&chat.agent_id).await
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::from(crate::error::AppError::NotFound("Agent not found".into())))?;
+        .ok_or_else(|| ApiError::from(crate::core::error::AppError::NotFound("Agent not found".into())))?;
     let tool_ctx = ToolContext { user, agent, chat: chat.clone(), event_tx: tool_event_tx.clone() };
 
     let user_content = req.content;
@@ -660,7 +660,7 @@ async fn stream_message(
 async fn stream_tool_loop_events(
     tx: &tokio::sync::mpsc::Sender<Result<Event, Infallible>>,
     tool_event_rx: &mut tokio::sync::mpsc::Receiver<ToolLoopEvent>,
-    tool_handle: tokio::task::JoinHandle<Result<ToolLoopOutcome, crate::error::AppError>>,
+    tool_handle: tokio::task::JoinHandle<Result<ToolLoopOutcome, crate::core::error::AppError>>,
     chat_service: &crate::chat::service::ChatService,
     chat_id: &str,
 ) {
@@ -797,9 +797,9 @@ async fn resume_tool_loop(
     state: &AppState,
     user_id: &str,
     chat_id: &str,
-) -> Result<(), crate::error::AppError> {
+) -> Result<(), crate::core::error::AppError> {
     let chat = state.chat_service.find_chat(chat_id).await?
-        .ok_or_else(|| crate::error::AppError::NotFound("Chat not found".into()))?;
+        .ok_or_else(|| crate::core::error::AppError::NotFound("Chat not found".into()))?;
 
     let agent_config = state.chat_service.resolve_agent_config(&chat.agent_id).await?;
     let base_system_prompt = agent_config.system_prompt;
@@ -853,9 +853,9 @@ async fn resume_tool_loop(
     ).await;
 
     let user = state.user_repo.find_by_id(user_id).await?
-        .ok_or_else(|| crate::error::AppError::NotFound("User not found".into()))?;
+        .ok_or_else(|| crate::core::error::AppError::NotFound("User not found".into()))?;
     let agent = state.agent_service.find_by_id(&chat.agent_id).await?
-        .ok_or_else(|| crate::error::AppError::NotFound("Agent not found".into()))?;
+        .ok_or_else(|| crate::core::error::AppError::NotFound("Agent not found".into()))?;
     let tool_ctx = ToolContext { user, agent, chat: chat.clone(), event_tx: tool_event_tx.clone() };
 
     let cancel_token = state.active_sessions.register(chat_id).await;
@@ -956,7 +956,7 @@ pub async fn resume_tool_loop_background(
     state: &AppState,
     user_id: &str,
     chat_id: &str,
-) -> Result<(), crate::error::AppError> {
+) -> Result<(), crate::core::error::AppError> {
     resume_tool_loop(state, user_id, chat_id).await
 }
 

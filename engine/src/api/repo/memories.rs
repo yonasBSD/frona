@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::memory::models::{Memory, MemorySourceType};
 use crate::memory::repository::MemoryRepository;
 

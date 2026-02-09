@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use tokio::sync::Mutex;
@@ -16,7 +17,7 @@ use crate::credential::service::CredentialService;
 use crate::llm::ModelProviderRegistry;
 use crate::llm::config::ModelRegistryConfig;
 use crate::memory::service::MemoryService;
-use crate::prompt::PromptLoader;
+use crate::agent::prompt::PromptLoader;
 use crate::space::service::SpaceService;
 use crate::agent::task::service::TaskService;
 use crate::tool::browser::config::BrowserConfig;
@@ -28,8 +29,8 @@ use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 
 use super::config::Config;
-use super::repo::generic::SurrealRepo;
-use super::repo::users::SurrealUserRepo;
+use crate::api::repo::generic::SurrealRepo;
+use crate::api::repo::users::SurrealUserRepo;
 
 #[derive(Clone, Default)]
 pub struct ActiveSessions {
@@ -110,7 +111,7 @@ impl AppState {
         let search_provider = create_search_provider();
 
         let provider_registry_arc = Arc::new(provider_registry.clone());
-        let prompt_loader = PromptLoader::new(&config.prompts_override_dir);
+        let prompt_loader = PromptLoader::new(PathBuf::from(&config.shared_config_dir).join("prompts"));
 
         let memory_service = MemoryService::new(
             SurrealRepo::new(db.clone()),
@@ -122,7 +123,7 @@ impl AppState {
         );
 
         let skill_repo = SurrealRepo::new(db.clone());
-        let skill_resolver = SkillResolver::new(skill_repo, &config.skills_config_dir, workspaces.clone());
+        let skill_resolver = SkillResolver::new(skill_repo, &config.shared_config_dir, workspaces.clone());
 
         Self {
             db: db.clone(),

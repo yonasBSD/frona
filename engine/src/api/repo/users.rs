@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use crate::auth::UserRepository;
-use crate::error::AppError;
-use crate::models::User;
+use crate::core::error::AppError;
+use crate::core::models::User;
 
 use super::generic::SurrealRepo;
 

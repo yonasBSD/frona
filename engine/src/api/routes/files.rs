@@ -15,7 +15,7 @@ use crate::api::files::{
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
-use super::super::state::AppState;
+use crate::core::state::AppState;
 
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
@@ -43,7 +43,7 @@ async fn upload_file(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| ApiError(crate::error::AppError::Validation(e.to_string())))?
+        .map_err(|e| ApiError(crate::core::error::AppError::Validation(e.to_string())))?
     {
         match field.name() {
             Some("path") => {
@@ -51,7 +51,7 @@ async fn upload_file(
                     field
                         .text()
                         .await
-                        .map_err(|e| ApiError(crate::error::AppError::Validation(e.to_string())))?,
+                        .map_err(|e| ApiError(crate::core::error::AppError::Validation(e.to_string())))?,
                 );
             }
             Some("file") => {
@@ -62,10 +62,10 @@ async fn upload_file(
                 let bytes = field
                     .bytes()
                     .await
-                    .map_err(|e| ApiError(crate::error::AppError::Validation(e.to_string())))?;
+                    .map_err(|e| ApiError(crate::core::error::AppError::Validation(e.to_string())))?;
 
                 if bytes.len() > MAX_FILE_SIZE {
-                    return Err(ApiError(crate::error::AppError::Validation(
+                    return Err(ApiError(crate::core::error::AppError::Validation(
                         format!("File too large (max {}MB)", MAX_FILE_SIZE / 1024 / 1024),
                     )));
                 }
@@ -77,7 +77,7 @@ async fn upload_file(
     }
 
     let (original_filename, bytes) = file_data.ok_or_else(|| {
-        ApiError(crate::error::AppError::Validation(
+        ApiError(crate::core::error::AppError::Validation(
             "Missing file field".into(),
         ))
     })?;
@@ -104,14 +104,14 @@ async fn upload_file(
 
     fs::create_dir_all(&dir)
         .await
-        .map_err(|e| ApiError(crate::error::AppError::Internal(e.to_string())))?;
+        .map_err(|e| ApiError(crate::core::error::AppError::Internal(e.to_string())))?;
 
     let final_filename = dedup_filename(&dir, &filename_for_dedup);
     let dest = dir.join(&final_filename);
 
     fs::write(&dest, &bytes)
         .await
-        .map_err(|e| ApiError(crate::error::AppError::Internal(e.to_string())))?;
+        .map_err(|e| ApiError(crate::core::error::AppError::Internal(e.to_string())))?;
 
     let virtual_path = if let Some(mut rel) = virtual_relative {
         if let Some(parent) = Path::new(&rel).parent() {
@@ -141,7 +141,7 @@ async fn download_user_file(
     AxumPath((user_id, filename)): AxumPath<(String, String)>,
 ) -> Result<Response, ApiError> {
     if user_id != auth.user_id {
-        return Err(ApiError(crate::error::AppError::Forbidden(
+        return Err(ApiError(crate::core::error::AppError::Forbidden(
             "Cannot access another user's files".into(),
         )));
     }
@@ -165,7 +165,7 @@ async fn delete_user_file(
     AxumPath((user_id, filename)): AxumPath<(String, String)>,
 ) -> Result<(), ApiError> {
     if user_id != auth.user_id {
-        return Err(ApiError(crate::error::AppError::Forbidden(
+        return Err(ApiError(crate::core::error::AppError::Forbidden(
             "Cannot delete another user's files".into(),
         )));
     }
@@ -174,14 +174,14 @@ async fn delete_user_file(
     let resolved = resolve_virtual_path(&virtual_path, &state.config)?;
 
     if !resolved.exists() {
-        return Err(ApiError(crate::error::AppError::NotFound(
+        return Err(ApiError(crate::core::error::AppError::NotFound(
             "File not found".into(),
         )));
     }
 
     fs::remove_file(&resolved)
         .await
-        .map_err(|e| ApiError(crate::error::AppError::Internal(e.to_string())))?;
+        .map_err(|e| ApiError(crate::core::error::AppError::Internal(e.to_string())))?;
 
     Ok(())
 }
@@ -190,7 +190,7 @@ async fn serve_file(virtual_path: &str, state: &AppState) -> Result<Response, Ap
     let resolved = resolve_virtual_path(virtual_path, &state.config)?;
 
     if !resolved.exists() {
-        return Err(ApiError(crate::error::AppError::NotFound(
+        return Err(ApiError(crate::core::error::AppError::NotFound(
             "File not found".into(),
         )));
     }
@@ -203,7 +203,7 @@ async fn serve_file(virtual_path: &str, state: &AppState) -> Result<Response, Ap
 
     let file = fs::File::open(&resolved)
         .await
-        .map_err(|e| ApiError(crate::error::AppError::Internal(e.to_string())))?;
+        .map_err(|e| ApiError(crate::core::error::AppError::Internal(e.to_string())))?;
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
@@ -219,12 +219,12 @@ async fn serve_file(virtual_path: &str, state: &AppState) -> Result<Response, Ap
 
 fn validate_relative_path(path: &str) -> Result<(), ApiError> {
     if path.contains("..") {
-        return Err(ApiError(crate::error::AppError::Validation(
+        return Err(ApiError(crate::core::error::AppError::Validation(
             "Path traversal not allowed".into(),
         )));
     }
     if path.starts_with('/') {
-        return Err(ApiError(crate::error::AppError::Validation(
+        return Err(ApiError(crate::core::error::AppError::Validation(
             "Path must be relative".into(),
         )));
     }

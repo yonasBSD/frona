@@ -4,7 +4,7 @@ pub mod noop;
 
 use std::process::Command;
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 pub struct SandboxConfig {
     pub workspace_dir: String,

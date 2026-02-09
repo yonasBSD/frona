@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use crate::api::files::Attachment;
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::chat::message::models::Message;
 use crate::chat::message::repository::MessageRepository;
 

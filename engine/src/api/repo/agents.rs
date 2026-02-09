@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use crate::agent::models::Agent;
 use crate::agent::repository::AgentRepository;
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::generic::SurrealRepo;
 

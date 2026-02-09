@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 
 use crate::api::repo::agents::SurrealAgentRepo;
-use crate::error::AppError;
-use crate::repository::Repository;
+use crate::core::error::AppError;
+use crate::core::repository::Repository;
 use crate::tool::configurable_tools;
 
 use super::dto::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};

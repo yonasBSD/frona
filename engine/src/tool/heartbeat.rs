@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::agent::service::AgentService;
 use crate::agent::workspace::AgentWorkspaceManager;
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::{AgentTool, ToolContext, ToolDefinition, ToolOutput};
 

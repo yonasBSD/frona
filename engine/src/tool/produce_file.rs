@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::api::files::{detect_content_type, make_agent_path};
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::{AgentTool, ToolContext, ToolDefinition, ToolOutput};
 

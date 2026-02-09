@@ -9,10 +9,10 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use frona::agent::workspace::AgentWorkspaceManager;
-use frona::api::config::Config;
 use frona::api::db;
 use frona::api::routes;
-use frona::api::state::AppState;
+use frona::core::config::Config;
+use frona::core::state::AppState;
 use frona::scheduler::Scheduler;
 
 #[tokio::main]

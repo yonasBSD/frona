@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use include_dir::{Dir, include_dir};
 
-use crate::error::AppError;
-use crate::prompt::PromptLoader;
+use crate::core::error::AppError;
+use super::prompt::PromptLoader;
 
 static BUILTIN_AGENTS: Dir = include_dir!("$CARGO_MANIFEST_DIR/config/agents");
 

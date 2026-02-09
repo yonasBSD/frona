@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::api::config::Config;
+use crate::core::config::Config;
 use crate::api::files::{
     detect_content_type, is_image_content_type, is_text_content_type, resolve_virtual_path,
 };
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::{AgentTool, ImageData, ToolContext, ToolDefinition, ToolOutput};
 

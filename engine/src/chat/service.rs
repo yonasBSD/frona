@@ -3,14 +3,14 @@ use crate::agent::workspace::{AgentPromptLoader, AgentWorkspaceManager};
 use crate::api::repo::agents::SurrealAgentRepo;
 use crate::api::repo::chats::SurrealChatRepo;
 use crate::api::repo::messages::SurrealMessageRepo;
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::llm::ModelProviderRegistry;
 use crate::llm::convert::to_rig_messages;
 use crate::llm::fallback::inference_with_fallback;
 use crate::llm::provider::ModelRef;
 use crate::memory::service::MemoryService;
-use crate::prompt::PromptLoader;
-use crate::repository::Repository;
+use crate::agent::prompt::PromptLoader;
+use crate::core::repository::Repository;
 use rig::completion::Message as RigMessage;
 
 pub struct AgentConfig {

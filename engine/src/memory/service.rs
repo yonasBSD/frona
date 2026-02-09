@@ -9,7 +9,7 @@ use crate::api::repo::memories::SurrealMemoryRepo;
 use crate::api::repo::messages::SurrealMessageRepo;
 use crate::chat::message::models::Message;
 use crate::chat::message::repository::MessageRepository;
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::llm::config::ModelGroup;
 use crate::llm::context::{estimate_tokens, resolve_context_window};
 use crate::llm::convert::to_rig_messages;
@@ -19,8 +19,8 @@ use crate::memory::insight::models::Insight;
 use crate::memory::insight::repository::InsightRepository;
 use crate::memory::models::{Memory, MemorySourceType};
 use crate::memory::repository::MemoryRepository;
-use crate::prompt::PromptLoader;
-use crate::repository::Repository;
+use crate::agent::prompt::PromptLoader;
+use crate::core::repository::Repository;
 
 const INSIGHT_COMPACTION_TOKEN_THRESHOLD: usize = 3_000;
 

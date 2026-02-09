@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use crate::error::AppError;
-use crate::repository::{Entity, Repository};
+use crate::core::error::AppError;
+use crate::core::repository::{Entity, Repository};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use surrealdb::Surreal;

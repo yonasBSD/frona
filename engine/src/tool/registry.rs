@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::{AgentTool, ToolContext, ToolDefinition, ToolOutput, ToolType};
 
@@ -118,7 +118,7 @@ mod tests {
     fn mock_context() -> ToolContext {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         ToolContext {
-            user: crate::models::user::User {
+            user: crate::core::models::user::User {
                 id: "test-user".into(),
                 email: "test@test.com".into(),
                 name: "Test".into(),

@@ -1,8 +1,8 @@
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 
-use crate::dto::Claims;
-use crate::error::AppError;
-use crate::models::User;
+use super::dto::Claims;
+use crate::core::error::AppError;
+use crate::core::models::User;
 
 pub struct JwtService {
     encoding_key: EncodingKey,

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::credential::models::Credential;
 use crate::credential::repository::CredentialRepository;
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::generic::SurrealRepo;
 

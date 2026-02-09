@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use crate::chat::models::Chat;
 use crate::chat::repository::ChatRepository;
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::generic::SurrealRepo;
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::tool::{AgentTool, ImageData, ToolContext, ToolDefinition, ToolOutput};
 
 use super::session::BrowserSessionManager;

@@ -7,7 +7,7 @@ use crate::agent::repository::AgentRepository;
 use crate::agent::task::dto::CreateTaskRequest;
 use crate::agent::task::executor::TaskExecutor;
 use crate::agent::task::service::TaskService;
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::{AgentTool, ToolContext, ToolDefinition, ToolOutput};
 

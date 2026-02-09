@@ -5,7 +5,7 @@ use crate::agent::task::dto::{CreateTaskRequest, TaskResponse, UpdateTaskRequest
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
-use super::super::state::AppState;
+use crate::core::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -26,10 +26,10 @@ async fn get_task(
         .task_service
         .find_by_id(&id)
         .await?
-        .ok_or_else(|| crate::error::AppError::NotFound("Task not found".into()))?;
+        .ok_or_else(|| crate::core::error::AppError::NotFound("Task not found".into()))?;
 
     if task.user_id != auth.user_id {
-        return Err(crate::error::AppError::Forbidden("Not your task".into()).into());
+        return Err(crate::core::error::AppError::Forbidden("Not your task".into()).into());
     }
 
     Ok(Json(task.into()))

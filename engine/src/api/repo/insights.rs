@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::memory::insight::models::Insight;
 use crate::memory::insight::repository::InsightRepository;
 

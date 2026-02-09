@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::space::models::Space;
 use crate::space::repository::SpaceRepository;
 

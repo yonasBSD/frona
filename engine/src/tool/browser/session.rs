@@ -7,7 +7,7 @@ use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use tokio::sync::RwLock;
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::config::BrowserConfig;
 

@@ -3,7 +3,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 
-use super::super::state::AppState;
+use crate::core::state::AppState;
 
 #[derive(Serialize, Clone)]
 pub struct ToolInfo {

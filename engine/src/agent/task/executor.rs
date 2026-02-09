@@ -7,10 +7,10 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::execution;
 use crate::agent::task::models::{Task, TaskKind, TaskStatus};
 use crate::api::files::Attachment;
-use crate::api::state::AppState;
+use crate::core::state::AppState;
 use crate::chat::dto::CreateChatRequest;
 use crate::chat::message::models::MessageTool;
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::llm::tool_loop::ToolLoopOutcome;
 
 pub struct TaskExecutor {
@@ -117,7 +117,7 @@ impl TaskExecutor {
 
     async fn get_agent_concurrent_limit(&self, agent_id: &str) -> usize {
         use crate::api::repo::generic::SurrealRepo;
-        use crate::repository::Repository;
+        use crate::core::repository::Repository;
 
         let repo: SurrealRepo<crate::agent::models::Agent> = SurrealRepo::new(
             self.app_state.db.clone(),

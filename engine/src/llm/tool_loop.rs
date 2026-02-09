@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::chat::message::models::MessageTool;
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::tool::registry::AgentToolRegistry;
 use crate::tool::{ToolContext, ToolDefinition};
 

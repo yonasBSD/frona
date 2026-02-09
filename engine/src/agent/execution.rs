@@ -1,10 +1,10 @@
 use tokio_util::sync::CancellationToken;
 
-use crate::api::state::AppState;
-use crate::error::AppError;
+use crate::core::state::AppState;
+use crate::core::error::AppError;
 use crate::llm::convert::to_rig_messages;
 use crate::llm::tool_loop::{self, ToolLoopEvent, ToolLoopEventKind, ToolLoopOutcome};
-use crate::repository::Repository;
+use crate::core::repository::Repository;
 
 pub struct AgentLoopOutcome {
     pub tool_loop_outcome: ToolLoopOutcome,

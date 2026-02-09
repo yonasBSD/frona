@@ -7,7 +7,7 @@ use backon::{ExponentialBuilder, Retryable};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::tool::{AgentTool, ToolContext, ToolDefinition, ToolOutput};
 
 #[derive(Debug, Clone)]
@@ -395,7 +395,7 @@ mod tests {
     fn mock_context() -> ToolContext {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         ToolContext {
-            user: crate::models::user::User {
+            user: crate::core::models::user::User {
                 id: "u".into(), email: "e".into(), name: "n".into(),
                 password_hash: String::new(),
                 created_at: chrono::Utc::now(), updated_at: chrono::Utc::now(),

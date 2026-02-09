@@ -27,7 +27,7 @@ pub fn derive_entity(input: TokenStream) -> TokenStream {
         .expect("#[entity(table = \"...\")] attribute is required");
 
     let expanded = quote! {
-        impl frona::repository::Entity for #name {
+        impl frona::core::repository::Entity for #name {
             fn table() -> &'static str {
                 #table
             }

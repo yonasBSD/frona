@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::agent::skill::models::Skill;
 use crate::agent::skill::repository::SkillRepository;
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 use super::generic::SurrealRepo;
 

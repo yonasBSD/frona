@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use crate::error::AppError;
-use crate::repository::Repository;
+use crate::core::error::AppError;
+use crate::core::repository::Repository;
 
 use super::models::Space;
 

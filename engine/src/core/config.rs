@@ -10,8 +10,7 @@ pub struct Config {
     pub workspaces_base_path: String,
     pub files_base_path: String,
     pub tools_config_path: String,
-    pub skills_config_dir: String,
-    pub prompts_override_dir: String,
+    pub shared_config_dir: String,
     pub max_concurrent_tasks: usize,
     pub scheduler_space_compaction_secs: u64,
     pub scheduler_insight_compaction_secs: u64,
@@ -41,10 +40,8 @@ impl Config {
                 .unwrap_or_else(|_| "data/files".into()),
             tools_config_path: std::env::var("FRONA_TOOLS_CONFIG")
                 .unwrap_or_else(|_| "data/tools.json".into()),
-            skills_config_dir: std::env::var("FRONA_SKILLS_CONFIG_DIR")
-                .unwrap_or_else(|_| "engine/config".into()),
-            prompts_override_dir: std::env::var("FRONA_PROMPTS_DIR")
-                .unwrap_or_else(|_| "data/config/prompts".into()),
+            shared_config_dir: std::env::var("FRONA_SHARED_CONFIG")
+                .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/config").into()),
             max_concurrent_tasks: std::env::var("MAX_CONCURRENT_TASKS")
                 .unwrap_or_else(|_| "10".into())
                 .parse()

@@ -1,6 +1,6 @@
 use crate::api::repo::credentials::SurrealCredentialRepo;
-use crate::error::AppError;
-use crate::repository::Repository;
+use crate::core::error::AppError;
+use crate::core::repository::Repository;
 
 use super::dto::{CreateCredentialRequest, CredentialResponse};
 use super::models::{Credential, CredentialData};

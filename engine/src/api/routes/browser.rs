@@ -10,7 +10,7 @@ use hyper_util::rt::TokioExecutor;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
-use super::super::state::AppState;
+use crate::core::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new().route(
@@ -29,10 +29,10 @@ async fn debugger_proxy(
         .find_by_id(&credential_id)
         .await
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::from(crate::error::AppError::NotFound("Credential not found".into())))?;
+        .ok_or_else(|| ApiError::from(crate::core::error::AppError::NotFound("Credential not found".into())))?;
 
     if credential.user_id != auth.user_id {
-        return Err(ApiError::from(crate::error::AppError::Forbidden(
+        return Err(ApiError::from(crate::core::error::AppError::Forbidden(
             "Not your credential".into(),
         )));
     }
@@ -52,20 +52,20 @@ async fn debugger_proxy(
     let req = Request::get(&target_url)
         .body(Body::empty())
         .map_err(|e| {
-            ApiError::from(crate::error::AppError::Browser(format!(
+            ApiError::from(crate::core::error::AppError::Browser(format!(
                 "Failed to build proxy request: {e}"
             )))
         })?;
 
     let resp = client.request(req).await.map_err(|e| {
-        ApiError::from(crate::error::AppError::Browser(format!(
+        ApiError::from(crate::core::error::AppError::Browser(format!(
             "Failed to proxy to browserless: {e}"
         )))
     })?;
 
     let (parts, body) = resp.into_parts();
     let bytes = body.collect().await.map_err(|e| {
-        ApiError::from(crate::error::AppError::Browser(format!(
+        ApiError::from(crate::core::error::AppError::Browser(format!(
             "Failed to read proxy response: {e}"
         )))
     })?;

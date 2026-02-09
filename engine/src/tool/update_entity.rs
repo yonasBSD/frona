@@ -4,7 +4,7 @@ use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 use surrealdb::types::RecordId;
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 use crate::llm::tool_loop::{ToolLoopEvent, ToolLoopEventKind};
 
 use super::{AgentTool, ToolContext, ToolDefinition, ToolOutput};

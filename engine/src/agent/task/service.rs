@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 
 use crate::api::repo::tasks::SurrealTaskRepo;
-use crate::error::AppError;
-use crate::repository::Repository;
+use crate::core::error::AppError;
+use crate::core::repository::Repository;
 
 use super::dto::{CreateTaskRequest, TaskResponse, UpdateTaskRequest};
 use super::models::{Task, TaskKind, TaskStatus};

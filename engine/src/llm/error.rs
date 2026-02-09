@@ -95,8 +95,8 @@ fn format_fallback_errors(errors: &[(String, String)]) -> String {
         .join("; ")
 }
 
-impl From<LlmError> for crate::error::AppError {
+impl From<LlmError> for crate::core::error::AppError {
     fn from(err: LlmError) -> Self {
-        crate::error::AppError::Llm(err.to_string())
+        crate::core::error::AppError::Llm(err.to_string())
     }
 }
