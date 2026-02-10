@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use super::message::dto::MessageResponse;
+use super::message::models::MessageResponse;
 
 #[derive(Debug, Clone)]
 pub enum BroadcastEvent {

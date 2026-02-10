@@ -5,7 +5,7 @@ use crate::core::error::AppError;
 use crate::core::repository::Repository;
 use crate::tool::configurable_tools;
 
-use super::dto::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};
+use super::models::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};
 use super::models::Agent;
 use super::repository::AgentRepository;
 

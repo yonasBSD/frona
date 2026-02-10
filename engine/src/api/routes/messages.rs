@@ -12,7 +12,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
 use crate::chat::broadcast::BroadcastEvent;
-use crate::chat::message::dto::{MessageResponse, ResolveToolRequest, SendMessageRequest};
+use crate::chat::message::models::{MessageResponse, ResolveToolRequest, SendMessageRequest};
 use crate::llm::convert::{format_content_with_attachments, to_rig_messages};
 use crate::llm::fallback::stream_inference_with_fallback;
 use crate::llm::tool_loop::{self, ToolLoopEvent, ToolLoopEventKind, ToolLoopOutcome};

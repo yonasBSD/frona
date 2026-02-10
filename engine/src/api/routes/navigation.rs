@@ -3,8 +3,8 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 
-use crate::chat::dto::ChatResponse;
-use crate::space::dto::SpaceResponse;
+use crate::chat::models::ChatResponse;
+use crate::space::models::SpaceResponse;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;

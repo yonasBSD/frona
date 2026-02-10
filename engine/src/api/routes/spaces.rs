@@ -1,7 +1,7 @@
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use crate::space::dto::{CreateSpaceRequest, SpaceResponse, UpdateSpaceRequest};
+use crate::space::models::{CreateSpaceRequest, SpaceResponse, UpdateSpaceRequest};
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;

@@ -9,7 +9,7 @@ use crate::agent::task::models::TaskKind;
 use crate::api::repo::generic::SurrealRepo;
 use crate::api::repo::insights::SurrealInsightRepo;
 use crate::core::state::AppState;
-use crate::chat::dto::CreateChatRequest;
+use crate::chat::models::CreateChatRequest;
 use crate::chat::repository::ChatRepository;
 use crate::core::error::AppError;
 use crate::llm::config::ModelGroup;

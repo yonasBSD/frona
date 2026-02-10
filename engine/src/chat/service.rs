@@ -21,8 +21,8 @@ pub struct AgentConfig {
     pub identity: std::collections::BTreeMap<String, String>,
 }
 
-use super::dto::{ChatResponse, CreateChatRequest, UpdateChatRequest};
-use super::message::dto::{MessageResponse, SendMessageRequest};
+use super::models::{ChatResponse, CreateChatRequest, UpdateChatRequest};
+use super::message::models::{MessageResponse, SendMessageRequest};
 use super::message::models::{Message, MessageRole, MessageTool, ToolStatus};
 use super::message::repository::MessageRepository;
 use super::models::Chat;

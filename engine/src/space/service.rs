@@ -2,7 +2,7 @@ use crate::api::repo::spaces::SurrealSpaceRepo;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
 
-use super::dto::{CreateSpaceRequest, SpaceResponse, UpdateSpaceRequest};
+use super::models::{CreateSpaceRequest, SpaceResponse, UpdateSpaceRequest};
 use super::models::Space;
 use super::repository::SpaceRepository;
 

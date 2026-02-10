@@ -4,7 +4,7 @@ use crate::api::repo::tasks::SurrealTaskRepo;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
 
-use super::dto::{CreateTaskRequest, TaskResponse, UpdateTaskRequest};
+use super::models::{CreateTaskRequest, TaskResponse, UpdateTaskRequest};
 use super::models::{Task, TaskKind, TaskStatus};
 use super::repository::TaskRepository;
 

@@ -2,7 +2,7 @@ use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
 
-use crate::credential::dto::{CreateCredentialRequest, CredentialResponse};
+use crate::credential::models::{CreateCredentialRequest, CredentialResponse};
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use crate::agent::dto::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};
+use crate::agent::models::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;

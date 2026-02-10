@@ -8,7 +8,7 @@ use crate::agent::execution;
 use crate::agent::task::models::{Task, TaskKind, TaskStatus};
 use crate::api::files::Attachment;
 use crate::core::state::AppState;
-use crate::chat::dto::CreateChatRequest;
+use crate::chat::models::CreateChatRequest;
 use crate::chat::message::models::MessageTool;
 use crate::core::error::AppError;
 use crate::llm::tool_loop::ToolLoopOutcome;

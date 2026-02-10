@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::agent::repository::AgentRepository;
-use crate::agent::task::dto::CreateTaskRequest;
+use crate::agent::task::models::CreateTaskRequest;
 use crate::agent::task::executor::TaskExecutor;
 use crate::agent::task::service::TaskService;
 use crate::core::error::AppError;

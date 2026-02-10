@@ -1,7 +1,7 @@
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use crate::chat::dto::{ChatResponse, CreateChatRequest, UpdateChatRequest};
+use crate::chat::models::{ChatResponse, CreateChatRequest, UpdateChatRequest};
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;

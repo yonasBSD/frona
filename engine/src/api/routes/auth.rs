@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use crate::api::cookie::{make_auth_cookie, make_clear_cookie};
-use crate::auth::dto::{AuthResponse, LoginRequest, RegisterRequest, UserInfo};
+use crate::auth::models::{AuthResponse, LoginRequest, RegisterRequest, UserInfo};
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
 

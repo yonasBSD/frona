@@ -1,6 +1,6 @@
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 
-use super::dto::Claims;
+use super::models::Claims;
 use crate::core::error::AppError;
 use crate::core::models::User;
 

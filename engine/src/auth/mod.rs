@@ -1,9 +1,9 @@
-pub mod dto;
+pub mod models;
 pub mod jwt;
 
 use async_trait::async_trait;
 
-use self::dto::{AuthResponse, LoginRequest, RegisterRequest, UserInfo};
+use self::models::{AuthResponse, LoginRequest, RegisterRequest, UserInfo};
 use crate::core::error::AppError;
 use crate::core::models::User;
 use crate::core::repository::Repository;
@@ -82,7 +82,7 @@ impl AuthService {
         })
     }
 
-    pub fn validate_token(&self, token: &str) -> Result<self::dto::Claims, AppError> {
+    pub fn validate_token(&self, token: &str) -> Result<self::models::Claims, AppError> {
         self.jwt.validate(token)
     }
 
