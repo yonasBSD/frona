@@ -105,6 +105,25 @@ macro_rules! init_api_key_provider {
     }};
 }
 
+macro_rules! init_builder_provider {
+    ($name:expr, $entry:expr, $mod:ident, $counter:expr) => {{
+        let key = require_api_key($name, $entry)?;
+        let client: $mod::Client = if let Some(url) = &$entry.base_url {
+            $mod::Client::builder()
+                .api_key(&key)
+                .base_url(url)
+                .build()
+                .map_err(|e| LlmError::ConfigError(format!("{}: {e}", $name)))?
+        } else {
+            $mod::Client::builder()
+                .api_key(&key)
+                .build()
+                .map_err(|e| LlmError::ConfigError(format!("{}: {e}", $name)))?
+        };
+        Ok(Arc::new(RigProvider::new(client, $counter.clone())) as Arc<dyn ModelProvider>)
+    }};
+}
+
 fn init_provider(
     name: &str,
     entry: &ModelProviderConfig,
@@ -112,22 +131,7 @@ fn init_provider(
 ) -> Result<Arc<dyn ModelProvider>, LlmError> {
     match name {
         "openai" => init_api_key_provider!(name, entry, openai, counter),
-        "anthropic" => {
-            let key = require_api_key(name, entry)?;
-            let client: anthropic::Client = if let Some(url) = &entry.base_url {
-                anthropic::Client::builder()
-                    .api_key(&key)
-                    .base_url(url)
-                    .build()
-                    .map_err(|e| LlmError::ConfigError(format!("anthropic: {e}")))?
-            } else {
-                anthropic::Client::builder()
-                    .api_key(&key)
-                    .build()
-                    .map_err(|e| LlmError::ConfigError(format!("anthropic: {e}")))?
-            };
-            Ok(Arc::new(RigProvider::new(client, counter.clone())))
-        }
+        "anthropic" => init_builder_provider!(name, entry, anthropic, counter),
         "ollama" => {
             let client: ollama::Client = if let Some(url) = &entry.base_url {
                 ollama::Client::builder()
@@ -145,20 +149,7 @@ fn init_provider(
         "openrouter" => init_api_key_provider!(name, entry, openrouter, counter),
         "deepseek" => init_api_key_provider!(name, entry, deepseek, counter),
         "gemini" => init_api_key_provider!(name, entry, gemini, counter),
-        "cohere" => {
-            let key = require_api_key(name, entry)?;
-            let client: cohere::Client = if let Some(url) = &entry.base_url {
-                cohere::Client::builder()
-                    .api_key(&key)
-                    .base_url(url)
-                    .build()
-                    .map_err(|e| LlmError::ConfigError(format!("cohere: {e}")))?
-            } else {
-                cohere::Client::new(&key)
-                    .map_err(|e| LlmError::ConfigError(format!("cohere: {e}")))?
-            };
-            Ok(Arc::new(RigProvider::new(client, counter.clone())))
-        }
+        "cohere" => init_api_key_provider!(name, entry, cohere, counter),
         "mistral" => init_api_key_provider!(name, entry, mistral, counter),
         "perplexity" => init_api_key_provider!(name, entry, perplexity, counter),
         "together" => init_api_key_provider!(name, entry, together, counter),
@@ -166,22 +157,7 @@ fn init_provider(
         "hyperbolic" => init_api_key_provider!(name, entry, hyperbolic, counter),
         "moonshot" => init_api_key_provider!(name, entry, moonshot, counter),
         "mira" => init_api_key_provider!(name, entry, mira, counter),
-        "galadriel" => {
-            let key = require_api_key(name, entry)?;
-            let client: galadriel::Client = if let Some(url) = &entry.base_url {
-                galadriel::Client::builder()
-                    .api_key(&key)
-                    .base_url(url)
-                    .build()
-                    .map_err(|e| LlmError::ConfigError(format!("galadriel: {e}")))?
-            } else {
-                galadriel::Client::builder()
-                    .api_key(&key)
-                    .build()
-                    .map_err(|e| LlmError::ConfigError(format!("galadriel: {e}")))?
-            };
-            Ok(Arc::new(RigProvider::new(client, counter.clone())))
-        }
+        "galadriel" => init_builder_provider!(name, entry, galadriel, counter),
         "huggingface" => init_api_key_provider!(name, entry, huggingface, counter),
         _ => Err(LlmError::ProviderNotConfigured(format!(
             "Unknown provider: {name}"

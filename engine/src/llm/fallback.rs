@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use backon::Retryable;
 use rig::completion::Message as RigMessage;
 use tokio::sync::mpsc;
@@ -5,6 +7,7 @@ use tokio::sync::mpsc;
 use super::config::{ModelGroup, RetryConfig};
 use super::context::truncate_history;
 use super::error::LlmError;
+use super::provider::ModelRef;
 use super::registry::ModelProviderRegistry;
 
 pub async fn inference_with_fallback(
@@ -28,7 +31,21 @@ pub async fn inference_with_fallback(
     );
 
     let ref_str = model_group.main.as_str();
-    match retry_inference(registry, &model_group.main, system_prompt, &truncated, &user_message, max_tokens, temperature, &model_group.retry).await {
+    match retry_with_backoff(&model_group.retry, &model_group.main, || async {
+        let provider = registry.get_provider(&model_group.main.provider)?;
+        provider
+            .inference(
+                &model_group.main.model_id,
+                system_prompt,
+                truncated.clone(),
+                user_message.clone(),
+                max_tokens,
+                temperature,
+            )
+            .await
+    })
+    .await
+    {
         Ok(response) => {
             tracing::info!(model = %ref_str, "Completion succeeded");
             return Ok(response);
@@ -48,7 +65,21 @@ pub async fn inference_with_fallback(
             model_group.context_window,
             max_output,
         );
-        match retry_inference(registry, fallback, system_prompt, &truncated_fb, &user_message, max_tokens, temperature, &model_group.retry).await {
+        match retry_with_backoff(&model_group.retry, fallback, || async {
+            let provider = registry.get_provider(&fallback.provider)?;
+            provider
+                .inference(
+                    &fallback.model_id,
+                    system_prompt,
+                    truncated_fb.clone(),
+                    user_message.clone(),
+                    max_tokens,
+                    temperature,
+                )
+                .await
+        })
+        .await
+        {
             Ok(response) => {
                 tracing::info!(model = %ref_str, "Fallback succeeded");
                 return Ok(response);
@@ -85,17 +116,20 @@ pub async fn stream_inference_with_fallback(
     );
 
     let ref_str = model_group.main.as_str();
-    match retry_stream_inference(
-        registry,
-        &model_group.main,
-        system_prompt,
-        &truncated,
-        &user_message,
-        token_tx.clone(),
-        max_tokens,
-        temperature,
-        &model_group.retry,
-    )
+    match retry_with_backoff(&model_group.retry, &model_group.main, || async {
+        let provider = registry.get_provider(&model_group.main.provider)?;
+        provider
+            .stream_inference(
+                &model_group.main.model_id,
+                system_prompt,
+                truncated.clone(),
+                user_message.clone(),
+                token_tx.clone(),
+                max_tokens,
+                temperature,
+            )
+            .await
+    })
     .await
     {
         Ok(()) => {
@@ -117,17 +151,20 @@ pub async fn stream_inference_with_fallback(
             model_group.context_window,
             max_output,
         );
-        match retry_stream_inference(
-            registry,
-            fallback,
-            system_prompt,
-            &truncated_fb,
-            &user_message,
-            token_tx.clone(),
-            max_tokens,
-            temperature,
-            &model_group.retry,
-        )
+        match retry_with_backoff(&model_group.retry, fallback, || async {
+            let provider = registry.get_provider(&fallback.provider)?;
+            provider
+                .stream_inference(
+                    &fallback.model_id,
+                    system_prompt,
+                    truncated_fb.clone(),
+                    user_message.clone(),
+                    token_tx.clone(),
+                    max_tokens,
+                    temperature,
+                )
+                .await
+        })
         .await
         {
             Ok(()) => {
@@ -144,98 +181,22 @@ pub async fn stream_inference_with_fallback(
     Err(LlmError::AllFallbacksFailed(errors))
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn retry_inference(
-    registry: &ModelProviderRegistry,
-    model_ref: &super::provider::ModelRef,
-    system_prompt: &str,
-    history: &[RigMessage],
-    user_message: &RigMessage,
-    max_tokens: Option<u64>,
-    temperature: Option<f64>,
+async fn retry_with_backoff<T, F, Fut>(
     retry_config: &RetryConfig,
-) -> Result<String, LlmError> {
-    let model_str = model_ref.as_str().to_string();
-    (|| async {
-        try_inference(registry, model_ref, system_prompt, history, user_message, max_tokens, temperature).await
-    })
-    .retry(retry_config.to_backoff())
-    .sleep(tokio::time::sleep)
-    .when(|e| e.is_retryable())
-    .notify(|e, dur| {
-        tracing::warn!(model = %model_str, error = %e, delay = ?dur, "Retryable error, backing off");
-    })
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn retry_stream_inference(
-    registry: &ModelProviderRegistry,
-    model_ref: &super::provider::ModelRef,
-    system_prompt: &str,
-    history: &[RigMessage],
-    user_message: &RigMessage,
-    token_tx: mpsc::Sender<Result<String, LlmError>>,
-    max_tokens: Option<u64>,
-    temperature: Option<f64>,
-    retry_config: &RetryConfig,
-) -> Result<(), LlmError> {
-    let model_str = model_ref.as_str().to_string();
-    (|| async {
-        try_stream_inference(registry, model_ref, system_prompt, history, user_message, token_tx.clone(), max_tokens, temperature).await
-    })
-    .retry(retry_config.to_backoff())
-    .sleep(tokio::time::sleep)
-    .when(|e| e.is_retryable())
-    .notify(|e, dur| {
-        tracing::warn!(model = %model_str, error = %e, delay = ?dur, "Retryable stream error, backing off");
-    })
-    .await
-}
-
-async fn try_inference(
-    registry: &ModelProviderRegistry,
-    model_ref: &super::provider::ModelRef,
-    system_prompt: &str,
-    history: &[RigMessage],
-    user_message: &RigMessage,
-    max_tokens: Option<u64>,
-    temperature: Option<f64>,
-) -> Result<String, LlmError> {
-    let provider = registry.get_provider(&model_ref.provider)?;
-    provider
-        .inference(
-            &model_ref.model_id,
-            system_prompt,
-            history.to_vec(),
-            user_message.clone(),
-            max_tokens,
-            temperature,
-        )
-        .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn try_stream_inference(
-    registry: &ModelProviderRegistry,
-    model_ref: &super::provider::ModelRef,
-    system_prompt: &str,
-    history: &[RigMessage],
-    user_message: &RigMessage,
-    token_tx: mpsc::Sender<Result<String, LlmError>>,
-    max_tokens: Option<u64>,
-    temperature: Option<f64>,
-) -> Result<(), LlmError> {
-    let provider = registry.get_provider(&model_ref.provider)?;
-    provider
-        .stream_inference(
-            &model_ref.model_id,
-            system_prompt,
-            history.to_vec(),
-            user_message.clone(),
-            token_tx,
-            max_tokens,
-            temperature,
-        )
+    model_ref: &ModelRef,
+    op: F,
+) -> Result<T, LlmError>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<T, LlmError>>,
+{
+    let model_str = model_ref.as_str();
+    (|| async { op().await })
+        .retry(retry_config.to_backoff())
+        .sleep(tokio::time::sleep)
+        .when(|e| e.is_retryable())
+        .notify(|e, dur| {
+            tracing::warn!(model = %model_str, error = %e, delay = ?dur, "Retryable error, backing off");
+        })
         .await
 }

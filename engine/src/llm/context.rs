@@ -1,46 +1,30 @@
 use rig::completion::Message as RigMessage;
 
+const KNOWN_CONTEXT_WINDOWS: &[(&str, usize)] = &[
+    ("claude", 200_000),
+    ("gpt-4o", 128_000),
+    ("gpt-4.1", 128_000),
+    ("gpt-4.5", 128_000),
+    ("o1", 200_000),
+    ("o3", 200_000),
+    ("o4", 200_000),
+    ("gemini-2", 1_000_000),
+    ("gemini-1.5-pro", 1_000_000),
+    ("gemini", 128_000),
+    ("deepseek", 64_000),
+    ("llama", 128_000),
+    ("grok", 131_072),
+    ("mistral-large", 128_000),
+    ("command-r", 128_000),
+    ("qwen", 128_000),
+];
+
 pub fn known_context_window(model_id: &str) -> Option<usize> {
     let id = model_id.to_lowercase();
-
-    if id.contains("claude") {
-        return Some(200_000);
-    }
-    if id.contains("gpt-4o") || id.contains("gpt-4.1") {
-        return Some(128_000);
-    }
-    if id.contains("gpt-4.5") {
-        return Some(128_000);
-    }
-    if id.contains("o1") || id.contains("o3") || id.contains("o4") {
-        return Some(200_000);
-    }
-    if id.contains("gemini-2") || id.contains("gemini-1.5-pro") {
-        return Some(1_000_000);
-    }
-    if id.contains("gemini") {
-        return Some(128_000);
-    }
-    if id.contains("deepseek") {
-        return Some(64_000);
-    }
-    if id.contains("llama") {
-        return Some(128_000);
-    }
-    if id.contains("grok") {
-        return Some(131_072);
-    }
-    if id.contains("mistral-large") {
-        return Some(128_000);
-    }
-    if id.contains("command-r") {
-        return Some(128_000);
-    }
-    if id.contains("qwen") {
-        return Some(128_000);
-    }
-
-    None
+    KNOWN_CONTEXT_WINDOWS
+        .iter()
+        .find(|(pattern, _)| id.contains(pattern))
+        .map(|(_, window)| *window)
 }
 
 const DEFAULT_CONTEXT_WINDOW: usize = 128_000;

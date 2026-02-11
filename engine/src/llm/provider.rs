@@ -13,6 +13,55 @@ use tokio::sync::mpsc;
 use crate::chat::broadcast::BroadcastService;
 use super::error::LlmError;
 
+struct CompletionRequestBuilder<'a> {
+    system_prompt: &'a str,
+    chat_history: Vec<RigMessage>,
+    tools: Vec<RigToolDefinition>,
+    max_tokens: Option<u64>,
+    temperature: Option<f64>,
+}
+
+impl<'a> CompletionRequestBuilder<'a> {
+    fn new(system_prompt: &'a str, chat_history: Vec<RigMessage>) -> Self {
+        Self {
+            system_prompt,
+            chat_history,
+            tools: vec![],
+            max_tokens: None,
+            temperature: None,
+        }
+    }
+
+    fn tools(mut self, tools: Vec<RigToolDefinition>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    fn max_tokens(mut self, v: Option<u64>) -> Self {
+        self.max_tokens = v;
+        self
+    }
+
+    fn temperature(mut self, v: Option<f64>) -> Self {
+        self.temperature = v;
+        self
+    }
+
+    fn build(self) -> CompletionRequest {
+        CompletionRequest {
+            preamble: Some(self.system_prompt.to_string()),
+            chat_history: rig::OneOrMany::many(self.chat_history)
+                .unwrap_or_else(|_| rig::OneOrMany::one(RigMessage::user(""))),
+            documents: vec![],
+            tools: self.tools,
+            temperature: self.temperature,
+            max_tokens: self.max_tokens,
+            tool_choice: None,
+            additional_params: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ModelRef {
     pub provider: String,
@@ -174,17 +223,10 @@ where
             "LLM request"
         );
 
-        let request = CompletionRequest {
-            preamble: Some(system_prompt.to_string()),
-            chat_history: rig::OneOrMany::many(chat_history)
-                .unwrap_or_else(|_| rig::OneOrMany::one(RigMessage::user(""))),
-            documents: vec![],
-            tools: vec![],
-            temperature,
-            max_tokens,
-            tool_choice: None,
-            additional_params: None,
-        };
+        let request = CompletionRequestBuilder::new(system_prompt, chat_history)
+            .max_tokens(max_tokens)
+            .temperature(temperature)
+            .build();
 
         let response = model
             .completion(request)
@@ -226,17 +268,10 @@ where
             "LLM stream request"
         );
 
-        let request = CompletionRequest {
-            preamble: Some(system_prompt.to_string()),
-            chat_history: rig::OneOrMany::many(chat_history)
-                .unwrap_or_else(|_| rig::OneOrMany::one(RigMessage::user(""))),
-            documents: vec![],
-            tools: vec![],
-            temperature,
-            max_tokens,
-            tool_choice: None,
-            additional_params: None,
-        };
+        let request = CompletionRequestBuilder::new(system_prompt, chat_history)
+            .max_tokens(max_tokens)
+            .temperature(temperature)
+            .build();
 
         let mut stream = model
             .stream(request)
@@ -284,17 +319,11 @@ where
             "LLM tool request"
         );
 
-        let request = CompletionRequest {
-            preamble: Some(system_prompt.to_string()),
-            chat_history: rig::OneOrMany::many(chat_history.clone())
-                .unwrap_or_else(|_| rig::OneOrMany::one(RigMessage::user(""))),
-            documents: vec![],
-            tools,
-            temperature,
-            max_tokens,
-            tool_choice: None,
-            additional_params: None,
-        };
+        let request = CompletionRequestBuilder::new(system_prompt, chat_history.clone())
+            .tools(tools)
+            .max_tokens(max_tokens)
+            .temperature(temperature)
+            .build();
 
         let response: CompletionResponse<_> = model
             .completion(request)
@@ -322,7 +351,6 @@ where
         max_tokens: Option<u64>,
         temperature: Option<f64>,
     ) -> Result<Vec<AssistantContent>, LlmError> {
-        use futures::StreamExt;
         use rig::completion::CompletionModel as _;
 
         let _guard = self.counter.guard();
@@ -336,89 +364,34 @@ where
         tracing::debug!(system_prompt = %system_prompt, "LLM system prompt");
         tracing::debug!(chat_history = ?chat_history, "LLM chat history");
 
-        let tool_name_strings: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+        let tool_names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
 
-        let request = CompletionRequest {
-            preamble: Some(system_prompt.to_string()),
-            chat_history: rig::OneOrMany::many(chat_history)
-                .unwrap_or_else(|_| rig::OneOrMany::one(RigMessage::user(""))),
-            documents: vec![],
-            tools,
-            temperature,
-            max_tokens,
-            tool_choice: None,
-            additional_params: None,
-        };
+        let request = CompletionRequestBuilder::new(system_prompt, chat_history)
+            .tools(tools)
+            .max_tokens(max_tokens)
+            .temperature(temperature)
+            .build();
 
-        let mut stream = model
+        let stream = model
             .stream(request)
             .await
             .map_err(LlmError::CompletionFailed)?;
 
-        let mut contents: Vec<AssistantContent> = Vec::new();
-        let mut accumulated_text = String::new();
-        let mut buffering = true;
-
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(rig::streaming::StreamedAssistantContent::Text(text)) => {
-                    accumulated_text.push_str(&text.text);
-                    if buffering {
-                        if accumulated_text.len() >= 64 {
-                            let has_tool_name = tool_name_strings
-                                .iter()
-                                .any(|name| accumulated_text.contains(name.as_str()));
-                            if !has_tool_name {
-                                let _ = token_tx.send(accumulated_text.clone()).await;
-                                buffering = false;
-                            }
-                        }
-                    } else {
-                        let _ = token_tx.send(text.text).await;
-                    }
-                }
-                Ok(rig::streaming::StreamedAssistantContent::ToolCall {
-                    tool_call, ..
-                }) => {
-                    contents.push(AssistantContent::ToolCall(tool_call));
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    return Err(LlmError::CompletionFailed(e));
-                }
-            }
-        }
+        let (mut accumulated_text, mut contents, still_buffering) =
+            consume_tool_stream(stream, &token_tx, &tool_names).await?;
 
         let has_tool_calls = contents.iter().any(|c| matches!(c, AssistantContent::ToolCall(_)));
-
-        if !has_tool_calls && !accumulated_text.is_empty() && buffering {
-            let tool_names: Vec<&str> = tool_name_strings.iter().map(|s| s.as_str()).collect();
-            let extracted = try_extract_tool_calls_from_text(&accumulated_text, &tool_names);
-
-            if !extracted.is_empty() {
-                tracing::warn!(
-                    model = %model_id,
-                    count = extracted.len(),
-                    "Recovered tool call from text output"
-                );
-
-                let mut remaining = accumulated_text.clone();
-                for tc in extracted.iter().rev() {
-                    remaining.replace_range(tc.start..tc.end, "");
-                }
-                accumulated_text = remaining.trim().to_string();
-
-                for tc in extracted {
-                    contents.push(AssistantContent::ToolCall(ToolCall::new(
-                        uuid::Uuid::new_v4().to_string(),
-                        ToolFunction::new(tc.tool_name, tc.arguments),
-                    )));
-                }
-            }
+        if !has_tool_calls && !accumulated_text.is_empty() && still_buffering {
+            recover_tool_calls_from_text(
+                &mut accumulated_text,
+                &mut contents,
+                &tool_names,
+                model_id,
+            );
         }
 
         if !accumulated_text.is_empty() {
-            if buffering {
+            if still_buffering {
                 let _ = token_tx.send(accumulated_text.clone()).await;
             }
             contents.insert(0, AssistantContent::text(&accumulated_text));
@@ -431,6 +404,86 @@ where
         );
 
         Ok(contents)
+    }
+}
+
+async fn consume_tool_stream<S, R>(
+    mut stream: S,
+    token_tx: &mpsc::Sender<String>,
+    tool_names: &[String],
+) -> Result<(String, Vec<AssistantContent>, bool), LlmError>
+where
+    S: futures::Stream<Item = Result<rig::streaming::StreamedAssistantContent<R>, rig::completion::CompletionError>>
+        + Unpin,
+    R: Clone + Unpin,
+{
+    use futures::StreamExt;
+
+    let mut contents: Vec<AssistantContent> = Vec::new();
+    let mut accumulated_text = String::new();
+    let mut buffering = true;
+
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(rig::streaming::StreamedAssistantContent::Text(text)) => {
+                accumulated_text.push_str(&text.text);
+                if buffering {
+                    if accumulated_text.len() >= 64 {
+                        let has_tool_name = tool_names
+                            .iter()
+                            .any(|name| accumulated_text.contains(name.as_str()));
+                        if !has_tool_name {
+                            let _ = token_tx.send(accumulated_text.clone()).await;
+                            buffering = false;
+                        }
+                    }
+                } else {
+                    let _ = token_tx.send(text.text).await;
+                }
+            }
+            Ok(rig::streaming::StreamedAssistantContent::ToolCall { tool_call, .. }) => {
+                contents.push(AssistantContent::ToolCall(tool_call));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return Err(LlmError::CompletionFailed(e));
+            }
+        }
+    }
+
+    Ok((accumulated_text, contents, buffering))
+}
+
+fn recover_tool_calls_from_text(
+    accumulated_text: &mut String,
+    contents: &mut Vec<AssistantContent>,
+    tool_names: &[String],
+    model_id: &str,
+) {
+    let names: Vec<&str> = tool_names.iter().map(|s| s.as_str()).collect();
+    let extracted = try_extract_tool_calls_from_text(accumulated_text, &names);
+
+    if extracted.is_empty() {
+        return;
+    }
+
+    tracing::warn!(
+        model = %model_id,
+        count = extracted.len(),
+        "Recovered tool call from text output"
+    );
+
+    let mut remaining = accumulated_text.clone();
+    for tc in extracted.iter().rev() {
+        remaining.replace_range(tc.start..tc.end, "");
+    }
+    *accumulated_text = remaining.trim().to_string();
+
+    for tc in extracted {
+        contents.push(AssistantContent::ToolCall(ToolCall::new(
+            uuid::Uuid::new_v4().to_string(),
+            ToolFunction::new(tc.tool_name, tc.arguments),
+        )));
     }
 }
 
