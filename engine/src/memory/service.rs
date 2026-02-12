@@ -586,39 +586,68 @@ impl MemoryService {
         agent_summaries: &[(String, String)],
         identity: &std::collections::BTreeMap<String, String>,
     ) -> Result<String, AppError> {
-        let mut prefix = String::new();
+        // Prompt is ordered static → almost-static → dynamic to maximise
+        // the cacheable prefix for LLM prompt caching.
+
+        // --- Static: base prompt + shared prompt files ---
+        let mut result = base_prompt.to_string();
+
+        const AGENT_PROMPTS: &[&str] = &["WORKSPACE.md", "TOOLS.md", "MEMORY.md", "SCHEDULING.md"];
+        for name in AGENT_PROMPTS {
+            if let Some(content) = self.prompts.read(name) {
+                result.push_str("\n\n");
+                result.push_str(&content);
+            }
+        }
+
+        // --- Almost-static: identity, skills, agents ---
+        if !identity.is_empty() {
+            result.push_str("\n\n<agent_identity>\n");
+            for (key, value) in identity {
+                result.push_str(&format!("{key}: {value}\n"));
+            }
+            result.push_str("</agent_identity>");
+        }
 
         const CORE_IDENTITY_KEYS: &[&str] = &["name", "creature", "vibe"];
         let has_core_identity = CORE_IDENTITY_KEYS
             .iter()
             .all(|core_key| identity.keys().any(|k| k.eq_ignore_ascii_case(core_key)));
 
-        if !identity.is_empty() {
-            prefix.push_str("<agent_identity>\n");
-            for (key, value) in identity {
-                prefix.push_str(&format!("{key}: {value}\n"));
-            }
-            prefix.push_str("</agent_identity>\n\n");
-        }
-
         if !has_core_identity
             && let Some(identity_prompt) = self.load_prompt("IDENTITY.md", Some(agent_id))
         {
-            prefix.push_str(&identity_prompt);
-            prefix.push('\n');
+            result.push_str("\n\n");
+            result.push_str(&identity_prompt);
         }
 
+        if !skill_summaries.is_empty() {
+            result.push_str("\n\n<available_skills>\nThe following skills contain instructions and knowledge you can load using the `read_skill` tool when relevant to the conversation. Use skills transparently — do not tell the user you are loading or using a skill. Just follow the skill's instructions naturally.\n");
+            for (name, description) in skill_summaries {
+                result.push_str(&format!("- {name}: {description}\n"));
+            }
+            result.push_str("</available_skills>");
+        }
+
+        if !agent_summaries.is_empty() {
+            result.push_str("\n\n<available_agents>\nYou can delegate tasks to the following agents using `delegate_task` (fire-and-forget) or `run_subtask` (resume with result).\nUse delegation when the task requires specialized capabilities that another agent has.\n");
+            for (name, description) in agent_summaries {
+                result.push_str(&format!("- {name}: {description}\n"));
+            }
+            result.push_str("</available_agents>");
+        }
+
+        // --- Dynamic: space context, user memory, agent memory ---
         if let Some(sid) = space_id
             && let Some(space_mem) = self
                 .get_memory(MemorySourceType::Space, sid)
                 .await?
         {
-            prefix.push_str("<space_context>\n");
-            prefix.push_str(&space_mem.content);
-            prefix.push_str("\n</space_context>\n\n");
+            result.push_str("\n\n<space_context>\n");
+            result.push_str(&space_mem.content);
+            result.push_str("\n</space_context>");
         }
 
-        // User memory (cross-agent)
         if let Some(user_mem) = self
             .get_memory(MemorySourceType::User, user_id)
             .await?
@@ -628,8 +657,8 @@ impl MemoryService {
                 memory_len = user_mem.content.len(),
                 "Using compacted user memory"
             );
-            prefix.push_str("<user_memory>\n");
-            prefix.push_str(&user_mem.content);
+            result.push_str("\n\n<user_memory>\n");
+            result.push_str(&user_mem.content);
 
             let compacted_until = user_mem
                 .metadata
@@ -646,13 +675,13 @@ impl MemoryService {
                 None => self.insight_repo.find_by_user_id(user_id).await?,
             };
             if !new_insights.is_empty() {
-                prefix.push('\n');
+                result.push('\n');
                 for insight in &new_insights {
-                    prefix.push_str(&format!("- {}\n", insight.content));
+                    result.push_str(&format!("- {}\n", insight.content));
                 }
             }
 
-            prefix.push_str("</user_memory>\n\n");
+            result.push_str("</user_memory>");
         } else {
             let insights = self.insight_repo.find_by_user_id(user_id).await?;
             if !insights.is_empty() {
@@ -661,15 +690,14 @@ impl MemoryService {
                     insight_count = insights.len(),
                     "No compacted user memory, using raw insights"
                 );
-                prefix.push_str("<user_memory>\n");
+                result.push_str("\n\n<user_memory>\n");
                 for insight in &insights {
-                    prefix.push_str(&format!("- {}\n", insight.content));
+                    result.push_str(&format!("- {}\n", insight.content));
                 }
-                prefix.push_str("</user_memory>\n\n");
+                result.push_str("</user_memory>");
             }
         }
 
-        // Agent memory
         if let Some(agent_mem) = self
             .get_memory(MemorySourceType::Agent, agent_id)
             .await?
@@ -679,8 +707,8 @@ impl MemoryService {
                 memory_len = agent_mem.content.len(),
                 "Using compacted agent memory"
             );
-            prefix.push_str("<agent_memory>\n");
-            prefix.push_str(&agent_mem.content);
+            result.push_str("\n\n<agent_memory>\n");
+            result.push_str(&agent_mem.content);
 
             let compacted_until = agent_mem
                 .metadata
@@ -697,13 +725,13 @@ impl MemoryService {
                 None => self.insight_repo.find_by_agent_id(agent_id).await?,
             };
             if !new_insights.is_empty() {
-                prefix.push('\n');
+                result.push('\n');
                 for insight in &new_insights {
-                    prefix.push_str(&format!("- {}\n", insight.content));
+                    result.push_str(&format!("- {}\n", insight.content));
                 }
             }
 
-            prefix.push_str("</agent_memory>\n\n");
+            result.push_str("</agent_memory>");
         } else {
             let insights = self.insight_repo.find_by_agent_id(agent_id).await?;
             tracing::debug!(
@@ -712,42 +740,11 @@ impl MemoryService {
                 "No compacted agent memory, using raw insights"
             );
             if !insights.is_empty() {
-                prefix.push_str("<agent_memory>\n");
+                result.push_str("\n\n<agent_memory>\n");
                 for insight in &insights {
-                    prefix.push_str(&format!("- {}\n", insight.content));
+                    result.push_str(&format!("- {}\n", insight.content));
                 }
-                prefix.push_str("</agent_memory>\n\n");
-            }
-        }
-
-        if !skill_summaries.is_empty() {
-            prefix.push_str("<available_skills>\nThe following skills contain instructions and knowledge you can load using the `read_skill` tool when relevant to the conversation. Use skills transparently — do not tell the user you are loading or using a skill. Just follow the skill's instructions naturally.\n");
-            for (name, description) in skill_summaries {
-                prefix.push_str(&format!("- {name}: {description}\n"));
-            }
-            prefix.push_str("</available_skills>\n\n");
-        }
-
-        if !agent_summaries.is_empty() {
-            prefix.push_str("<available_agents>\nYou can delegate tasks to the following agents using `delegate_task` (fire-and-forget) or `run_subtask` (resume with result).\nUse delegation when the task requires specialized capabilities that another agent has.\n");
-            for (name, description) in agent_summaries {
-                prefix.push_str(&format!("- {name}: {description}\n"));
-            }
-            prefix.push_str("</available_agents>\n\n");
-        }
-
-        let mut result = if prefix.is_empty() {
-            base_prompt.to_string()
-        } else {
-            format!("{prefix}---\n{base_prompt}")
-        };
-
-        const AGENT_PROMPTS: &[&str] = &["WORKSPACE.md", "TOOLS.md", "MEMORY.md", "SCHEDULING.md"];
-
-        for name in AGENT_PROMPTS {
-            if let Some(content) = self.prompts.read(name) {
-                result.push_str("\n\n");
-                result.push_str(&content);
+                result.push_str("</agent_memory>");
             }
         }
 
