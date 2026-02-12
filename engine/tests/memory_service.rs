@@ -21,8 +21,8 @@ async fn test_db() -> Surreal<Db> {
 }
 
 fn make_memory_service(db: Surreal<Db>) -> MemoryService {
-    let provider_registry = frona::llm::ModelProviderRegistry::from_config(
-        frona::llm::config::ModelRegistryConfig::auto_discover(),
+    let provider_registry = frona::inference::ModelProviderRegistry::from_config(
+        frona::inference::config::ModelRegistryConfig::auto_discover(),
         frona::chat::broadcast::BroadcastService::new(),
     )
     .unwrap();
