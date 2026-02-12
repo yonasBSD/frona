@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum LlmError {
+pub enum InferenceError {
     #[error("Provider not configured: {0}")]
     ProviderNotConfigured(String),
 
@@ -34,11 +34,11 @@ fn provider_error_contains_status(msg: &str, codes: &[u16]) -> bool {
     codes.iter().any(|code| msg.contains(&code.to_string()))
 }
 
-impl LlmError {
+impl InferenceError {
     pub fn is_retryable(&self) -> bool {
         match self {
-            LlmError::RateLimited { .. } => true,
-            LlmError::CompletionFailed(rig::completion::CompletionError::HttpError(http_err)) => {
+            InferenceError::RateLimited { .. } => true,
+            InferenceError::CompletionFailed(rig::completion::CompletionError::HttpError(http_err)) => {
                     use rig::http_client::Error;
                     match http_err {
                         Error::InvalidStatusCode(s)
@@ -54,11 +54,11 @@ impl LlmError {
                         _ => false,
                     }
             }
-            LlmError::CompletionFailed(rig::completion::CompletionError::ProviderError(msg)) => {
+            InferenceError::CompletionFailed(rig::completion::CompletionError::ProviderError(msg)) => {
                 provider_error_contains_status(msg, &[429, 500, 502, 503, 504])
             }
-            LlmError::CompletionFailed(_) => false,
-            LlmError::InferenceFailed(msg) | LlmError::StreamingFailed(msg) => {
+            InferenceError::CompletionFailed(_) => false,
+            InferenceError::InferenceFailed(msg) | InferenceError::StreamingFailed(msg) => {
                 let lower = msg.to_lowercase();
                 lower.contains("429")
                     || lower.contains("timeout")
@@ -70,8 +70,8 @@ impl LlmError {
 
     pub fn is_rate_limited(&self) -> bool {
         match self {
-            LlmError::RateLimited { .. } => true,
-            LlmError::CompletionFailed(rig::completion::CompletionError::HttpError(http_err)) => {
+            InferenceError::RateLimited { .. } => true,
+            InferenceError::CompletionFailed(rig::completion::CompletionError::HttpError(http_err)) => {
                 use rig::http_client::Error;
                 matches!(
                     http_err,
@@ -79,7 +79,7 @@ impl LlmError {
                     if s.as_u16() == 429
                 )
             }
-            LlmError::CompletionFailed(rig::completion::CompletionError::ProviderError(msg)) => {
+            InferenceError::CompletionFailed(rig::completion::CompletionError::ProviderError(msg)) => {
                 provider_error_contains_status(msg, &[429])
             }
             _ => false,
@@ -95,8 +95,8 @@ fn format_fallback_errors(errors: &[(String, String)]) -> String {
         .join("; ")
 }
 
-impl From<LlmError> for crate::core::error::AppError {
-    fn from(err: LlmError) -> Self {
-        crate::core::error::AppError::Llm(err.to_string())
+impl From<InferenceError> for crate::core::error::AppError {
+    fn from(err: InferenceError) -> Self {
+        crate::core::error::AppError::Inference(err.to_string())
     }
 }

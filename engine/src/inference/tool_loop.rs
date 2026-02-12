@@ -175,14 +175,14 @@ async fn stream_with_rate_limit_retry(
                         tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
                     }
                     None => {
-                        return Err(AppError::Llm(
+                        return Err(AppError::Inference(
                             "Rate limited: max retry time exceeded".to_string(),
                         ));
                     }
                 }
             }
             Err(e) => {
-                return Err(AppError::Llm(e.to_string()));
+                return Err(AppError::Inference(e.to_string()));
             }
         }
     }
@@ -381,7 +381,7 @@ pub async fn run_tool_loop(
 
     let provider = registry
         .get_provider(&model_group.main.provider)
-        .map_err(|e| AppError::Llm(e.to_string()))?;
+        .map_err(|e| AppError::Inference(e.to_string()))?;
 
     let mut accumulated_text = String::new();
     let mut all_attachments: Vec<crate::api::files::Attachment> = Vec::new();
@@ -394,7 +394,7 @@ pub async fn run_tool_loop(
         tracing::debug!(turn, "Tool loop turn");
 
         let max_output = model_group.max_tokens.unwrap_or(8192) as usize;
-        chat_history = crate::llm::context::truncate_history(
+        chat_history = crate::inference::context::truncate_history(
             chat_history,
             system_prompt,
             &model_group.main.model_id,

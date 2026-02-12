@@ -26,7 +26,7 @@ use tokio::sync::mpsc;
 use crate::agent::models::Agent;
 use crate::chat::models::Chat;
 use crate::core::error::AppError;
-use crate::llm::tool_loop::ToolLoopEvent;
+use crate::inference::tool_loop::ToolLoopEvent;
 use crate::core::models::user::User;
 
 use self::cli::CliToolConfig;

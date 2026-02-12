@@ -11,7 +11,7 @@ use crate::core::state::AppState;
 use crate::chat::models::CreateChatRequest;
 use crate::chat::message::models::MessageTool;
 use crate::core::error::AppError;
-use crate::llm::tool_loop::ToolLoopOutcome;
+use crate::inference::tool_loop::ToolLoopOutcome;
 
 pub struct TaskExecutor {
     app_state: AppState,

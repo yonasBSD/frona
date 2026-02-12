@@ -27,8 +27,8 @@ impl IntoResponse for ApiError {
                 tracing::error!("Internal error: {msg}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".into())
             }
-            AppError::Llm(msg) => {
-                tracing::error!("LLM error: {msg}");
+            AppError::Inference(msg) => {
+                tracing::error!("Inference error: {msg}");
                 (StatusCode::BAD_GATEWAY, msg.clone())
             }
             AppError::Browser(msg) => {

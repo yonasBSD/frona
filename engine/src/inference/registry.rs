@@ -9,7 +9,7 @@ use rig::providers::{
 
 use crate::chat::broadcast::BroadcastService;
 use super::config::{ModelGroup, ModelRegistryConfig, ModelProviderConfig, RetryConfig};
-use super::error::LlmError;
+use super::error::InferenceError;
 use super::provider::{InferenceCounter, ModelProvider, ModelRef, RigProvider};
 
 #[derive(Clone)]
@@ -19,7 +19,7 @@ pub struct ModelProviderRegistry {
 }
 
 impl ModelProviderRegistry {
-    pub fn from_config(config: ModelRegistryConfig, broadcast: BroadcastService) -> Result<Self, LlmError> {
+    pub fn from_config(config: ModelRegistryConfig, broadcast: BroadcastService) -> Result<Self, InferenceError> {
         let model_groups = config.parse_model_groups()?;
         let mut providers: HashMap<String, Arc<dyn ModelProvider>> = HashMap::new();
         let counter = InferenceCounter::new(broadcast);
@@ -42,7 +42,7 @@ impl ModelProviderRegistry {
         }
 
         if providers.is_empty() {
-            tracing::warn!("No LLM providers configured — chat will fail until a provider is available");
+            tracing::warn!("No inference providers configured — chat will fail until a provider is available");
         }
 
         Ok(Self {
@@ -51,20 +51,20 @@ impl ModelProviderRegistry {
         })
     }
 
-    pub fn get_provider(&self, name: &str) -> Result<&dyn ModelProvider, LlmError> {
+    pub fn get_provider(&self, name: &str) -> Result<&dyn ModelProvider, InferenceError> {
         self.providers
             .get(name)
             .map(|p| p.as_ref())
-            .ok_or_else(|| LlmError::ProviderNotConfigured(name.to_string()))
+            .ok_or_else(|| InferenceError::ProviderNotConfigured(name.to_string()))
     }
 
-    pub fn get_model_group(&self, group_name: &str) -> Result<&ModelGroup, LlmError> {
+    pub fn get_model_group(&self, group_name: &str) -> Result<&ModelGroup, InferenceError> {
         self.model_groups
             .get(group_name)
-            .ok_or_else(|| LlmError::ModelGroupNotFound(group_name.to_string()))
+            .ok_or_else(|| InferenceError::ModelGroupNotFound(group_name.to_string()))
     }
 
-    pub fn resolve_model_group(&self, name_or_ref: &str) -> Result<ModelGroup, LlmError> {
+    pub fn resolve_model_group(&self, name_or_ref: &str) -> Result<ModelGroup, InferenceError> {
         if name_or_ref.contains('/') {
             let model_ref = ModelRef::parse(name_or_ref)?;
             Ok(ModelGroup {
@@ -96,10 +96,10 @@ macro_rules! init_api_key_provider {
                 .api_key(&key)
                 .base_url(url)
                 .build()
-                .map_err(|e| LlmError::ConfigError(format!("{}: {e}", $name)))?
+                .map_err(|e| InferenceError::ConfigError(format!("{}: {e}", $name)))?
         } else {
             $mod::Client::new(&key)
-                .map_err(|e| LlmError::ConfigError(format!("{}: {e}", $name)))?
+                .map_err(|e| InferenceError::ConfigError(format!("{}: {e}", $name)))?
         };
         Ok(Arc::new(RigProvider::new(client, $counter.clone())) as Arc<dyn ModelProvider>)
     }};
@@ -113,12 +113,12 @@ macro_rules! init_builder_provider {
                 .api_key(&key)
                 .base_url(url)
                 .build()
-                .map_err(|e| LlmError::ConfigError(format!("{}: {e}", $name)))?
+                .map_err(|e| InferenceError::ConfigError(format!("{}: {e}", $name)))?
         } else {
             $mod::Client::builder()
                 .api_key(&key)
                 .build()
-                .map_err(|e| LlmError::ConfigError(format!("{}: {e}", $name)))?
+                .map_err(|e| InferenceError::ConfigError(format!("{}: {e}", $name)))?
         };
         Ok(Arc::new(RigProvider::new(client, $counter.clone())) as Arc<dyn ModelProvider>)
     }};
@@ -128,7 +128,7 @@ fn init_provider(
     name: &str,
     entry: &ModelProviderConfig,
     counter: &InferenceCounter,
-) -> Result<Arc<dyn ModelProvider>, LlmError> {
+) -> Result<Arc<dyn ModelProvider>, InferenceError> {
     match name {
         "openai" => init_api_key_provider!(name, entry, openai, counter),
         "anthropic" => init_builder_provider!(name, entry, anthropic, counter),
@@ -138,10 +138,10 @@ fn init_provider(
                     .api_key(Nothing)
                     .base_url(url)
                     .build()
-                    .map_err(|e| LlmError::ConfigError(format!("ollama: {e}")))?
+                    .map_err(|e| InferenceError::ConfigError(format!("ollama: {e}")))?
             } else {
                 ollama::Client::new(Nothing)
-                    .map_err(|e| LlmError::ConfigError(format!("ollama: {e}")))?
+                    .map_err(|e| InferenceError::ConfigError(format!("ollama: {e}")))?
             };
             Ok(Arc::new(RigProvider::new(client, counter.clone())))
         }
@@ -159,15 +159,15 @@ fn init_provider(
         "mira" => init_api_key_provider!(name, entry, mira, counter),
         "galadriel" => init_builder_provider!(name, entry, galadriel, counter),
         "huggingface" => init_api_key_provider!(name, entry, huggingface, counter),
-        _ => Err(LlmError::ProviderNotConfigured(format!(
+        _ => Err(InferenceError::ProviderNotConfigured(format!(
             "Unknown provider: {name}"
         ))),
     }
 }
 
-fn require_api_key(provider: &str, entry: &ModelProviderConfig) -> Result<String, LlmError> {
+fn require_api_key(provider: &str, entry: &ModelProviderConfig) -> Result<String, InferenceError> {
     entry.api_key.clone().ok_or_else(|| {
-        LlmError::ConfigError(format!(
+        InferenceError::ConfigError(format!(
             "Provider '{provider}' requires an api_key but none was provided"
         ))
     })

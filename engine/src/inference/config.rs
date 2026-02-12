@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_aux::field_attributes::deserialize_bool_from_anything;
 
-use super::error::LlmError;
+use super::error::InferenceError;
 use super::provider::ModelRef;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,14 +79,14 @@ pub struct ModelGroup {
 }
 
 impl ModelRegistryConfig {
-    pub fn load(path: &str) -> Result<Self, LlmError> {
+    pub fn load(path: &str) -> Result<Self, InferenceError> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| LlmError::ConfigError(format!("Failed to read {path}: {e}")))?;
+            .map_err(|e| InferenceError::ConfigError(format!("Failed to read {path}: {e}")))?;
 
         let expanded = expand_env_vars(&content);
 
         let config: ModelRegistryConfig = serde_json::from_str(&expanded)
-            .map_err(|e| LlmError::ConfigError(format!("Failed to parse {path}: {e}")))?;
+            .map_err(|e| InferenceError::ConfigError(format!("Failed to parse {path}: {e}")))?;
 
         Ok(config)
     }
@@ -149,7 +149,7 @@ impl ModelRegistryConfig {
         }
     }
 
-    pub fn parse_model_groups(&self) -> Result<HashMap<String, ModelGroup>, LlmError> {
+    pub fn parse_model_groups(&self) -> Result<HashMap<String, ModelGroup>, InferenceError> {
         let mut groups = HashMap::new();
 
         for (name, config) in &self.models {

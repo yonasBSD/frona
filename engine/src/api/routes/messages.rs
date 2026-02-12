@@ -13,9 +13,9 @@ use tokio_stream::StreamExt;
 
 use crate::chat::broadcast::BroadcastEvent;
 use crate::chat::message::models::{MessageResponse, ResolveToolRequest, SendMessageRequest};
-use crate::llm::convert::{format_content_with_attachments, to_rig_messages};
-use crate::llm::fallback::stream_inference_with_fallback;
-use crate::llm::tool_loop::{self, ToolLoopEvent, ToolLoopEventKind, ToolLoopOutcome};
+use crate::inference::convert::{format_content_with_attachments, to_rig_messages};
+use crate::inference::fallback::stream_inference_with_fallback;
+use crate::inference::tool_loop::{self, ToolLoopEvent, ToolLoopEventKind, ToolLoopOutcome};
 use crate::agent::models::SandboxSettings;
 use crate::tool::browser::tool::BrowserTool;
 use crate::tool::web_fetch::WebFetchTool;
@@ -302,7 +302,7 @@ async fn resolve_tool_message(
     Ok(Json(updated))
 }
 
-fn get_compaction_model_group(state: &AppState) -> Option<crate::llm::config::ModelGroup> {
+fn get_compaction_model_group(state: &AppState) -> Option<crate::inference::config::ModelGroup> {
     let registry = state.chat_service.provider_registry();
     if let Ok(group) = registry.get_model_group("compaction") {
         return Some(group.clone());
@@ -488,7 +488,7 @@ async fn stream_message(
 
                 stream_tool_loop_events(&tx, &mut tool_event_rx, tool_handle, &chat_service, &chat_id).await;
             } else {
-                let (token_tx, mut token_rx) = tokio::sync::mpsc::channel::<Result<String, crate::llm::LlmError>>(32);
+                let (token_tx, mut token_rx) = tokio::sync::mpsc::channel::<Result<String, crate::inference::InferenceError>>(32);
 
                 let user_rig_msg = RigMessage::user(format_content_with_attachments(&user_content, &attachments));
 
@@ -578,8 +578,8 @@ async fn stream_message(
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_tool_loop(
-    registry: crate::llm::ModelProviderRegistry,
-    model_group: crate::llm::config::ModelGroup,
+    registry: crate::inference::ModelProviderRegistry,
+    model_group: crate::inference::config::ModelGroup,
     system_prompt: String,
     rig_history: Vec<RigMessage>,
     tool_registry: AgentToolRegistry,

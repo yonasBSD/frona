@@ -11,7 +11,7 @@ use rig::completion::request::ToolDefinition as RigToolDefinition;
 use tokio::sync::mpsc;
 
 use crate::chat::broadcast::BroadcastService;
-use super::error::LlmError;
+use super::error::InferenceError;
 
 struct CompletionRequestBuilder<'a> {
     system_prompt: &'a str,
@@ -69,15 +69,15 @@ pub struct ModelRef {
 }
 
 impl ModelRef {
-    pub fn parse(s: &str) -> Result<Self, LlmError> {
+    pub fn parse(s: &str) -> Result<Self, InferenceError> {
         let (provider, model_id) = s
             .split_once('/')
-            .ok_or_else(|| LlmError::InvalidModelRef(format!(
+            .ok_or_else(|| InferenceError::InvalidModelRef(format!(
                 "expected 'provider/model' format, got '{s}'"
             )))?;
 
         if provider.is_empty() || model_id.is_empty() {
-            return Err(LlmError::InvalidModelRef(format!(
+            return Err(InferenceError::InvalidModelRef(format!(
                 "provider and model must be non-empty, got '{s}'"
             )));
         }
@@ -146,7 +146,7 @@ pub trait ModelProvider: Send + Sync {
         user_message: RigMessage,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<String, LlmError>;
+    ) -> Result<String, InferenceError>;
 
     async fn stream_inference(
         &self,
@@ -154,10 +154,10 @@ pub trait ModelProvider: Send + Sync {
         system_prompt: &str,
         chat_history: Vec<RigMessage>,
         user_message: RigMessage,
-        token_tx: mpsc::Sender<Result<String, LlmError>>,
+        token_tx: mpsc::Sender<Result<String, InferenceError>>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<(), LlmError>;
+    ) -> Result<(), InferenceError>;
 
     async fn inference_with_tools(
         &self,
@@ -167,7 +167,7 @@ pub trait ModelProvider: Send + Sync {
         tools: Vec<RigToolDefinition>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<(Vec<AssistantContent>, Vec<RigMessage>), LlmError>;
+    ) -> Result<(Vec<AssistantContent>, Vec<RigMessage>), InferenceError>;
 
     async fn stream_inference_with_tools(
         &self,
@@ -178,7 +178,7 @@ pub trait ModelProvider: Send + Sync {
         token_tx: mpsc::Sender<String>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<Vec<AssistantContent>, LlmError>;
+    ) -> Result<Vec<AssistantContent>, InferenceError>;
 }
 
 pub struct RigProvider<C> {
@@ -209,7 +209,7 @@ where
         user_message: RigMessage,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<String, LlmError> {
+    ) -> Result<String, InferenceError> {
         use rig::completion::CompletionModel as _;
 
         let _guard = self.counter.guard();
@@ -231,7 +231,7 @@ where
         let response = model
             .completion(request)
             .await
-            .map_err(LlmError::CompletionFailed)?;
+            .map_err(InferenceError::CompletionFailed)?;
 
         let text = extract_text_from_choice(&response.choice)?;
 
@@ -250,10 +250,10 @@ where
         system_prompt: &str,
         mut chat_history: Vec<RigMessage>,
         user_message: RigMessage,
-        token_tx: mpsc::Sender<Result<String, LlmError>>,
+        token_tx: mpsc::Sender<Result<String, InferenceError>>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<(), LlmError> {
+    ) -> Result<(), InferenceError> {
         use futures::StreamExt;
         use rig::completion::CompletionModel as _;
 
@@ -276,7 +276,7 @@ where
         let mut stream = model
             .stream(request)
             .await
-            .map_err(LlmError::CompletionFailed)?;
+            .map_err(InferenceError::CompletionFailed)?;
 
         while let Some(chunk) = stream.next().await {
             match chunk {
@@ -288,7 +288,7 @@ where
                 Ok(_) => {}
                 Err(e) => {
                     let _ = token_tx
-                        .send(Err(LlmError::CompletionFailed(e)))
+                        .send(Err(InferenceError::CompletionFailed(e)))
                         .await;
                     break;
                 }
@@ -306,7 +306,7 @@ where
         tools: Vec<RigToolDefinition>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<(Vec<AssistantContent>, Vec<RigMessage>), LlmError> {
+    ) -> Result<(Vec<AssistantContent>, Vec<RigMessage>), InferenceError> {
         use rig::completion::CompletionModel as _;
 
         let _guard = self.counter.guard();
@@ -328,7 +328,7 @@ where
         let response: CompletionResponse<_> = model
             .completion(request)
             .await
-            .map_err(LlmError::CompletionFailed)?;
+            .map_err(InferenceError::CompletionFailed)?;
 
         let contents: Vec<AssistantContent> = response.choice.into_iter().collect();
 
@@ -350,7 +350,7 @@ where
         token_tx: mpsc::Sender<String>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<Vec<AssistantContent>, LlmError> {
+    ) -> Result<Vec<AssistantContent>, InferenceError> {
         use rig::completion::CompletionModel as _;
 
         let _guard = self.counter.guard();
@@ -375,7 +375,7 @@ where
         let stream = model
             .stream(request)
             .await
-            .map_err(LlmError::CompletionFailed)?;
+            .map_err(InferenceError::CompletionFailed)?;
 
         let (mut accumulated_text, mut contents, still_buffering) =
             consume_tool_stream(stream, &token_tx, &tool_names).await?;
@@ -411,7 +411,7 @@ async fn consume_tool_stream<S, R>(
     mut stream: S,
     token_tx: &mpsc::Sender<String>,
     tool_names: &[String],
-) -> Result<(String, Vec<AssistantContent>, bool), LlmError>
+) -> Result<(String, Vec<AssistantContent>, bool), InferenceError>
 where
     S: futures::Stream<Item = Result<rig::streaming::StreamedAssistantContent<R>, rig::completion::CompletionError>>
         + Unpin,
@@ -446,7 +446,7 @@ where
             }
             Ok(_) => {}
             Err(e) => {
-                return Err(LlmError::CompletionFailed(e));
+                return Err(InferenceError::CompletionFailed(e));
             }
         }
     }
@@ -575,7 +575,7 @@ fn try_extract_tool_calls_from_text(
 
 fn extract_text_from_choice(
     choice: &rig::OneOrMany<AssistantContent>,
-) -> Result<String, LlmError> {
+) -> Result<String, InferenceError> {
     let mut text_parts = Vec::new();
 
     for item in choice.iter() {
@@ -585,7 +585,7 @@ fn extract_text_from_choice(
     }
 
     if text_parts.is_empty() {
-        return Err(LlmError::InferenceFailed(
+        return Err(InferenceError::InferenceFailed(
             "No text content in response".to_string(),
         ));
     }

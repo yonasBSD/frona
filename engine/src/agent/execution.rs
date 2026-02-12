@@ -3,7 +3,7 @@ use tokio_util::sync::CancellationToken;
 use crate::chat::session::ChatSessionContext;
 use crate::core::state::AppState;
 use crate::core::error::AppError;
-use crate::llm::tool_loop::{self, ToolLoopEvent, ToolLoopEventKind, ToolLoopOutcome};
+use crate::inference::tool_loop::{self, ToolLoopEvent, ToolLoopEventKind, ToolLoopOutcome};
 
 pub struct AgentLoopOutcome {
     pub tool_loop_outcome: ToolLoopOutcome,

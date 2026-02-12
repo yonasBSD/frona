@@ -6,7 +6,7 @@ pub mod core;
 pub mod auth;
 pub mod chat;
 pub mod credential;
-pub mod llm;
+pub mod inference;
 pub mod memory;
 pub mod scheduler;
 pub mod space;

@@ -4,10 +4,10 @@ use crate::api::repo::agents::SurrealAgentRepo;
 use crate::api::repo::chats::SurrealChatRepo;
 use crate::api::repo::messages::SurrealMessageRepo;
 use crate::core::error::AppError;
-use crate::llm::ModelProviderRegistry;
-use crate::llm::convert::to_rig_messages;
-use crate::llm::fallback::inference_with_fallback;
-use crate::llm::provider::ModelRef;
+use crate::inference::ModelProviderRegistry;
+use crate::inference::convert::to_rig_messages;
+use crate::inference::fallback::inference_with_fallback;
+use crate::inference::provider::ModelRef;
 use crate::memory::service::MemoryService;
 use crate::agent::prompt::PromptLoader;
 use crate::core::repository::Repository;
@@ -366,8 +366,8 @@ impl ChatService {
         chat_id: &str,
         accumulated_text: String,
         tool_calls_json: serde_json::Value,
-        tool_results: &[crate::llm::tool_loop::ToolCallResult],
-        external_tool: Box<crate::llm::tool_loop::ToolCallResult>,
+        tool_results: &[crate::inference::tool_loop::ToolCallResult],
+        external_tool: Box<crate::inference::tool_loop::ToolCallResult>,
     ) -> Result<MessageResponse, AppError> {
         let _ = self
             .save_assistant_message_with_tool_calls(
@@ -470,12 +470,12 @@ impl ChatService {
         Ok(title)
     }
 
-    fn build_title_model_group(&self, model_specifier: Option<&str>) -> Result<crate::llm::config::ModelGroup, AppError> {
+    fn build_title_model_group(&self, model_specifier: Option<&str>) -> Result<crate::inference::config::ModelGroup, AppError> {
         let base = match model_specifier {
             Some(m) if m.contains('/') => {
                 let model_ref = ModelRef::parse(m)
                     .map_err(|e| AppError::Internal(e.to_string()))?;
-                return Ok(crate::llm::config::ModelGroup {
+                return Ok(crate::inference::config::ModelGroup {
                     main: model_ref,
                     fallbacks: vec![],
                     max_tokens: Some(100),
@@ -489,7 +489,7 @@ impl ChatService {
             }
             _ => self.provider_registry.get_model_group("primary")?,
         };
-        Ok(crate::llm::config::ModelGroup {
+        Ok(crate::inference::config::ModelGroup {
             main: base.main.clone(),
             fallbacks: base.fallbacks.clone(),
             max_tokens: Some(100),

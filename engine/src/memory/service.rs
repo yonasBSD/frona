@@ -10,11 +10,11 @@ use crate::api::repo::messages::SurrealMessageRepo;
 use crate::chat::message::models::Message;
 use crate::chat::message::repository::MessageRepository;
 use crate::core::error::AppError;
-use crate::llm::config::ModelGroup;
-use crate::llm::context::{estimate_tokens, resolve_context_window};
-use crate::llm::convert::to_rig_messages;
-use crate::llm::fallback::inference_with_fallback;
-use crate::llm::ModelProviderRegistry;
+use crate::inference::config::ModelGroup;
+use crate::inference::context::{estimate_tokens, resolve_context_window};
+use crate::inference::convert::to_rig_messages;
+use crate::inference::fallback::inference_with_fallback;
+use crate::inference::ModelProviderRegistry;
 use crate::memory::insight::models::Insight;
 use crate::memory::insight::repository::InsightRepository;
 use crate::memory::models::{Memory, MemorySourceType};
@@ -84,7 +84,7 @@ impl MemoryService {
 
         let mut total_tokens = estimate_tokens(system_prompt);
         for msg in &rig_messages {
-            total_tokens += crate::llm::context::estimate_message_tokens(msg);
+            total_tokens += crate::inference::context::estimate_message_tokens(msg);
         }
 
         if total_tokens <= available * 80 / 100 {
@@ -105,7 +105,7 @@ impl MemoryService {
         let mut keep_from_idx = messages.len();
         let mut running = 0usize;
         for (i, msg) in rig_messages.iter().enumerate().rev() {
-            let cost = crate::llm::context::estimate_message_tokens(msg);
+            let cost = crate::inference::context::estimate_message_tokens(msg);
             if running + cost + summary_budget > target {
                 break;
             }

@@ -7,10 +7,10 @@ use crate::chat::service::AgentConfig;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
 use crate::core::state::AppState;
-use crate::llm::config::ModelGroup;
-use crate::llm::convert::to_rig_messages;
-use crate::llm::tool_loop::ToolLoopEvent;
-use crate::llm::ModelProviderRegistry;
+use crate::inference::config::ModelGroup;
+use crate::inference::convert::to_rig_messages;
+use crate::inference::tool_loop::ToolLoopEvent;
+use crate::inference::ModelProviderRegistry;
 use crate::tool::registry::AgentToolRegistry;
 use crate::tool::ToolContext;
 

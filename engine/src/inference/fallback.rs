@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use super::config::{ModelGroup, RetryConfig};
 use super::context::truncate_history;
-use super::error::LlmError;
+use super::error::InferenceError;
 use super::provider::ModelRef;
 use super::registry::ModelProviderRegistry;
 
@@ -16,7 +16,7 @@ pub async fn inference_with_fallback(
     system_prompt: &str,
     history: Vec<RigMessage>,
     user_message: RigMessage,
-) -> Result<String, LlmError> {
+) -> Result<String, InferenceError> {
     let mut errors = Vec::new();
     let max_tokens = model_group.max_tokens;
     let temperature = model_group.temperature;
@@ -91,7 +91,7 @@ pub async fn inference_with_fallback(
         }
     }
 
-    Err(LlmError::AllFallbacksFailed(errors))
+    Err(InferenceError::AllFallbacksFailed(errors))
 }
 
 pub async fn stream_inference_with_fallback(
@@ -100,8 +100,8 @@ pub async fn stream_inference_with_fallback(
     system_prompt: &str,
     history: Vec<RigMessage>,
     user_message: RigMessage,
-    token_tx: mpsc::Sender<Result<String, LlmError>>,
-) -> Result<(), LlmError> {
+    token_tx: mpsc::Sender<Result<String, InferenceError>>,
+) -> Result<(), InferenceError> {
     let mut errors = Vec::new();
     let max_tokens = model_group.max_tokens;
     let temperature = model_group.temperature;
@@ -178,17 +178,17 @@ pub async fn stream_inference_with_fallback(
         }
     }
 
-    Err(LlmError::AllFallbacksFailed(errors))
+    Err(InferenceError::AllFallbacksFailed(errors))
 }
 
 async fn retry_with_backoff<T, F, Fut>(
     retry_config: &RetryConfig,
     model_ref: &ModelRef,
     op: F,
-) -> Result<T, LlmError>
+) -> Result<T, InferenceError>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, LlmError>>,
+    Fut: Future<Output = Result<T, InferenceError>>,
 {
     let model_str = model_ref.as_str();
     (|| async { op().await })

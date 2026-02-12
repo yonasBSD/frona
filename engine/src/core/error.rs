@@ -20,8 +20,8 @@ pub enum AppError {
     #[error("Internal error: {0}")]
     Internal(String),
 
-    #[error("LLM error: {0}")]
-    Llm(String),
+    #[error("Inference error: {0}")]
+    Inference(String),
 
     #[error("Browser error: {0}")]
     Browser(String),

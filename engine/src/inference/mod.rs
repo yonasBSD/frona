@@ -7,6 +7,6 @@ pub mod provider;
 pub mod registry;
 pub mod tool_loop;
 
-pub use error::LlmError;
+pub use error::InferenceError;
 pub use provider::ModelRef;
 pub use registry::ModelProviderRegistry;
