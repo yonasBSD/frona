@@ -126,6 +126,11 @@ impl Workspace {
             ));
         }
 
+        // Set HOME to workspace so tools write config inside the sandbox
+        env_vars.push(("HOME".to_string(), canonical_path.to_string_lossy().into_owned()));
+        env_vars.push(("XDG_CONFIG_HOME".to_string(), canonical_path.join(".config").to_string_lossy().into_owned()));
+        env_vars.push(("XDG_CACHE_HOME".to_string(), canonical_path.join(".cache").to_string_lossy().into_owned()));
+
         for arg in args {
             let mut resolved = arg.to_string();
             for (prefix, abs_dir) in &self.skill_dirs {
@@ -231,6 +236,31 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&rel_path);
+    }
+
+    #[tokio::test]
+    async fn test_execute_sets_home_and_xdg_env_vars() {
+        let ws = temp_workspace(&format!("home_env_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&ws.path);
+
+        let result = ws
+            .execute(
+                "bash",
+                &["-c", "echo $HOME; echo $XDG_CONFIG_HOME; echo $XDG_CACHE_HOME"],
+                None,
+                10,
+            )
+            .await
+            .unwrap();
+
+        let canonical = std::fs::canonicalize(&ws.path).unwrap();
+        let lines: Vec<&str> = result.stdout.trim().lines().collect();
+        assert_eq!(lines.len(), 3, "expected 3 lines, got: {:?}", lines);
+        assert_eq!(lines[0], canonical.to_string_lossy());
+        assert_eq!(lines[1], canonical.join(".config").to_string_lossy().as_ref());
+        assert_eq!(lines[2], canonical.join(".cache").to_string_lossy().as_ref());
+
+        let _ = std::fs::remove_dir_all(&ws.path);
     }
 
     #[test]
