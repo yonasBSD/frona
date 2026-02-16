@@ -162,6 +162,7 @@ mod tests {
             workspaces_base_path: "data/workspaces".into(),
             files_base_path: "data/files".into(),
             shared_config_dir: concat!(env!("CARGO_MANIFEST_DIR"), "/config").into(),
+            sandbox_disabled: false,
             max_concurrent_tasks: 10,
             scheduler_space_compaction_secs: 3600,
             scheduler_insight_compaction_secs: 7200,
