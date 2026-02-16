@@ -71,10 +71,17 @@ fn apply_landlock(workspace_dir: &str, network_access: bool, additional_read_pat
         .create()
         .map_err(|e| format!("Landlock ruleset create failed: {e}"))?;
 
-    let read_only_paths = ["/usr", "/lib", "/lib64", "/etc", "/bin", "/sbin"];
+    let read_only_paths = ["/usr", "/lib", "/lib64", "/bin", "/sbin"];
     let read_write_paths = [workspace_dir, "/tmp"];
 
     for path in &read_only_paths {
+        if let Ok(fd) = PathFd::new(path) {
+            ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))
+                .map_err(|e| format!("Landlock add_rule failed for {path}: {e}"))?;
+        }
+    }
+
+    for path in super::ETC_READ_ALLOWLIST {
         if let Ok(fd) = PathFd::new(path) {
             ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))
                 .map_err(|e| format!("Landlock add_rule failed for {path}: {e}"))?;

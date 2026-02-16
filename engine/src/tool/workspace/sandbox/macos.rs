@@ -13,18 +13,18 @@ const SYSTEM_READ_RULES: &[ReadRule] = &[
     ReadRule::Subpath("/bin"),
     ReadRule::Subpath("/usr"),
     ReadRule::Subpath("/sbin"),
-    ReadRule::Subpath("/etc"),
     ReadRule::Subpath("/System"),
     ReadRule::Subpath("/Library"),
     ReadRule::Subpath("/opt"),
-    ReadRule::Subpath("/private/etc"),
     ReadRule::Subpath("/private/tmp"),
     ReadRule::Subpath("/private/var/db"),
     ReadRule::Subpath("/private/var/select"),
     ReadRule::Subpath("/private/var/folders"),
     ReadRule::Subpath("/dev"),
     ReadRule::Subpath("/tmp"),
+    ReadRule::Literal("/etc"),
     ReadRule::Literal("/private"),
+    ReadRule::Literal("/private/etc"),
     ReadRule::Literal("/private/var"),
     ReadRule::Literal("/var"),
     ReadRule::Literal("/var/select"),
@@ -75,6 +75,17 @@ impl SandboxProfileBuilder {
             match rule {
                 ReadRule::Subpath(p) => self.read_subpaths.push(p.to_string()),
                 ReadRule::Literal(p) => self.read_literals.push(p.to_string()),
+            }
+        }
+        self.system_etc_reads()
+    }
+
+    fn system_etc_reads(mut self) -> Self {
+        for path in super::ETC_READ_ALLOWLIST {
+            self.read_subpaths.push(path.to_string());
+            if let Some(suffix) = path.strip_prefix("/etc") {
+                let private_path = format!("/private/etc{suffix}");
+                self.read_subpaths.push(private_path);
             }
         }
         self
@@ -197,10 +208,19 @@ mod tests {
         let profile = SandboxProfileBuilder::new().system_reads().build();
         assert!(profile.contains("(subpath \"/bin\")"));
         assert!(profile.contains("(subpath \"/usr\")"));
-        assert!(profile.contains("(subpath \"/etc\")"));
         assert!(profile.contains("(subpath \"/System\")"));
         assert!(profile.contains("(literal \"/var\")"));
         assert!(profile.contains("(literal \"/var/select/developer_dir\")"));
+        // /etc allowlist entries present
+        assert!(profile.contains("(subpath \"/etc/ssl\")"));
+        assert!(profile.contains("(subpath \"/etc/hosts\")"));
+        assert!(profile.contains("(subpath \"/private/etc/ssl\")"));
+        assert!(profile.contains("(subpath \"/private/etc/hosts\")"));
+        // /etc directory listing allowed but not full subtree
+        assert!(profile.contains("(literal \"/etc\")"));
+        assert!(!profile.contains("(subpath \"/etc\")"));
+        assert!(profile.contains("(literal \"/private/etc\")"));
+        assert!(!profile.contains("(subpath \"/private/etc\")"));
     }
 
     #[test]

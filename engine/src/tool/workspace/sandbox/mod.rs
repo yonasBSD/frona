@@ -4,6 +4,49 @@ pub mod noop;
 
 use std::process::Command;
 
+/// Specific /etc paths allowed for read access.
+/// We intentionally exclude /etc/passwd, /etc/shadow, /etc/group,
+/// /etc/ssh/, and other sensitive files.
+pub const ETC_READ_ALLOWLIST: &[&str] = &[
+    // Dynamic linker
+    "/etc/ld.so.cache",
+    "/etc/ld.so.conf",
+    "/etc/ld.so.conf.d",
+    // DNS / networking
+    "/etc/resolv.conf",
+    "/etc/hosts",
+    "/etc/nsswitch.conf",
+    "/etc/gai.conf",
+    "/etc/protocols",
+    "/etc/services",
+    // SSL / TLS certificates
+    "/etc/ssl",
+    "/etc/ca-certificates",
+    "/etc/pki",
+    // Timezone
+    "/etc/localtime",
+    "/etc/timezone",
+    "/etc/zoneinfo",
+    // Locale
+    "/etc/locale.conf",
+    "/etc/default",
+    // Shell config (needed by bash -c)
+    "/etc/bash.bashrc",
+    "/etc/profile",
+    "/etc/profile.d",
+    "/etc/inputrc",
+    "/etc/environment",
+    // Misc
+    "/etc/hostname",
+    "/etc/machine-id",
+    "/etc/mime.types",
+    "/etc/alternatives",
+    "/etc/login.defs",
+    // Language runtimes
+    "/etc/python3",
+    "/etc/pip.conf",
+];
+
 use crate::core::error::AppError;
 
 pub struct SandboxConfig {
