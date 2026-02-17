@@ -9,6 +9,41 @@ class ApiError extends Error {
   }
 }
 
+let accessToken: string | null = null;
+let refreshPromise: Promise<string | null> | null = null;
+
+export function setAccessToken(token: string | null) {
+  accessToken = token;
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    accessToken = data.token;
+    return accessToken;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureAccessToken(): Promise<string | null> {
+  if (accessToken) return accessToken;
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = refreshAccessToken().finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -18,11 +53,27 @@ async function request<T>(
     ...((options.headers as Record<string, string>) || {}),
   };
 
-  const res = await fetch(`${API_URL}${path}`, {
+  const token = await ensureAccessToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  let res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
-    credentials: "include",
   });
+
+  // On 401, try refreshing the access token and retry once
+  if (res.status === 401 && token) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      headers["Authorization"] = `Bearer ${newToken}`;
+      res = await fetch(`${API_URL}${path}`, {
+        ...options,
+        headers,
+      });
+    }
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -50,10 +101,16 @@ export async function uploadFile(file: File, relativePath?: string): Promise<Att
     formData.append("path", relativePath);
   }
 
+  const token = await ensureAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${API_URL}/api/files`, {
     method: "POST",
     body: formData,
-    credentials: "include",
+    headers,
   });
 
   if (!res.ok) {
@@ -62,6 +119,14 @@ export async function uploadFile(file: File, relativePath?: string): Promise<Att
   }
 
   return res.json();
+}
+
+export async function presignFile(virtualPath: string): Promise<string> {
+  const data = await request<{ url: string }>("/api/files/presign", {
+    method: "POST",
+    body: JSON.stringify({ path: virtualPath }),
+  });
+  return data.url;
 }
 
 export function fileDownloadUrl(virtualPath: string): string {
@@ -91,13 +156,18 @@ export async function streamMessage(
   },
   signal?: AbortSignal,
 ): Promise<void> {
+  const token = await ensureAccessToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   let res: Response;
   try {
     res = await fetch(`${API_URL}/api/chats/${chatId}/messages/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
-      credentials: "include",
       signal,
     });
   } catch (err) {
@@ -212,10 +282,14 @@ export async function streamMessage(
 }
 
 export async function cancelGeneration(chatId: string): Promise<void> {
+  const token = await ensureAccessToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
   await fetch(`${API_URL}/api/chats/${chatId}/cancel`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
+    headers,
   });
 }
 

@@ -20,6 +20,11 @@ export interface RegisterRequest {
   password: string;
 }
 
+export interface SsoStatus {
+  enabled: boolean;
+  sso_only: boolean;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -88,6 +93,7 @@ export interface Attachment {
   content_type: string;
   size_bytes: number;
   path: string;
+  url?: string;
 }
 
 // Message types
