@@ -9,3 +9,4 @@ pub mod navigation;
 pub mod spaces;
 pub mod tasks;
 pub mod tools;
+pub mod well_known;

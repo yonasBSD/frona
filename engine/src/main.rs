@@ -77,6 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let api = axum::Router::new()
         .merge(routes::auth::router())
+        .merge(routes::well_known::router())
         .merge(routes::agents::router())
         .merge(routes::spaces::router())
         .merge(routes::chats::router())

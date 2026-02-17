@@ -11,8 +11,12 @@ use crate::agent::service::AgentService;
 use crate::agent::skill::resolver::SkillResolver;
 use crate::agent::workspace::AgentWorkspaceManager;
 use crate::auth::AuthService;
+use crate::auth::jwt::JwtService;
+use crate::auth::oauth::service::OAuthService;
+use crate::auth::token::service::TokenService;
 use crate::chat::broadcast::BroadcastService;
 use crate::chat::service::ChatService;
+use crate::credential::keypair::service::KeyPairService;
 use crate::credential::service::CredentialService;
 use crate::inference::ModelProviderRegistry;
 use crate::inference::config::ModelRegistryConfig;
@@ -86,6 +90,9 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub agent_workspaces: AgentWorkspaceManager,
     pub prompts: PromptLoader,
+    pub keypair_service: KeyPairService,
+    pub token_service: TokenService,
+    pub oauth_service: Option<OAuthService>,
 }
 
 impl AppState {
@@ -130,9 +137,33 @@ impl AppState {
         let skill_repo = SurrealRepo::new(db.clone());
         let skill_resolver = SkillResolver::new(skill_repo, &config.shared_config_dir, workspaces.clone());
 
+        let keypair_repo: SurrealRepo<crate::credential::keypair::models::KeyPair> =
+            SurrealRepo::new(db.clone());
+        let keypair_service = KeyPairService::new(
+            &config.jwt_secret,
+            Arc::new(keypair_repo),
+        );
+        let jwt_service = JwtService::new();
+        let token_repo: SurrealRepo<crate::auth::token::models::ApiToken> =
+            SurrealRepo::new(db.clone());
+        let token_service = TokenService::new(
+            Arc::new(token_repo),
+            jwt_service,
+            config.access_token_expiry_secs,
+            config.refresh_token_expiry_secs,
+        );
+
+        let oauth_service = if config.sso_enabled {
+            let oauth_repo: SurrealRepo<crate::auth::oauth::models::OAuthIdentity> =
+                SurrealRepo::new(db.clone());
+            OAuthService::new(config, Arc::new(oauth_repo)).ok()
+        } else {
+            None
+        };
+
         Self {
             db: db.clone(),
-            auth_service: Arc::new(AuthService::new(&config.jwt_secret)),
+            auth_service: Arc::new(AuthService::new()),
             user_repo: SurrealRepo::new(db.clone()),
             agent_service: AgentService::new(SurrealRepo::new(db.clone())),
             space_service: SpaceService::new(SurrealRepo::new(db.clone())),
@@ -160,6 +191,9 @@ impl AppState {
             config: Arc::new(config.clone()),
             agent_workspaces: workspaces,
             prompts: prompt_loader,
+            keypair_service,
+            token_service,
+            oauth_service,
         }
     }
 

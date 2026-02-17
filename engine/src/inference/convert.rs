@@ -196,6 +196,7 @@ mod tests {
                     content_type: "application/pdf".to_string(),
                     size_bytes: 1024,
                     path: "user://uid/report.pdf".to_string(),
+                    url: None,
                 },
             ],
             ..make_message(MessageRole::User, "check this file")
@@ -233,6 +234,7 @@ mod tests {
                     content_type: "text/csv".to_string(),
                     size_bytes: 512,
                     path: "agent://dev/output.csv".to_string(),
+                    url: None,
                 },
             ],
             ..make_message(MessageRole::TaskCompletion, "Task done")

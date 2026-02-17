@@ -1,10 +1,14 @@
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::header::SET_COOKIE;
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use crate::api::cookie::{make_auth_cookie, make_clear_cookie};
+
+use crate::api::cookie::{
+    extract_refresh_token_from_cookie_header, make_clear_refresh_cookie, make_refresh_cookie,
+};
 use crate::auth::models::{AuthResponse, LoginRequest, RegisterRequest, UserInfo};
+use crate::auth::token::models::CreatePatRequest;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
 
@@ -12,27 +16,51 @@ use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
 use crate::core::state::AppState;
 
-const TOKEN_MAX_AGE: u64 = 24 * 3600;
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
         .route("/api/auth/me", get(me))
         .route("/api/auth/logout", post(logout))
+        .route("/api/auth/refresh", post(refresh))
+        .route("/api/auth/tokens", post(create_pat).get(list_pats))
+        .route("/api/auth/tokens/{id}", delete(delete_pat))
+        .route("/api/auth/sso", get(sso_status))
+        .route("/api/auth/sso/authorize", get(sso_authorize))
+        .route("/api/auth/sso/callback", get(sso_callback))
 }
 
 async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
-) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], Json<AuthResponse>), ApiError>
+) -> Result<(StatusCode, [(axum::http::HeaderName, axum::http::HeaderValue); 1], Json<AuthResponse>), ApiError>
 {
-    let response = state
+    if state.config.sso_only {
+        return Err(ApiError(AppError::Validation(
+            "SSO registration required".into(),
+        )));
+    }
+
+    let (response, refresh_jwt) = state
         .auth_service
-        .register(&state.user_repo, req)
+        .register(
+            &state.user_repo,
+            &state.keypair_service,
+            &state.token_service,
+            req,
+        )
         .await?;
-    let cookie = make_auth_cookie(&response.token, TOKEN_MAX_AGE);
-    Ok(([(SET_COOKIE, cookie)], Json(response)))
+
+    let cookie = make_refresh_cookie(
+        &refresh_jwt,
+        state.token_service.refresh_expiry_secs(),
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        [(SET_COOKIE, cookie)],
+        Json(response),
+    ))
 }
 
 async fn login(
@@ -40,8 +68,27 @@ async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], Json<AuthResponse>), ApiError>
 {
-    let response = state.auth_service.login(&state.user_repo, req).await?;
-    let cookie = make_auth_cookie(&response.token, TOKEN_MAX_AGE);
+    if state.config.sso_only {
+        return Err(ApiError(AppError::Validation(
+            "SSO login required".into(),
+        )));
+    }
+
+    let (response, refresh_jwt) = state
+        .auth_service
+        .login(
+            &state.user_repo,
+            &state.keypair_service,
+            &state.token_service,
+            req,
+        )
+        .await?;
+
+    let cookie = make_refresh_cookie(
+        &refresh_jwt,
+        state.token_service.refresh_expiry_secs(),
+    );
+
     Ok(([(SET_COOKIE, cookie)], Json(response)))
 }
 
@@ -62,6 +109,170 @@ async fn me(
     }))
 }
 
-async fn logout() -> ([(axum::http::HeaderName, axum::http::HeaderValue); 1], StatusCode) {
-    ([(SET_COOKIE, make_clear_cookie())], StatusCode::NO_CONTENT)
+async fn logout(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], StatusCode), ApiError> {
+    // Find the token's pair_id and revoke the session
+    if let Some(token) = state
+        .token_service
+        .repo()
+        .find_active_by_id(&auth.token_id)
+        .await?
+    {
+        if let Some(pair_id) = &token.refresh_pair_id {
+            state.token_service.revoke_session(pair_id).await?;
+        } else {
+            // Single token (PAT), just delete it
+            state.token_service.repo().delete(&auth.token_id).await?;
+        }
+    }
+
+    Ok((
+        [(SET_COOKIE, make_clear_refresh_cookie())],
+        StatusCode::NO_CONTENT,
+    ))
+}
+
+async fn refresh(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], Json<serde_json::Value>), ApiError>
+{
+    let refresh_token = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(extract_refresh_token_from_cookie_header)
+        .ok_or_else(|| AppError::Auth("Missing refresh token".into()))?;
+
+    let (access_jwt, new_refresh_jwt, _claims) = state
+        .token_service
+        .refresh(&state.keypair_service, refresh_token)
+        .await?;
+
+    let cookie = make_refresh_cookie(
+        &new_refresh_jwt,
+        state.token_service.refresh_expiry_secs(),
+    );
+
+    Ok((
+        [(SET_COOKIE, cookie)],
+        Json(serde_json::json!({ "token": access_jwt })),
+    ))
+}
+
+async fn create_pat(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<CreatePatRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    if auth.is_pat() {
+        return Err(ApiError(AppError::Forbidden(
+            "PATs cannot create other tokens".into(),
+        )));
+    }
+
+    let user = state
+        .user_repo
+        .find_by_id(&auth.user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+
+    let pat = state
+        .token_service
+        .create_pat(&state.keypair_service, &user, req)
+        .await?;
+
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(pat).unwrap())))
+}
+
+async fn list_pats(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pats = state.token_service.list_pats(&auth.user_id).await?;
+    Ok(Json(serde_json::to_value(pats).unwrap()))
+}
+
+async fn delete_pat(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .token_service
+        .delete_pat(&auth.user_id, &id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Serialize)]
+struct SsoStatusResponse {
+    enabled: bool,
+    sso_only: bool,
+}
+
+async fn sso_status(
+    State(state): State<AppState>,
+) -> Json<SsoStatusResponse> {
+    Json(SsoStatusResponse {
+        enabled: state.config.sso_enabled,
+        sso_only: state.config.sso_only,
+    })
+}
+
+async fn sso_authorize(
+    State(state): State<AppState>,
+) -> Result<axum::response::Redirect, ApiError> {
+    let oauth_svc = state
+        .oauth_service
+        .as_ref()
+        .ok_or_else(|| AppError::Validation("SSO is not enabled".into()))?;
+
+    let (auth_url, _csrf, _nonce) = oauth_svc.get_authorization_url().await?;
+    Ok(axum::response::Redirect::temporary(&auth_url))
+}
+
+async fn sso_callback(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], axum::response::Redirect), ApiError>
+{
+    let oauth_svc = state
+        .oauth_service
+        .as_ref()
+        .ok_or_else(|| AppError::Validation("SSO is not enabled".into()))?;
+
+    let code = params
+        .get("code")
+        .ok_or_else(|| AppError::Validation("Missing authorization code".into()))?;
+    let callback_state = params
+        .get("state")
+        .ok_or_else(|| AppError::Validation("Missing state parameter".into()))?;
+
+    let (user, _is_new) = oauth_svc
+        .handle_callback(
+            code,
+            callback_state,
+            &state.user_repo,
+            &state.keypair_service,
+            &state.token_service,
+        )
+        .await?;
+
+    let (_access_jwt, refresh_jwt) = state
+        .token_service
+        .create_session_pair(&state.keypair_service, &user)
+        .await?;
+
+    let cookie = make_refresh_cookie(
+        &refresh_jwt,
+        state.token_service.refresh_expiry_secs(),
+    );
+
+    // Redirect to frontend callback page — the frontend will fetch a new access token via refresh
+    Ok((
+        [(SET_COOKIE, cookie)],
+        axum::response::Redirect::temporary("/auth/sso/callback"),
+    ))
 }

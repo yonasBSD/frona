@@ -3,11 +3,30 @@ use axum::http::request::Parts;
 
 use super::super::error::ApiError;
 use crate::core::state::AppState;
-use crate::api::cookie::extract_token_from_cookie_header;
 
 pub struct AuthUser {
     pub user_id: String,
     pub email: String,
+    pub token_id: String,
+    pub token_type: String,
+    pub agent_id: Option<String>,
+    pub scopes: Option<Vec<String>>,
+}
+
+impl AuthUser {
+    pub fn is_pat(&self) -> bool {
+        self.token_type == "pat"
+    }
+
+    pub fn is_session(&self) -> bool {
+        self.token_type == "access"
+    }
+
+    pub fn has_scope(&self, scope: &str) -> bool {
+        self.scopes
+            .as_ref()
+            .is_some_and(|s| s.iter().any(|sc| sc == scope))
+    }
 }
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -18,25 +37,23 @@ impl FromRequestParts<AppState> for AuthUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let token = extract_token(parts)?;
-        let claims = state.auth_service.validate_token(token)?;
+        let claims = state
+            .token_service
+            .validate(&state.keypair_service, token)
+            .await?;
 
         Ok(AuthUser {
             user_id: claims.sub,
             email: claims.email,
+            token_id: claims.token_id,
+            token_type: claims.token_type,
+            agent_id: claims.agent_id,
+            scopes: claims.scopes,
         })
     }
 }
 
 fn extract_token(parts: &Parts) -> Result<&str, ApiError> {
-    if let Some(token) = parts
-        .headers
-        .get("cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(extract_token_from_cookie_header)
-    {
-        return Ok(token);
-    }
-
     if let Some(header) = parts
         .headers
         .get("authorization")

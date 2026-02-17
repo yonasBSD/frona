@@ -56,6 +56,7 @@ impl Scheduler {
         spawn_periodic!(self, insight, "insight_compaction", run_insight_compaction);
         spawn_periodic!(self, insight, "user_insight_compaction", run_user_insight_compaction);
         spawn_periodic!(self, poll, "poll_tasks", run_poll_tasks);
+        spawn_periodic!(self, space, "token_cleanup", run_token_cleanup);
     }
 
     async fn run_poll_tasks(&self) -> Result<(), AppError> {
@@ -198,6 +199,14 @@ impl Scheduler {
             });
         }
 
+        Ok(())
+    }
+
+    async fn run_token_cleanup(&self) -> Result<(), AppError> {
+        let deleted = self.app_state.token_service.cleanup_expired().await?;
+        if deleted > 0 {
+            tracing::info!(count = deleted, "Cleaned up expired tokens");
+        }
         Ok(())
     }
 

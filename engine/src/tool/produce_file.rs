@@ -65,6 +65,7 @@ impl ProduceFileTool {
             content_type: content_type.clone(),
             size_bytes: metadata.len(),
             path: virtual_path.clone(),
+            url: None,
         };
 
         Ok(ToolOutput::text(serde_json::to_string(&attachment).unwrap_or_default())

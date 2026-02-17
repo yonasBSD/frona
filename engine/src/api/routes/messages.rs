@@ -11,6 +11,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
+use crate::api::files::presign_message;
+use crate::auth::jwt::JwtService;
 use crate::chat::broadcast::BroadcastEvent;
 use crate::chat::message::models::{MessageResponse, ResolveToolRequest, SendMessageRequest};
 use crate::inference::convert::{format_content_with_attachments, to_rig_messages};
@@ -78,10 +80,24 @@ async fn list_messages(
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
 ) -> Result<Json<Vec<MessageResponse>>, ApiError> {
-    let messages = state
+    let mut messages = state
         .chat_service
         .list_messages(&auth.user_id, &chat_id)
         .await?;
+
+    let jwt_svc = JwtService::new();
+    for msg in &mut messages {
+        presign_message(
+            msg,
+            &state.keypair_service,
+            &jwt_svc,
+            &auth.user_id,
+            &state.config.issuer_url,
+            state.config.presign_expiry_secs,
+        )
+        .await;
+    }
+
     Ok(Json(messages))
 }
 
@@ -401,12 +417,26 @@ async fn stream_message(
         system_prompt, model_group, rig_history, registry, tool_registry,
         tool_ctx, cancel_token, tool_event_tx, mut tool_event_rx, ..
     } = ctx;
+    let presign_issuer = state.config.issuer_url.clone();
+    let presign_expiry = state.config.presign_expiry_secs;
+    let presign_keypair = state.keypair_service.clone();
+
     if let Some(pending_id) = pending_tool_id {
-        let user_response = state
+        let mut user_response = state
             .chat_service
             .create_stream_user_message(&auth.user_id, &chat_id, &user_content, vec![])
             .await
             .map_err(ApiError::from)?;
+
+        presign_message(
+            &mut user_response,
+            &presign_keypair,
+            &JwtService::new(),
+            &auth.user_id,
+            &presign_issuer,
+            presign_expiry,
+        )
+        .await;
 
         let resolved = state
             .chat_service
@@ -449,11 +479,21 @@ async fn stream_message(
         let has_tools = !tool_registry.is_empty();
         let attachments = req.attachments.clone();
 
-        let user_response = state
+        let mut user_response = state
             .chat_service
             .create_stream_user_message(&auth.user_id, &chat_id, &user_content, req.attachments)
             .await
             .map_err(ApiError::from)?;
+
+        presign_message(
+            &mut user_response,
+            &presign_keypair,
+            &JwtService::new(),
+            &auth.user_id,
+            &presign_issuer,
+            presign_expiry,
+        )
+        .await;
 
         let chat_id_clone = chat_id.clone();
         tokio::spawn(async move {

@@ -15,6 +15,19 @@ pub struct Config {
     pub scheduler_space_compaction_secs: u64,
     pub scheduler_insight_compaction_secs: u64,
     pub scheduler_poll_secs: u64,
+    pub issuer_url: String,
+    pub access_token_expiry_secs: u64,
+    pub refresh_token_expiry_secs: u64,
+    pub sso_enabled: bool,
+    pub sso_authority: Option<String>,
+    pub sso_client_id: Option<String>,
+    pub sso_client_secret: Option<String>,
+    pub sso_scopes: String,
+    pub sso_allow_unknown_email_verification: bool,
+    pub sso_client_cache_expiration: u64,
+    pub sso_only: bool,
+    pub sso_signups_match_email: bool,
+    pub presign_expiry_secs: u64,
 }
 
 impl Config {
@@ -59,6 +72,41 @@ impl Config {
                 .unwrap_or_else(|_| "60".into())
                 .parse()
                 .expect("SCHEDULER_POLL_SECS must be a number"),
+            issuer_url: std::env::var("ISSUER_URL")
+                .unwrap_or_else(|_| "http://localhost:3001".into()),
+            access_token_expiry_secs: std::env::var("ACCESS_TOKEN_EXPIRY_SECS")
+                .unwrap_or_else(|_| "900".into())
+                .parse()
+                .expect("ACCESS_TOKEN_EXPIRY_SECS must be a number"),
+            refresh_token_expiry_secs: std::env::var("REFRESH_TOKEN_EXPIRY_SECS")
+                .unwrap_or_else(|_| "604800".into())
+                .parse()
+                .expect("REFRESH_TOKEN_EXPIRY_SECS must be a number"),
+            sso_enabled: std::env::var("SSO_ENABLED")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
+            sso_authority: std::env::var("SSO_AUTHORITY").ok(),
+            sso_client_id: std::env::var("SSO_CLIENT_ID").ok(),
+            sso_client_secret: std::env::var("SSO_CLIENT_SECRET").ok(),
+            sso_scopes: std::env::var("SSO_SCOPES")
+                .unwrap_or_else(|_| "email profile offline_access".into()),
+            sso_allow_unknown_email_verification: std::env::var("SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
+            sso_client_cache_expiration: std::env::var("SSO_CLIENT_CACHE_EXPIRATION")
+                .unwrap_or_else(|_| "0".into())
+                .parse()
+                .expect("SSO_CLIENT_CACHE_EXPIRATION must be a number"),
+            sso_only: std::env::var("SSO_ONLY")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
+            sso_signups_match_email: std::env::var("SSO_SIGNUPS_MATCH_EMAIL")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(true),
+            presign_expiry_secs: std::env::var("PRESIGN_EXPIRY_SECS")
+                .unwrap_or_else(|_| "86400".into())
+                .parse()
+                .expect("PRESIGN_EXPIRY_SECS must be a number"),
         }
     }
 }

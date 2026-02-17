@@ -1,36 +1,37 @@
-pub mod models;
 pub mod jwt;
+pub mod models;
+pub mod oauth;
+pub mod token;
 
 use async_trait::async_trait;
 
 use self::models::{AuthResponse, LoginRequest, RegisterRequest, UserInfo};
+use crate::auth::token::service::TokenService;
 use crate::core::error::AppError;
 use crate::core::models::User;
 use crate::core::repository::Repository;
-
-use self::jwt::JwtService;
+use crate::credential::keypair::service::KeyPairService;
 
 #[async_trait]
 pub trait UserRepository: Repository<User> {
     async fn find_by_email(&self, email: &str) -> Result<Option<User>, AppError>;
 }
 
-pub struct AuthService {
-    jwt: JwtService,
-}
+#[derive(Default)]
+pub struct AuthService;
 
 impl AuthService {
-    pub fn new(jwt_secret: &str) -> Self {
-        Self {
-            jwt: JwtService::new(jwt_secret),
-        }
+    pub fn new() -> Self {
+        Self
     }
 
     pub async fn register(
         &self,
         repo: &dyn UserRepository,
+        keypair_svc: &KeyPairService,
+        token_svc: &TokenService,
         req: RegisterRequest,
-    ) -> Result<AuthResponse, AppError> {
+    ) -> Result<(AuthResponse, String), AppError> {
         if repo.find_by_email(&req.email).await?.is_some() {
             return Err(AppError::Validation("Email already registered".into()));
         }
@@ -47,43 +48,47 @@ impl AuthService {
         };
 
         let user = repo.create(&user).await?;
-        let token = self.jwt.generate(&user)?;
+        let (access_jwt, refresh_jwt) =
+            token_svc.create_session_pair(keypair_svc, &user).await?;
 
-        Ok(AuthResponse {
-            token,
+        let response = AuthResponse {
+            token: access_jwt,
             user: UserInfo {
                 id: user.id,
                 email: user.email,
                 name: user.name,
             },
-        })
+        };
+
+        Ok((response, refresh_jwt))
     }
 
     pub async fn login(
         &self,
         repo: &dyn UserRepository,
+        keypair_svc: &KeyPairService,
+        token_svc: &TokenService,
         req: LoginRequest,
-    ) -> Result<AuthResponse, AppError> {
+    ) -> Result<(AuthResponse, String), AppError> {
         let user = repo
             .find_by_email(&req.email)
             .await?
             .ok_or_else(|| AppError::Auth("Invalid email or password".into()))?;
 
         self.verify_password(&req.password, &user.password_hash)?;
-        let token = self.jwt.generate(&user)?;
+        let (access_jwt, refresh_jwt) =
+            token_svc.create_session_pair(keypair_svc, &user).await?;
 
-        Ok(AuthResponse {
-            token,
+        let response = AuthResponse {
+            token: access_jwt,
             user: UserInfo {
                 id: user.id,
                 email: user.email,
                 name: user.name,
             },
-        })
-    }
+        };
 
-    pub fn validate_token(&self, token: &str) -> Result<self::models::Claims, AppError> {
-        self.jwt.validate(token)
+        Ok((response, refresh_jwt))
     }
 
     fn hash_password(&self, password: &str) -> Result<String, AppError> {
