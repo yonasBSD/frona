@@ -393,6 +393,7 @@ fn test_attachment(filename: &str, path: &str) -> Attachment {
         content_type: "text/plain".to_string(),
         size_bytes: 100,
         path: path.to_string(),
+        url: None,
     }
 }
 

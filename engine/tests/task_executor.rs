@@ -37,6 +37,19 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
         scheduler_space_compaction_secs: 3600,
         scheduler_insight_compaction_secs: 7200,
         scheduler_poll_secs: 60,
+        issuer_url: "http://localhost:3001".to_string(),
+        access_token_expiry_secs: 900,
+        refresh_token_expiry_secs: 604800,
+        sso_enabled: false,
+        sso_authority: None,
+        sso_client_id: None,
+        sso_client_secret: None,
+        sso_scopes: "email profile offline_access".to_string(),
+        sso_allow_unknown_email_verification: false,
+        sso_client_cache_expiration: 0,
+        sso_only: false,
+        sso_signups_match_email: true,
+        presign_expiry_secs: 86400,
     }
 }
 
