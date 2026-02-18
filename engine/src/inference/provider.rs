@@ -7,10 +7,11 @@ use rig::completion::{
     Message as RigMessage,
     message::{ToolCall, ToolFunction},
 };
-use rig::completion::request::ToolDefinition as RigToolDefinition;
+use rig::completion::request::{ToolDefinition as RigToolDefinition, Usage};
 use tokio::sync::mpsc;
 
 use crate::chat::broadcast::BroadcastService;
+use crate::core::metrics;
 use super::error::InferenceError;
 
 struct CompletionRequestBuilder<'a> {
@@ -110,6 +111,7 @@ impl InferenceCounter {
     fn increment(&self) {
         let val = self.count.fetch_add(1, Ordering::Relaxed) + 1;
         self.broadcast.broadcast_inference_count(val);
+        metrics::set_active_inference_requests(val);
     }
 
     fn decrement(&self) {
@@ -117,6 +119,7 @@ impl InferenceCounter {
             Some(v.saturating_sub(1))
         }).unwrap_or(0).saturating_sub(1);
         self.broadcast.broadcast_inference_count(val);
+        metrics::set_active_inference_requests(val);
     }
 
     pub fn guard(&self) -> InferenceGuard {
@@ -146,7 +149,7 @@ pub trait ModelProvider: Send + Sync {
         user_message: RigMessage,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<String, InferenceError>;
+    ) -> Result<(String, Usage), InferenceError>;
 
     async fn stream_inference(
         &self,
@@ -167,7 +170,7 @@ pub trait ModelProvider: Send + Sync {
         tools: Vec<RigToolDefinition>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<(Vec<AssistantContent>, Vec<RigMessage>), InferenceError>;
+    ) -> Result<(Vec<AssistantContent>, Vec<RigMessage>, Usage), InferenceError>;
 
     async fn stream_inference_with_tools(
         &self,
@@ -209,7 +212,7 @@ where
         user_message: RigMessage,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<String, InferenceError> {
+    ) -> Result<(String, Usage), InferenceError> {
         use rig::completion::CompletionModel as _;
 
         let _guard = self.counter.guard();
@@ -234,6 +237,7 @@ where
             .map_err(InferenceError::CompletionFailed)?;
 
         let text = extract_text_from_choice(&response.choice)?;
+        let usage = response.usage;
 
         tracing::debug!(
             model = %model_id,
@@ -241,7 +245,7 @@ where
             "LLM response"
         );
 
-        Ok(text)
+        Ok((text, usage))
     }
 
     async fn stream_inference(
@@ -306,7 +310,7 @@ where
         tools: Vec<RigToolDefinition>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
-    ) -> Result<(Vec<AssistantContent>, Vec<RigMessage>), InferenceError> {
+    ) -> Result<(Vec<AssistantContent>, Vec<RigMessage>, Usage), InferenceError> {
         use rig::completion::CompletionModel as _;
 
         let _guard = self.counter.guard();
@@ -331,6 +335,7 @@ where
             .map_err(InferenceError::CompletionFailed)?;
 
         let contents: Vec<AssistantContent> = response.choice.into_iter().collect();
+        let usage = response.usage;
 
         tracing::debug!(
             model = %model_id,
@@ -338,7 +343,7 @@ where
             "LLM tool response"
         );
 
-        Ok((contents, chat_history))
+        Ok((contents, chat_history, usage))
     }
 
     async fn stream_inference_with_tools(

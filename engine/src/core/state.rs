@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
+use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -93,10 +94,11 @@ pub struct AppState {
     pub keypair_service: KeyPairService,
     pub token_service: TokenService,
     pub oauth_service: Option<OAuthService>,
+    pub metrics_handle: PrometheusHandle,
 }
 
 impl AppState {
-    pub fn new(db: Surreal<Db>, config: &Config, workspaces: AgentWorkspaceManager) -> Self {
+    pub fn new(db: Surreal<Db>, config: &Config, workspaces: AgentWorkspaceManager, metrics_handle: PrometheusHandle) -> Self {
         let broadcast_service = BroadcastService::new();
         let llm_config = load_models_config(&config.models_config_path);
         let provider_registry = ModelProviderRegistry::from_config(llm_config, broadcast_service.clone())
@@ -194,6 +196,7 @@ impl AppState {
             keypair_service,
             token_service,
             oauth_service,
+            metrics_handle,
         }
     }
 

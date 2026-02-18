@@ -68,6 +68,7 @@ impl ModelProviderRegistry {
         if name_or_ref.contains('/') {
             let model_ref = ModelRef::parse(name_or_ref)?;
             Ok(ModelGroup {
+                name: name_or_ref.to_string(),
                 main: model_ref,
                 fallbacks: vec![],
                 max_tokens: Some(8192),

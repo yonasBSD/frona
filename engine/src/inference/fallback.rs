@@ -1,8 +1,11 @@
 use std::future::Future;
+use std::time::Instant;
 
 use backon::Retryable;
 use rig::completion::Message as RigMessage;
 use tokio::sync::mpsc;
+
+use crate::core::metrics::{self, InferenceMetricsContext};
 
 use super::config::{ModelGroup, RetryConfig};
 use super::context::truncate_history;
@@ -16,6 +19,7 @@ pub async fn inference_with_fallback(
     system_prompt: &str,
     history: Vec<RigMessage>,
     user_message: RigMessage,
+    metrics_ctx: &InferenceMetricsContext,
 ) -> Result<String, InferenceError> {
     let mut errors = Vec::new();
     let max_tokens = model_group.max_tokens;
@@ -31,6 +35,7 @@ pub async fn inference_with_fallback(
     );
 
     let ref_str = model_group.main.as_str();
+    let start = Instant::now();
     match retry_with_backoff(&model_group.retry, &model_group.main, || async {
         let provider = registry.get_provider(&model_group.main.provider)?;
         provider
@@ -46,12 +51,30 @@ pub async fn inference_with_fallback(
     })
     .await
     {
-        Ok(response) => {
+        Ok((response, usage)) => {
+            let duration = start.elapsed();
             tracing::info!(model = %ref_str, "Completion succeeded");
+            metrics::record_inference_request(
+                metrics_ctx,
+                &model_group.main.model_id,
+                &model_group.main.provider,
+                duration,
+                Some(&usage),
+                "success",
+            );
             return Ok(response);
         }
         Err(e) => {
+            let duration = start.elapsed();
             tracing::warn!(model = %ref_str, error = %e, "Main model failed, trying fallbacks");
+            metrics::record_inference_request(
+                metrics_ctx,
+                &model_group.main.model_id,
+                &model_group.main.provider,
+                duration,
+                None,
+                "error",
+            );
             errors.push((ref_str, e.to_string()));
         }
     }
@@ -65,6 +88,7 @@ pub async fn inference_with_fallback(
             model_group.context_window,
             max_output,
         );
+        let start = Instant::now();
         match retry_with_backoff(&model_group.retry, fallback, || async {
             let provider = registry.get_provider(&fallback.provider)?;
             provider
@@ -80,12 +104,30 @@ pub async fn inference_with_fallback(
         })
         .await
         {
-            Ok(response) => {
+            Ok((response, usage)) => {
+                let duration = start.elapsed();
                 tracing::info!(model = %ref_str, "Fallback succeeded");
+                metrics::record_inference_request(
+                    metrics_ctx,
+                    &fallback.model_id,
+                    &fallback.provider,
+                    duration,
+                    Some(&usage),
+                    "success",
+                );
                 return Ok(response);
             }
             Err(e) => {
+                let duration = start.elapsed();
                 tracing::warn!(model = %ref_str, error = %e, "Fallback failed");
+                metrics::record_inference_request(
+                    metrics_ctx,
+                    &fallback.model_id,
+                    &fallback.provider,
+                    duration,
+                    None,
+                    "error",
+                );
                 errors.push((ref_str, e.to_string()));
             }
         }
@@ -101,6 +143,7 @@ pub async fn stream_inference_with_fallback(
     history: Vec<RigMessage>,
     user_message: RigMessage,
     token_tx: mpsc::Sender<Result<String, InferenceError>>,
+    metrics_ctx: &InferenceMetricsContext,
 ) -> Result<(), InferenceError> {
     let mut errors = Vec::new();
     let max_tokens = model_group.max_tokens;
@@ -116,6 +159,7 @@ pub async fn stream_inference_with_fallback(
     );
 
     let ref_str = model_group.main.as_str();
+    let start = Instant::now();
     match retry_with_backoff(&model_group.retry, &model_group.main, || async {
         let provider = registry.get_provider(&model_group.main.provider)?;
         provider
@@ -133,11 +177,29 @@ pub async fn stream_inference_with_fallback(
     .await
     {
         Ok(()) => {
+            let duration = start.elapsed();
             tracing::info!(model = %ref_str, "Stream succeeded");
+            metrics::record_inference_request(
+                metrics_ctx,
+                &model_group.main.model_id,
+                &model_group.main.provider,
+                duration,
+                None,
+                "success",
+            );
             return Ok(());
         }
         Err(e) => {
+            let duration = start.elapsed();
             tracing::warn!(model = %ref_str, error = %e, "Main model stream failed, trying fallbacks");
+            metrics::record_inference_request(
+                metrics_ctx,
+                &model_group.main.model_id,
+                &model_group.main.provider,
+                duration,
+                None,
+                "error",
+            );
             errors.push((ref_str, e.to_string()));
         }
     }
@@ -151,6 +213,7 @@ pub async fn stream_inference_with_fallback(
             model_group.context_window,
             max_output,
         );
+        let start = Instant::now();
         match retry_with_backoff(&model_group.retry, fallback, || async {
             let provider = registry.get_provider(&fallback.provider)?;
             provider
@@ -168,11 +231,29 @@ pub async fn stream_inference_with_fallback(
         .await
         {
             Ok(()) => {
+                let duration = start.elapsed();
                 tracing::info!(model = %ref_str, "Fallback stream succeeded");
+                metrics::record_inference_request(
+                    metrics_ctx,
+                    &fallback.model_id,
+                    &fallback.provider,
+                    duration,
+                    None,
+                    "success",
+                );
                 return Ok(());
             }
             Err(e) => {
+                let duration = start.elapsed();
                 tracing::warn!(model = %ref_str, error = %e, "Fallback stream failed");
+                metrics::record_inference_request(
+                    metrics_ctx,
+                    &fallback.model_id,
+                    &fallback.provider,
+                    duration,
+                    None,
+                    "error",
+                );
                 errors.push((ref_str, e.to_string()));
             }
         }

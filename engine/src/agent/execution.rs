@@ -1,6 +1,7 @@
 use tokio_util::sync::CancellationToken;
 
 use crate::chat::session::ChatSessionContext;
+use crate::core::metrics::InferenceMetricsContext;
 use crate::core::state::AppState;
 use crate::core::error::AppError;
 use crate::inference::tool_loop::{self, ToolLoopEvent, ToolLoopEventKind, ToolLoopOutcome};
@@ -23,12 +24,19 @@ pub async fn run_agent_loop(
         .await?
         .ok_or_else(|| AppError::NotFound("Chat not found".into()))?;
 
+    let agent_id = chat.agent_id.clone();
     let (tool_event_tx, tool_event_rx) = tokio::sync::mpsc::channel::<ToolLoopEvent>(32);
     let ChatSessionContext {
         system_prompt, model_group, rig_history, registry,
         tool_registry, tool_ctx, tool_event_tx,
         mut tool_event_rx, ..
     } = ChatSessionContext::build(state, user_id, chat, tool_event_tx, tool_event_rx).await?;
+
+    let metrics_ctx = InferenceMetricsContext {
+        user_id: user_id.to_string(),
+        agent_id,
+        model_group: model_group.name.clone(),
+    };
 
     let tool_handle = {
         let cancel_token = cancel_token.clone();
@@ -42,6 +50,7 @@ pub async fn run_agent_loop(
                 tool_event_tx,
                 cancel_token,
                 &tool_ctx,
+                &metrics_ctx,
             )
             .await
         })

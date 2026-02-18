@@ -15,6 +15,7 @@ use crate::api::files::presign_message;
 use crate::auth::jwt::JwtService;
 use crate::chat::broadcast::BroadcastEvent;
 use crate::chat::message::models::{MessageResponse, ResolveToolRequest, SendMessageRequest};
+use crate::core::metrics::InferenceMetricsContext;
 use crate::inference::convert::{format_content_with_attachments, to_rig_messages};
 use crate::inference::fallback::stream_inference_with_fallback;
 use crate::inference::tool_loop::{self, ToolLoopEvent, ToolLoopEventKind, ToolLoopOutcome};
@@ -415,8 +416,13 @@ async fn stream_message(
 
     let crate::chat::session::ChatSessionContext {
         system_prompt, model_group, rig_history, registry, tool_registry,
-        tool_ctx, cancel_token, tool_event_tx, mut tool_event_rx, ..
+        tool_ctx, cancel_token, tool_event_tx, mut tool_event_rx, chat, ..
     } = ctx;
+    let metrics_ctx = InferenceMetricsContext {
+        user_id: auth.user_id.clone(),
+        agent_id: chat.agent_id.clone(),
+        model_group: model_group.name.clone(),
+    };
     let presign_issuer = state.config.issuer_url.clone();
     let presign_expiry = state.config.presign_expiry_secs;
     let presign_keypair = state.keypair_service.clone();
@@ -470,6 +476,7 @@ async fn stream_message(
             let tool_handle = spawn_tool_loop(
                 registry.clone(), model_group.clone(), system_prompt.clone(),
                 rig_history, tool_registry, tool_event_tx, cancel_token.clone(), tool_ctx,
+                metrics_ctx.clone(),
             );
 
             stream_tool_loop_events(&tx, &mut tool_event_rx, tool_handle, &chat_service, &chat_id).await;
@@ -536,6 +543,7 @@ async fn stream_message(
                 let tool_handle = spawn_tool_loop(
                     registry.clone(), model_group.clone(), system_prompt.clone(),
                     full_history, tool_registry, tool_event_tx, cancel_token.clone(), tool_ctx,
+                    metrics_ctx.clone(),
                 );
 
                 stream_tool_loop_events(&tx, &mut tool_event_rx, tool_handle, &chat_service, &chat_id).await;
@@ -552,6 +560,7 @@ async fn stream_message(
                         rig_history,
                         user_rig_msg,
                         token_tx,
+                        &metrics_ctx,
                     )
                     .await
                 });
@@ -638,6 +647,7 @@ fn spawn_tool_loop(
     tool_event_tx: tokio::sync::mpsc::Sender<ToolLoopEvent>,
     cancel_token: tokio_util::sync::CancellationToken,
     tool_ctx: ToolContext,
+    metrics_ctx: InferenceMetricsContext,
 ) -> tokio::task::JoinHandle<Result<ToolLoopOutcome, crate::core::error::AppError>> {
     tokio::spawn(async move {
         tool_loop::run_tool_loop(
@@ -649,6 +659,7 @@ fn spawn_tool_loop(
             tool_event_tx,
             cancel_token,
             &tool_ctx,
+            &metrics_ctx,
         )
         .await
     })
@@ -798,6 +809,7 @@ pub async fn resume_tool_loop(
     let chat = state.chat_service.find_chat(chat_id).await?
         .ok_or_else(|| crate::core::error::AppError::NotFound("Chat not found".into()))?;
 
+    let agent_id = chat.agent_id.clone();
     let (tool_event_tx, tool_event_rx) = tokio::sync::mpsc::channel::<ToolLoopEvent>(32);
     let crate::chat::session::ChatSessionContext {
         system_prompt, model_group, rig_history, registry,
@@ -807,11 +819,18 @@ pub async fn resume_tool_loop(
         state, user_id, chat, tool_event_tx, tool_event_rx,
     ).await?;
 
+    let metrics_ctx = InferenceMetricsContext {
+        user_id: user_id.to_string(),
+        agent_id,
+        model_group: model_group.name.clone(),
+    };
+
     let chat_id_owned = chat_id.to_string();
     let user_id_owned = user_id.to_string();
     let tool_handle = spawn_tool_loop(
         registry.clone(), model_group.clone(), system_prompt.clone(),
         rig_history, tool_registry, tool_event_tx, cancel_token.clone(), tool_ctx,
+        metrics_ctx,
     );
 
     let mut accumulated = String::new();

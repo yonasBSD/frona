@@ -10,8 +10,10 @@ use tracing_subscriber::EnvFilter;
 
 use frona::agent::workspace::AgentWorkspaceManager;
 use frona::api::db;
+use frona::api::middleware::metrics::track_http_metrics;
 use frona::api::routes;
 use frona::core::config::Config;
+use frona::core::metrics::setup_metrics_recorder;
 use frona::core::state::AppState;
 use frona::scheduler::Scheduler;
 use frona::tool::workspace::sandbox::verify_sandbox;
@@ -32,9 +34,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let workspaces = AgentWorkspaceManager::new(&config.workspaces_base_path);
 
+    let metrics_handle = setup_metrics_recorder();
+
     let surreal = db::init(&config.surreal_path).await?;
     db::seed_config_agents(&surreal, &workspaces).await?;
-    let state = AppState::new(surreal.clone(), &config, workspaces);
+    let state = AppState::new(surreal.clone(), &config, workspaces, metrics_handle);
     state.browser_session_manager.kill_all_sessions().await;
 
     state.init_task_executor();
@@ -88,6 +92,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::navigation::router())
         .merge(routes::tools::router())
         .merge(routes::files::router())
+        .merge(routes::metrics::router())
+        .layer(axum::middleware::from_fn(track_http_metrics))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

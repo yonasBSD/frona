@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use base64::Engine;
 use rig::completion::message::{
     DocumentSourceKind, ImageMediaType, MimeType, ToolResult, ToolResultContent, UserContent,
@@ -9,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::chat::message::models::MessageTool;
 use crate::core::error::AppError;
+use crate::core::metrics::{self, InferenceMetricsContext};
 use crate::tool::registry::AgentToolRegistry;
 use crate::tool::{ToolContext, ToolDefinition};
 
@@ -109,6 +112,7 @@ async fn stream_with_rate_limit_retry(
     event_tx: &mpsc::Sender<ToolLoopEvent>,
     cancel_token: &CancellationToken,
     accumulated_text: &mut String,
+    metrics_ctx: &InferenceMetricsContext,
 ) -> Result<StreamResult, AppError> {
     let mut rate_limit_attempt: usize = 0;
 
@@ -130,6 +134,7 @@ async fn stream_with_rate_limit_retry(
             text
         });
 
+        let start = Instant::now();
         let contents_result = tokio::select! {
             result = provider.stream_inference_with_tools(
                 &model_group.main.model_id,
@@ -142,6 +147,7 @@ async fn stream_with_rate_limit_retry(
             ) => Some(result),
             _ = cancel_token.cancelled() => None,
         };
+        let duration = start.elapsed();
 
         let turn_text = forward_handle.await.unwrap_or_default();
         accumulated_text.push_str(&turn_text);
@@ -151,8 +157,26 @@ async fn stream_with_rate_limit_retry(
         };
 
         match result {
-            Ok(contents) => return Ok(StreamResult::Contents(contents)),
+            Ok(contents) => {
+                metrics::record_inference_request(
+                    metrics_ctx,
+                    &model_group.main.model_id,
+                    &model_group.main.provider,
+                    duration,
+                    None,
+                    "success",
+                );
+                return Ok(StreamResult::Contents(contents));
+            }
             Err(ref e) if e.is_rate_limited() => {
+                metrics::record_inference_request(
+                    metrics_ctx,
+                    &model_group.main.model_id,
+                    &model_group.main.provider,
+                    duration,
+                    None,
+                    "rate_limited",
+                );
                 let delay = RATE_LIMIT_BACKOFF_SECS
                     .get(rate_limit_attempt)
                     .copied();
@@ -182,6 +206,14 @@ async fn stream_with_rate_limit_retry(
                 }
             }
             Err(e) => {
+                metrics::record_inference_request(
+                    metrics_ctx,
+                    &model_group.main.model_id,
+                    &model_group.main.provider,
+                    duration,
+                    None,
+                    "error",
+                );
                 return Err(AppError::Inference(e.to_string()));
             }
         }
@@ -272,6 +304,7 @@ async fn execute_tool_calls(
     event_tx: &mpsc::Sender<ToolLoopEvent>,
     chat_history: &mut Vec<RigMessage>,
     all_attachments: &mut Vec<crate::api::files::Attachment>,
+    metrics_ctx: &InferenceMetricsContext,
 ) -> ToolExecutionResult {
     let mut result = ToolExecutionResult {
         has_external: false,
@@ -294,14 +327,31 @@ async fn execute_tool_calls(
 
         tracing::debug!(tool = %tool_name, args = %arguments, external = is_external, "Executing tool");
 
+        let start = Instant::now();
         let (text, tool_output) = match tool_registry.execute(tool_name, arguments, ctx).await {
             Ok(output) => {
                 let text = output.text_content().to_string();
                 tracing::debug!(tool = %tool_name, result = %text, "Tool executed");
+                let duration = start.elapsed();
+                metrics::record_tool_execution(
+                    tool_name,
+                    &metrics_ctx.user_id,
+                    &metrics_ctx.agent_id,
+                    duration,
+                    "success",
+                );
                 (text, Some(output))
             }
             Err(e) => {
                 tracing::warn!(tool = %tool_name, error = %e, "Tool execution failed");
+                let duration = start.elapsed();
+                metrics::record_tool_execution(
+                    tool_name,
+                    &metrics_ctx.user_id,
+                    &metrics_ctx.agent_id,
+                    duration,
+                    "error",
+                );
                 (format!("Error: {e}"), None)
             }
         };
@@ -375,6 +425,7 @@ pub async fn run_tool_loop(
     event_tx: mpsc::Sender<ToolLoopEvent>,
     cancel_token: CancellationToken,
     ctx: &ToolContext,
+    metrics_ctx: &InferenceMetricsContext,
 ) -> Result<ToolLoopOutcome, AppError> {
     let tool_defs = &tool_registry.definitions;
     let rig_tools = to_rig_tool_definitions(tool_defs);
@@ -411,6 +462,7 @@ pub async fn run_tool_loop(
             &event_tx,
             &cancel_token,
             &mut accumulated_text,
+            metrics_ctx,
         )
         .await?
         {
@@ -444,6 +496,7 @@ pub async fn run_tool_loop(
             &event_tx,
             &mut chat_history,
             &mut all_attachments,
+            metrics_ctx,
         )
         .await;
 

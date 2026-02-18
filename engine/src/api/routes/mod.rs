@@ -5,6 +5,7 @@ pub mod chats;
 pub mod credentials;
 pub mod files;
 pub mod messages;
+pub mod metrics;
 pub mod navigation;
 pub mod spaces;
 pub mod tasks;

@@ -70,6 +70,7 @@ pub struct ModelGroupConfig {
 
 #[derive(Debug, Clone)]
 pub struct ModelGroup {
+    pub name: String,
     pub main: ModelRef,
     pub fallbacks: Vec<ModelRef>,
     pub max_tokens: Option<u64>,
@@ -163,6 +164,7 @@ impl ModelRegistryConfig {
             groups.insert(
                 name.clone(),
                 ModelGroup {
+                    name: name.clone(),
                     main,
                     fallbacks,
                     max_tokens: config.max_tokens,

@@ -4,6 +4,7 @@ use crate::api::repo::agents::SurrealAgentRepo;
 use crate::api::repo::chats::SurrealChatRepo;
 use crate::api::repo::messages::SurrealMessageRepo;
 use crate::core::error::AppError;
+use crate::core::metrics::InferenceMetricsContext;
 use crate::inference::ModelProviderRegistry;
 use crate::inference::convert::to_rig_messages;
 use crate::inference::fallback::inference_with_fallback;
@@ -213,6 +214,7 @@ impl ChatService {
             &system_prompt,
             rig_history,
             user_rig_msg,
+            &InferenceMetricsContext::default(),
         )
         .await?;
 
@@ -462,6 +464,7 @@ impl ChatService {
             &parsed.template,
             vec![],
             user_msg,
+            &InferenceMetricsContext::default(),
         )
         .await?;
 
@@ -476,6 +479,7 @@ impl ChatService {
                 let model_ref = ModelRef::parse(m)
                     .map_err(|e| AppError::Internal(e.to_string()))?;
                 return Ok(crate::inference::config::ModelGroup {
+                    name: "title".to_string(),
                     main: model_ref,
                     fallbacks: vec![],
                     max_tokens: Some(100),
@@ -490,6 +494,7 @@ impl ChatService {
             _ => self.provider_registry.get_model_group("primary")?,
         };
         Ok(crate::inference::config::ModelGroup {
+            name: "title".to_string(),
             main: base.main.clone(),
             fallbacks: base.fallbacks.clone(),
             max_tokens: Some(100),

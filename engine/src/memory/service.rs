@@ -10,6 +10,7 @@ use crate::api::repo::messages::SurrealMessageRepo;
 use crate::chat::message::models::Message;
 use crate::chat::message::repository::MessageRepository;
 use crate::core::error::AppError;
+use crate::core::metrics::InferenceMetricsContext;
 use crate::inference::config::ModelGroup;
 use crate::inference::context::{estimate_tokens, resolve_context_window};
 use crate::inference::convert::to_rig_messages;
@@ -144,6 +145,7 @@ impl MemoryService {
             &prompt,
             vec![],
             user_msg,
+            &InferenceMetricsContext::default(),
         )
         .await
         .map_err(|e| AppError::Internal(format!("Chat compaction failed: {e}")))?;
@@ -334,6 +336,7 @@ impl MemoryService {
             &prompt,
             vec![],
             user_msg,
+            &InferenceMetricsContext::default(),
         )
         .await
         .map_err(|e| AppError::Internal(format!("User insight compaction failed: {e}")))?;
@@ -421,6 +424,7 @@ impl MemoryService {
             &prompt,
             vec![],
             user_msg,
+            &InferenceMetricsContext::default(),
         )
         .await
         .map_err(|e| AppError::Internal(format!("Insight compaction failed: {e}")))?;
@@ -492,6 +496,7 @@ impl MemoryService {
             &prompt,
             vec![],
             user_msg,
+            &InferenceMetricsContext::default(),
         )
         .await
         .map_err(|e| AppError::Internal(format!("Space compaction failed: {e}")))?;
