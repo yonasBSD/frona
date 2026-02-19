@@ -17,7 +17,7 @@ export default function LoginPage() {
   useEffect(() => {
     if (user) router.replace("/chat");
   }, [user, router]);
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -27,7 +27,7 @@ export default function LoginPage() {
     setError("");
     setSubmitting(true);
     try {
-      await login({ email, password });
+      await login({ identifier, password });
       router.replace("/chat");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -54,15 +54,15 @@ export default function LoginPage() {
               </div>
             )}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-text-secondary">
-                Email
+              <label htmlFor="identifier" className="block text-sm font-medium text-text-secondary">
+                Username or email
               </label>
               <input
-                id="email"
-                type="email"
+                id="identifier"
+                type="text"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 className="mt-1 block w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-text-secondary focus:outline-none"
               />
             </div>

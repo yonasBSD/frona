@@ -121,19 +121,22 @@ export async function uploadFile(file: File, relativePath?: string): Promise<Att
   return res.json();
 }
 
-export async function presignFile(virtualPath: string): Promise<string> {
+export async function presignFile(owner: string, path: string): Promise<string> {
   const data = await request<{ url: string }>("/api/files/presign", {
     method: "POST",
-    body: JSON.stringify({ path: virtualPath }),
+    body: JSON.stringify({ owner, path }),
   });
   return data.url;
 }
 
-export function fileDownloadUrl(virtualPath: string): string {
-  // user://uid/file.txt → /api/files/user/uid/file.txt
-  // agent://aid/path/file.txt → /api/files/agent/aid/path/file.txt
-  const withoutScheme = virtualPath.replace("://", "/");
-  return `${API_URL}/api/files/${withoutScheme}`;
+export function fileDownloadUrl(attachment: Attachment, username: string): string {
+  if (attachment.owner.startsWith("user:")) {
+    return `${API_URL}/api/files/user/${username}/${attachment.path}`;
+  } else if (attachment.owner.startsWith("agent:")) {
+    const agentId = attachment.owner.replace("agent:", "");
+    return `${API_URL}/api/files/agent/${agentId}/${attachment.path}`;
+  }
+  return "";
 }
 
 export async function streamMessage(

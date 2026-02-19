@@ -132,6 +132,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </label>
               <div className="rounded-lg bg-surface-secondary p-3 space-y-1">
                 <p className="text-sm text-text-primary">{user.name}</p>
+                <p className="text-xs text-text-tertiary">@{user.username}</p>
                 <p className="text-xs text-text-tertiary">{user.email}</p>
               </div>
             </div>

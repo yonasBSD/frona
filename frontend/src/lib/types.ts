@@ -1,5 +1,6 @@
 export interface UserInfo {
   id: string;
+  username: string;
   email: string;
   name: string;
 }
@@ -10,11 +11,12 @@ export interface AuthResponse {
 }
 
 export interface LoginRequest {
-  email: string;
+  identifier: string;
   password: string;
 }
 
 export interface RegisterRequest {
+  username: string;
   email: string;
   name: string;
   password: string;
@@ -92,6 +94,7 @@ export interface Attachment {
   filename: string;
   content_type: string;
   size_bytes: number;
+  owner: string;
   path: string;
   url?: string;
 }

@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth";
 export default function RegisterPage() {
   const router = useRouter();
   const { register } = useAuth();
+  const [username, setUsername] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -19,7 +20,7 @@ export default function RegisterPage() {
     setError("");
     setSubmitting(true);
     try {
-      await register({ name, email, password });
+      await register({ username, name, email, password });
       router.replace("/chat");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
@@ -40,6 +41,20 @@ export default function RegisterPage() {
               {error}
             </div>
           )}
+          <div>
+            <label htmlFor="username" className="block text-sm font-medium text-text-secondary">
+              Username
+            </label>
+            <input
+              id="username"
+              type="text"
+              required
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="mt-1 block w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-text-secondary focus:outline-none"
+              placeholder="lowercase letters, digits, hyphens"
+            />
+          </div>
           <div>
             <label htmlFor="name" className="block text-sm font-medium text-text-secondary">
               Name

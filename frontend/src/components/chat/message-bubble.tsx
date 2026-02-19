@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { agentDisplayName, type MessageResponse, type Attachment } from "@/lib/types";
 import { useNavigation } from "@/lib/navigation-context";
+import { useAuth } from "@/lib/auth";
 import { fileDownloadUrl, presignFile } from "@/lib/api-client";
 import { MarkdownContent } from "./markdown-content";
 
@@ -12,14 +13,14 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function AttachmentItem({ attachment }: { attachment: Attachment }) {
-  const fallbackUrl = fileDownloadUrl(attachment.path);
+function AttachmentItem({ attachment, username }: { attachment: Attachment; username: string }) {
+  const fallbackUrl = fileDownloadUrl(attachment, username);
   const [url, setUrl] = useState(attachment.url ?? fallbackUrl);
   const isImage = attachment.content_type.startsWith("image/");
 
   const handleImageError = useCallback(() => {
-    presignFile(attachment.path).then(setUrl).catch(() => {});
-  }, [attachment.path]);
+    presignFile(attachment.owner, attachment.path).then(setUrl).catch(() => {});
+  }, [attachment.owner, attachment.path]);
 
   if (isImage) {
     return (
@@ -55,6 +56,7 @@ interface MessageBubbleProps {
 export function MessageBubble({ message, agentName }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const { agents } = useNavigation();
+  const { user } = useAuth();
 
   const msgAgent = message.agent_id ? agents.find((a) => a.id === message.agent_id) : undefined;
   const displayName = isUser
@@ -87,7 +89,7 @@ export function MessageBubble({ message, agentName }: MessageBubbleProps) {
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-2">
               {attachments.map((att, i) => (
-                <AttachmentItem key={i} attachment={att} />
+                <AttachmentItem key={i} attachment={att} username={user?.username ?? ""} />
               ))}
             </div>
           )}
