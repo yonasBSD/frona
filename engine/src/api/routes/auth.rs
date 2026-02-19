@@ -1,13 +1,13 @@
 use axum::extract::{Path, State};
 use axum::http::header::SET_COOKIE;
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 
 use crate::api::cookie::{
     extract_refresh_token_from_cookie_header, make_clear_refresh_cookie, make_refresh_cookie,
 };
-use crate::auth::models::{AuthResponse, LoginRequest, RegisterRequest, UserInfo};
+use crate::auth::models::{AuthResponse, LoginRequest, RegisterRequest, UpdateUsernameRequest, UserInfo};
 use crate::auth::token::models::CreatePatRequest;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
@@ -23,6 +23,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/me", get(me))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/refresh", post(refresh))
+        .route("/api/auth/username", put(change_username))
         .route("/api/auth/tokens", post(create_pat).get(list_pats))
         .route("/api/auth/tokens/{id}", delete(delete_pat))
         .route("/api/auth/sso", get(sso_status))
@@ -104,9 +105,36 @@ async fn me(
 
     Ok(Json(UserInfo {
         id: user.id,
+        username: user.username,
         email: user.email,
         name: user.name,
     }))
+}
+
+async fn change_username(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<UpdateUsernameRequest>,
+) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], Json<AuthResponse>), ApiError>
+{
+    let (response, refresh_jwt) = state
+        .auth_service
+        .change_username(
+            &state.user_repo,
+            &state.keypair_service,
+            &state.token_service,
+            &state.config,
+            &auth.user_id,
+            req,
+        )
+        .await?;
+
+    let cookie = make_refresh_cookie(
+        &refresh_jwt,
+        state.token_service.refresh_expiry_secs(),
+    );
+
+    Ok(([(SET_COOKIE, cookie)], Json(response)))
 }
 
 async fn logout(

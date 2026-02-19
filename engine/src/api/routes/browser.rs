@@ -40,7 +40,7 @@ async fn debugger_proxy(
     let browser_config = state.browser_session_manager.config();
     let browserless_base = browser_config.http_base_url();
 
-    let profile_path = browser_config.profile_path(&auth.user_id, &credential.provider);
+    let profile_path = browser_config.profile_path(&auth.username, &credential.provider);
     let target_url = format!(
         "{}/debugger?--user-data-dir={}",
         browserless_base,

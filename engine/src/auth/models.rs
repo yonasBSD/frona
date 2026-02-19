@@ -2,12 +2,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
-    pub email: String,
+    pub identifier: String,
     pub password: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
+    pub username: String,
     pub email: String,
     pub name: String,
     pub password: String,
@@ -22,13 +23,20 @@ pub struct AuthResponse {
 #[derive(Debug, Serialize)]
 pub struct UserInfo {
     pub id: String,
+    pub username: String,
     pub email: String,
     pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUsernameRequest {
+    pub username: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
+    pub username: String,
     pub email: String,
     pub exp: usize,
     pub iat: usize,

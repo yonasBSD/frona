@@ -16,6 +16,7 @@ pub struct Attachment {
     pub filename: String,
     pub content_type: String,
     pub size_bytes: u64,
+    pub owner: String,
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -24,6 +25,7 @@ pub struct Attachment {
 #[derive(Serialize, Deserialize)]
 pub struct PresignClaims {
     pub sub: String,
+    pub owner: String,
     pub path: String,
     pub exp: usize,
 }
@@ -44,22 +46,17 @@ pub fn resolve_virtual_path(virtual_path: &str, config: &Config) -> Result<PathB
     }
 }
 
-pub fn make_user_path(user_id: &str, relative: &str) -> String {
-    format!("user://{user_id}/{relative}")
-}
-
-pub fn make_agent_path(agent_id: &str, relative: &str) -> String {
-    format!("agent://{agent_id}/{relative}")
-}
-
-pub fn virtual_path_to_url_segment(path: &str) -> Option<String> {
-    // "user://uid/f.txt" → "user/uid/f.txt"
-    // "agent://aid/f.txt" → "agent/aid/f.txt"
-    let rest = path
-        .strip_prefix("user://")
-        .map(|r| format!("user/{r}"))
-        .or_else(|| path.strip_prefix("agent://").map(|r| format!("agent/{r}")))?;
-    Some(rest)
+/// Build the URL path segment for an attachment.
+/// For user files: "user/{username}/{relative_path}"
+/// For agent files: "agent/{agent_id}/{relative_path}"
+pub fn attachment_url_segment(owner: &str, path: &str, username: Option<&str>) -> Option<String> {
+    if owner.starts_with("user:") {
+        Some(format!("user/{}/{path}", username?))
+    } else {
+        owner
+            .strip_prefix("agent:")
+            .map(|agent_id| format!("agent/{agent_id}/{path}"))
+    }
 }
 
 pub async fn presign_attachment(
@@ -67,20 +64,22 @@ pub async fn presign_attachment(
     keypair_svc: &KeyPairService,
     jwt_svc: &JwtService,
     user_id: &str,
+    username: &str,
     issuer_url: &str,
     expiry_secs: u64,
 ) -> Result<(), AppError> {
-    let segment = match virtual_path_to_url_segment(&att.path) {
+    let segment = match attachment_url_segment(&att.owner, &att.path, Some(username)) {
         Some(s) => s,
         None => return Ok(()),
     };
 
-    let owner = format!("user:{user_id}");
-    let (encoding_key, kid) = keypair_svc.get_signing_key(&owner).await?;
+    let keypair_owner = format!("user:{user_id}");
+    let (encoding_key, kid) = keypair_svc.get_signing_key(&keypair_owner).await?;
 
     let exp = (chrono::Utc::now().timestamp() as u64 + expiry_secs) as usize;
     let claims = PresignClaims {
         sub: user_id.to_string(),
+        owner: att.owner.clone(),
         path: att.path.clone(),
         exp,
     };
@@ -95,11 +94,12 @@ pub async fn presign_message(
     keypair_svc: &KeyPairService,
     jwt_svc: &JwtService,
     user_id: &str,
+    username: &str,
     issuer_url: &str,
     expiry_secs: u64,
 ) {
     for att in &mut msg.attachments {
-        if let Err(e) = presign_attachment(att, keypair_svc, jwt_svc, user_id, issuer_url, expiry_secs).await {
+        if let Err(e) = presign_attachment(att, keypair_svc, jwt_svc, user_id, username, issuer_url, expiry_secs).await {
             tracing::warn!(error = %e, path = %att.path, "Failed to presign attachment");
         }
     }
@@ -292,26 +292,42 @@ mod tests {
     }
 
     #[test]
-    fn make_user_path_format() {
+    fn attachment_url_segment_user() {
         assert_eq!(
-            make_user_path("uid-123", "report.pdf"),
-            "user://uid-123/report.pdf"
+            attachment_url_segment("user:uid-123", "report.pdf", Some("jdoe")),
+            Some("user/jdoe/report.pdf".to_string()),
         );
     }
 
     #[test]
-    fn make_agent_path_format() {
+    fn attachment_url_segment_user_no_username() {
         assert_eq!(
-            make_agent_path("developer", "output.csv"),
-            "agent://developer/output.csv"
+            attachment_url_segment("user:uid-123", "report.pdf", None),
+            None,
         );
     }
 
     #[test]
-    fn make_agent_path_nested() {
+    fn attachment_url_segment_agent() {
         assert_eq!(
-            make_agent_path("developer", "subdir/file.txt"),
-            "agent://developer/subdir/file.txt"
+            attachment_url_segment("agent:developer", "output.csv", None),
+            Some("agent/developer/output.csv".to_string()),
+        );
+    }
+
+    #[test]
+    fn attachment_url_segment_agent_nested() {
+        assert_eq!(
+            attachment_url_segment("agent:developer", "subdir/file.txt", None),
+            Some("agent/developer/subdir/file.txt".to_string()),
+        );
+    }
+
+    #[test]
+    fn attachment_url_segment_invalid_owner() {
+        assert_eq!(
+            attachment_url_segment("unknown:x", "file.txt", Some("jdoe")),
+            None,
         );
     }
 
@@ -388,39 +404,11 @@ mod tests {
     }
 
     #[test]
-    fn virtual_path_to_url_segment_user() {
-        assert_eq!(
-            virtual_path_to_url_segment("user://uid-123/report.pdf"),
-            Some("user/uid-123/report.pdf".to_string()),
-        );
-    }
-
-    #[test]
-    fn virtual_path_to_url_segment_agent() {
-        assert_eq!(
-            virtual_path_to_url_segment("agent://dev/output.csv"),
-            Some("agent/dev/output.csv".to_string()),
-        );
-    }
-
-    #[test]
-    fn virtual_path_to_url_segment_nested() {
-        assert_eq!(
-            virtual_path_to_url_segment("user://uid/sub/dir/file.txt"),
-            Some("user/uid/sub/dir/file.txt".to_string()),
-        );
-    }
-
-    #[test]
-    fn virtual_path_to_url_segment_invalid_scheme() {
-        assert_eq!(virtual_path_to_url_segment("invalid://x/y"), None);
-    }
-
-    #[test]
     fn attachment_url_defaults_to_none() {
-        let json = r#"{"filename":"f.txt","content_type":"text/plain","size_bytes":10,"path":"user://uid/f.txt"}"#;
+        let json = r#"{"filename":"f.txt","content_type":"text/plain","size_bytes":10,"owner":"user:uid","path":"f.txt"}"#;
         let att: Attachment = serde_json::from_str(json).unwrap();
         assert!(att.url.is_none());
+        assert_eq!(att.owner, "user:uid");
     }
 
     #[test]
@@ -429,7 +417,8 @@ mod tests {
             filename: "f.txt".into(),
             content_type: "text/plain".into(),
             size_bytes: 10,
-            path: "user://uid/f.txt".into(),
+            owner: "user:uid".into(),
+            path: "f.txt".into(),
             url: Some("http://localhost/presigned".into()),
         };
         let json = serde_json::to_string(&att).unwrap();
@@ -445,7 +434,8 @@ mod tests {
             filename: "f.txt".into(),
             content_type: "text/plain".into(),
             size_bytes: 10,
-            path: "user://uid/f.txt".into(),
+            owner: "user:uid".into(),
+            path: "f.txt".into(),
             url: None,
         };
         let json = serde_json::to_string(&att).unwrap();
@@ -456,13 +446,15 @@ mod tests {
     fn presign_claims_round_trips() {
         let claims = PresignClaims {
             sub: "uid-123".into(),
-            path: "user://uid-123/file.pdf".into(),
+            owner: "user:uid-123".into(),
+            path: "file.pdf".into(),
             exp: 9999999999,
         };
         let json = serde_json::to_string(&claims).unwrap();
         let parsed: PresignClaims = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.sub, "uid-123");
-        assert_eq!(parsed.path, "user://uid-123/file.pdf");
+        assert_eq!(parsed.owner, "user:uid-123");
+        assert_eq!(parsed.path, "file.pdf");
         assert_eq!(parsed.exp, 9999999999);
     }
 }

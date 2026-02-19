@@ -12,8 +12,8 @@ use tokio::fs;
 use tokio_util::io::ReaderStream;
 
 use crate::api::files::{
-    Attachment, PresignClaims, dedup_filename, detect_content_type, make_user_path,
-    presign_attachment, resolve_virtual_path, virtual_path_to_url_segment,
+    Attachment, PresignClaims, dedup_filename, detect_content_type,
+    presign_attachment, resolve_virtual_path,
 };
 use crate::auth::jwt::JwtService;
 
@@ -28,7 +28,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/files", post(upload_file))
         .route("/api/files/presign", post(presign_file))
         .route(
-            "/api/files/user/{user_id}/{*filename}",
+            "/api/files/user/{username}/{*filename}",
             get(download_user_file).delete(delete_user_file),
         )
         .route(
@@ -39,7 +39,7 @@ pub fn router() -> Router<AppState> {
 
 enum FileAuth {
     User(AuthUser),
-    Presigned { user_id: String, path: String },
+    Presigned { owner: String, path: String },
 }
 
 #[derive(Deserialize)]
@@ -78,20 +78,8 @@ impl FromRequestParts<AppState> for FileAuth {
         let decoding_key = state.keypair_service.get_verifying_key(&kid).await?;
         let claims = jwt_svc.verify::<PresignClaims>(token, &decoding_key)?;
 
-        // Verify the token path matches the request URI
-        let request_path = parts.uri.path();
-        let expected_segment = virtual_path_to_url_segment(&claims.path)
-            .ok_or_else(|| ApiError(crate::core::error::AppError::Auth("Invalid presign path".into())))?;
-        let expected_uri = format!("/api/files/{expected_segment}");
-
-        if request_path != expected_uri {
-            return Err(ApiError(crate::core::error::AppError::Auth(
-                "Presign path mismatch".into(),
-            )));
-        }
-
         Ok(FileAuth::Presigned {
-            user_id: claims.sub,
+            owner: claims.owner,
             path: claims.path,
         })
     }
@@ -159,11 +147,11 @@ async fn upload_file(
             .unwrap_or(&original_filename)
             .to_string();
         let dir = Path::new(&state.config.files_base_path)
-            .join(&auth.user_id)
+            .join(&auth.username)
             .join(&parent);
         (dir, leaf, Some(rel_path.clone()))
     } else {
-        let dir = Path::new(&state.config.files_base_path).join(&auth.user_id);
+        let dir = Path::new(&state.config.files_base_path).join(&auth.username);
         (dir, original_filename.clone(), None)
     };
 
@@ -178,15 +166,15 @@ async fn upload_file(
         .await
         .map_err(|e| ApiError(crate::core::error::AppError::Internal(e.to_string())))?;
 
-    let virtual_path = if let Some(mut rel) = virtual_relative {
+    let relative = if let Some(mut rel) = virtual_relative {
         if let Some(parent) = Path::new(&rel).parent() {
             rel = parent.join(&final_filename).to_string_lossy().into_owned();
         } else {
             rel = final_filename.clone();
         }
-        make_user_path(&auth.user_id, &rel)
+        rel
     } else {
-        make_user_path(&auth.user_id, &final_filename)
+        final_filename.clone()
     };
 
     let content_type = detect_content_type(&final_filename).to_string();
@@ -196,7 +184,8 @@ async fn upload_file(
         filename: final_filename,
         content_type,
         size_bytes,
-        path: virtual_path,
+        owner: format!("user:{}", auth.user_id),
+        path: relative,
         url: None,
     }))
 }
@@ -204,20 +193,18 @@ async fn upload_file(
 async fn download_user_file(
     file_auth: FileAuth,
     State(state): State<AppState>,
-    AxumPath((user_id, filename)): AxumPath<(String, String)>,
+    AxumPath((username, filename)): AxumPath<(String, String)>,
 ) -> Result<Response, ApiError> {
-    let virtual_path = format!("user://{user_id}/{filename}");
-
     match file_auth {
         FileAuth::User(auth) => {
-            if user_id != auth.user_id {
+            if username != auth.username {
                 return Err(ApiError(crate::core::error::AppError::Forbidden(
                     "Cannot access another user's files".into(),
                 )));
             }
         }
-        FileAuth::Presigned { user_id: presign_uid, path } => {
-            if presign_uid != user_id || path != virtual_path {
+        FileAuth::Presigned { owner, path } => {
+            if !owner.starts_with("user:") || path != filename {
                 return Err(ApiError(crate::core::error::AppError::Forbidden(
                     "Presigned URL does not match requested file".into(),
                 )));
@@ -225,6 +212,7 @@ async fn download_user_file(
         }
     }
 
+    let virtual_path = format!("user://{username}/{filename}");
     serve_file(&virtual_path, &state).await
 }
 
@@ -233,31 +221,30 @@ async fn download_agent_file(
     State(state): State<AppState>,
     AxumPath((agent_id, filepath)): AxumPath<(String, String)>,
 ) -> Result<Response, ApiError> {
-    let virtual_path = format!("agent://{agent_id}/{filepath}");
-
-    if let FileAuth::Presigned { path, .. } = &file_auth
-        && *path != virtual_path
+    if let FileAuth::Presigned { owner, path } = &file_auth
+        && (owner != &format!("agent:{agent_id}") || *path != filepath)
     {
         return Err(ApiError(crate::core::error::AppError::Forbidden(
             "Presigned URL does not match requested file".into(),
         )));
     }
 
+    let virtual_path = format!("agent://{agent_id}/{filepath}");
     serve_file(&virtual_path, &state).await
 }
 
 async fn delete_user_file(
     auth: AuthUser,
     State(state): State<AppState>,
-    AxumPath((user_id, filename)): AxumPath<(String, String)>,
+    AxumPath((username, filename)): AxumPath<(String, String)>,
 ) -> Result<(), ApiError> {
-    if user_id != auth.user_id {
+    if username != auth.username {
         return Err(ApiError(crate::core::error::AppError::Forbidden(
             "Cannot delete another user's files".into(),
         )));
     }
 
-    let virtual_path = format!("user://{user_id}/{filename}");
+    let virtual_path = format!("user://{username}/{filename}");
     let resolved = resolve_virtual_path(&virtual_path, &state.config)?;
 
     if !resolved.exists() {
@@ -275,6 +262,7 @@ async fn delete_user_file(
 
 #[derive(Deserialize)]
 struct PresignRequest {
+    owner: String,
     path: String,
 }
 
@@ -283,24 +271,33 @@ async fn presign_file(
     State(state): State<AppState>,
     Json(req): Json<PresignRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Validate ownership: user files must belong to the user
-    if let Some(rest) = req.path.strip_prefix("user://") {
-        let owner_id = rest.split('/').next().unwrap_or("");
-        if owner_id != auth.user_id {
-            return Err(ApiError(crate::core::error::AppError::Forbidden(
-                "Cannot presign another user's files".into(),
-            )));
-        }
+    // Validate ownership: user files must belong to the requesting user
+    if let Some(user_id) = req.owner.strip_prefix("user:")
+        && user_id != auth.user_id
+    {
+        return Err(ApiError(crate::core::error::AppError::Forbidden(
+            "Cannot presign another user's files".into(),
+        )));
     }
 
-    // Verify file exists
-    let _ = resolve_virtual_path(&req.path, &state.config)?;
+    // Resolve the virtual path to verify the file exists
+    let virtual_path = if req.owner.starts_with("user:") {
+        format!("user://{}/{}", auth.username, req.path)
+    } else if let Some(agent_id) = req.owner.strip_prefix("agent:") {
+        format!("agent://{}/{}", agent_id, req.path)
+    } else {
+        return Err(ApiError(crate::core::error::AppError::Validation(
+            "Invalid owner prefix".into(),
+        )));
+    };
+    let _ = resolve_virtual_path(&virtual_path, &state.config)?;
 
     let jwt_svc = JwtService::new();
     let mut att = Attachment {
         filename: String::new(),
         content_type: String::new(),
         size_bytes: 0,
+        owner: req.owner,
         path: req.path,
         url: None,
     };
@@ -310,6 +307,7 @@ async fn presign_file(
         &state.keypair_service,
         &jwt_svc,
         &auth.user_id,
+        &auth.username,
         &state.config.issuer_url,
         state.config.presign_expiry_secs,
     )

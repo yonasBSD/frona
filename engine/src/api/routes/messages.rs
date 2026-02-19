@@ -93,6 +93,7 @@ async fn list_messages(
             &state.keypair_service,
             &jwt_svc,
             &auth.user_id,
+            &auth.username,
             &state.config.issuer_url,
             state.config.presign_expiry_secs,
         )
@@ -121,6 +122,7 @@ pub async fn build_tool_registry(
     state: &AppState,
     agent_id: &str,
     user_id: &str,
+    username: &str,
     chat_id: &str,
     allowed_tools: &[String],
     sandbox_config: Option<&SandboxSettings>,
@@ -195,7 +197,7 @@ pub async fn build_tool_registry(
     {
         registry.register(Arc::new(BrowserTool::new(
             state.browser_session_manager.clone(),
-            user_id.to_string(),
+            username.to_string(),
             credential.provider,
         )));
     }
@@ -439,6 +441,7 @@ async fn stream_message(
             &presign_keypair,
             &JwtService::new(),
             &auth.user_id,
+            &auth.username,
             &presign_issuer,
             presign_expiry,
         )
@@ -497,6 +500,7 @@ async fn stream_message(
             &presign_keypair,
             &JwtService::new(),
             &auth.user_id,
+            &auth.username,
             &presign_issuer,
             presign_expiry,
         )

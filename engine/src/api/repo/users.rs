@@ -25,4 +25,20 @@ impl UserRepository for SurrealRepo<User> {
 
         Ok(user)
     }
+
+    async fn find_by_username(&self, username: &str) -> Result<Option<User>, AppError> {
+        let mut result = self
+            .db()
+            .query(format!("{SELECT_CLAUSE} FROM user WHERE username = $username LIMIT 1"))
+            .bind(("username", username.to_string()))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let user: Option<User> = result
+            .take(0)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(user)
+    }
+
 }

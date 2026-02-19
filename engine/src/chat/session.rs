@@ -88,21 +88,22 @@ impl ChatSessionContext {
 
         let registry = state.chat_service.provider_registry().clone();
 
-        let tool_registry = crate::api::routes::messages::build_tool_registry(
-            state,
-            &chat.agent_id,
-            user_id,
-            &chat.id,
-            &agent_config.tools,
-            agent_config.sandbox_config.as_ref(),
-        )
-        .await;
-
         let user = state
             .user_repo
             .find_by_id(user_id)
             .await?
             .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+
+        let tool_registry = crate::api::routes::messages::build_tool_registry(
+            state,
+            &chat.agent_id,
+            user_id,
+            &user.username,
+            &chat.id,
+            &agent_config.tools,
+            agent_config.sandbox_config.as_ref(),
+        )
+        .await;
         let agent = state
             .agent_service
             .find_by_id(&chat.agent_id)

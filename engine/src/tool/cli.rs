@@ -304,6 +304,7 @@ mod tests {
         ToolContext {
             user: crate::core::models::user::User {
                 id: "test-user".into(),
+                username: "testuser".into(),
                 email: "test@test.com".into(),
                 name: "Test".into(),
                 password_hash: String::new(),

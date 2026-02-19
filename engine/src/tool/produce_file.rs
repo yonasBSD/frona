@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
-use crate::api::files::{detect_content_type, make_agent_path};
+use crate::api::files::detect_content_type;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
@@ -58,13 +58,13 @@ impl ProduceFileTool {
             .to_string();
 
         let content_type = detect_content_type(&filename).to_string();
-        let virtual_path = make_agent_path(&self.agent_id, relative_path);
 
         let attachment = crate::api::files::Attachment {
             filename: filename.clone(),
             content_type: content_type.clone(),
             size_bytes: metadata.len(),
-            path: virtual_path.clone(),
+            owner: format!("agent:{}", self.agent_id),
+            path: relative_path.to_string(),
             url: None,
         };
 

@@ -8,6 +8,7 @@ use surrealdb::types::SurrealValue;
 #[entity(table = "user")]
 pub struct User {
     pub id: String,
+    pub username: String,
     pub email: String,
     pub name: String,
     pub password_hash: String,

@@ -8,8 +8,8 @@ pub struct BrowserConfig {
 }
 
 impl BrowserConfig {
-    pub fn ws_url_for_profile(&self, user_id: &str, provider: &str) -> String {
-        let user_data_dir = self.profile_path(user_id, provider);
+    pub fn ws_url_for_profile(&self, username: &str, provider: &str) -> String {
+        let user_data_dir = self.profile_path(username, provider);
         format!(
             "{}?--user-data-dir={}",
             self.browserless_ws_url,
@@ -27,9 +27,9 @@ impl BrowserConfig {
         format!("/api/browser/debugger/{credential_id}")
     }
 
-    pub fn profile_path(&self, user_id: &str, provider: &str) -> PathBuf {
+    pub fn profile_path(&self, username: &str, provider: &str) -> PathBuf {
         PathBuf::from(&self.profiles_base_path)
-            .join(user_id)
+            .join(username)
             .join(provider)
     }
 }

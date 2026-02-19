@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use super::models::OAuthIdentity;
 use super::repository::OAuthRepository;
 use crate::auth::token::service::TokenService;
-use crate::auth::UserRepository;
+use crate::auth::{AuthService, UserRepository};
 use crate::core::config::Config;
 use crate::core::error::AppError;
 use crate::core::models::User;
@@ -218,8 +218,16 @@ impl OAuthService {
 
         // Create new user
         let now = Utc::now();
+        let base_username = if let Some(ref email) = external_email {
+            AuthService::derive_username_from_email(email)
+        } else {
+            format!("sso-{external_sub}")
+        };
+        let username = AuthService::generate_unique_username(user_repo, &base_username).await?;
+
         let new_user = User {
             id: uuid::Uuid::new_v4().to_string(),
+            username,
             email: external_email
                 .clone()
                 .unwrap_or_else(|| format!("sso-{external_sub}@unknown")),

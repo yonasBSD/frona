@@ -49,6 +49,7 @@ impl TokenService {
         let access_expires = now + Duration::seconds(self.access_expiry_secs as i64);
         let access_claims = Claims {
             sub: user.id.clone(),
+            username: user.username.clone(),
             email: user.email.clone(),
             exp: access_expires.timestamp() as usize,
             iat: now.timestamp() as usize,
@@ -80,6 +81,7 @@ impl TokenService {
         let refresh_expires = now + Duration::seconds(self.refresh_expiry_secs as i64);
         let refresh_claims = Claims {
             sub: user.id.clone(),
+            username: user.username.clone(),
             email: user.email.clone(),
             exp: refresh_expires.timestamp() as usize,
             iat: now.timestamp() as usize,
@@ -133,6 +135,7 @@ impl TokenService {
         // Look up user info from claims to create new pair
         let user = User {
             id: claims.sub.clone(),
+            username: claims.username.clone(),
             email: claims.email.clone(),
             name: String::new(),
             password_hash: String::new(),
@@ -161,6 +164,7 @@ impl TokenService {
         let token_id = uuid::Uuid::new_v4().to_string();
         let claims = Claims {
             sub: user.id.clone(),
+            username: user.username.clone(),
             email: user.email.clone(),
             exp: expires_at.timestamp() as usize,
             iat: now.timestamp() as usize,

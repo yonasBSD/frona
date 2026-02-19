@@ -67,7 +67,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         ToolContext {
             user: crate::core::models::user::User {
-                id: "u".into(), email: "e".into(), name: "n".into(),
+                id: "u".into(), username: "u".into(), email: "e".into(), name: "n".into(),
                 password_hash: String::new(),
                 created_at: chrono::Utc::now(), updated_at: chrono::Utc::now(),
             },

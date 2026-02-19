@@ -13,6 +13,7 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         "
         DEFINE TABLE IF NOT EXISTS user SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS unique_email ON TABLE user COLUMNS email UNIQUE;
+        DEFINE INDEX IF NOT EXISTS unique_username ON TABLE user COLUMNS username UNIQUE;
 
         DEFINE TABLE IF NOT EXISTS agent SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_agent_user ON TABLE agent COLUMNS user_id;

@@ -6,6 +6,7 @@ use crate::core::state::AppState;
 
 pub struct AuthUser {
     pub user_id: String,
+    pub username: String,
     pub email: String,
     pub token_id: String,
     pub token_type: String,
@@ -44,6 +45,7 @@ impl FromRequestParts<AppState> for AuthUser {
 
         Ok(AuthUser {
             user_id: claims.sub,
+            username: claims.username,
             email: claims.email,
             token_id: claims.token_id,
             token_type: claims.token_type,

@@ -195,7 +195,8 @@ mod tests {
                     filename: "report.pdf".to_string(),
                     content_type: "application/pdf".to_string(),
                     size_bytes: 1024,
-                    path: "user://uid/report.pdf".to_string(),
+                    owner: "user:uid".to_string(),
+                    path: "report.pdf".to_string(),
                     url: None,
                 },
             ],
@@ -207,7 +208,7 @@ mod tests {
         let text = extract_user_text(&result[0]);
         assert!(text.contains("check this file"));
         assert!(text.contains("<files>"));
-        assert!(text.contains("user://uid/report.pdf"));
+        assert!(text.contains("report.pdf"));
         assert!(text.contains("</files>"));
     }
 
@@ -233,7 +234,8 @@ mod tests {
                     filename: "output.csv".to_string(),
                     content_type: "text/csv".to_string(),
                     size_bytes: 512,
-                    path: "agent://dev/output.csv".to_string(),
+                    owner: "agent:dev".to_string(),
+                    path: "output.csv".to_string(),
                     url: None,
                 },
             ],
@@ -243,6 +245,6 @@ mod tests {
         let result = to_rig_messages(&[msg], "agent-1");
         let text = extract_user_text(&result[0]);
         assert!(text.contains("Task done"));
-        assert!(text.contains("agent://dev/output.csv"));
+        assert!(text.contains("output.csv"));
     }
 }

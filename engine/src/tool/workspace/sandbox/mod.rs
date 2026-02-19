@@ -36,6 +36,8 @@ pub const ETC_READ_ALLOWLIST: &[&str] = &[
     "/etc/profile.d",
     "/etc/inputrc",
     "/etc/environment",
+    // Fonts (needed by matplotlib, ImageMagick, etc.)
+    "/etc/fonts",
     // Misc
     "/etc/hostname",
     "/etc/machine-id",
