@@ -48,5 +48,5 @@ landlock = "0.4"
 
 [dev-dependencies]
 surrealdb = { version = "3.0.0", features = ["kv-mem"] }
-tokio = { workspace = true }
+tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
