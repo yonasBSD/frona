@@ -61,6 +61,7 @@ async function request<T>(
   let res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
+    credentials: "include",
   });
 
   // On 401, try refreshing the access token and retry once
@@ -71,6 +72,7 @@ async function request<T>(
       res = await fetch(`${API_URL}${path}`, {
         ...options,
         headers,
+        credentials: "include",
       });
     }
   }
