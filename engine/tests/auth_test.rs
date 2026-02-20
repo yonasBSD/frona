@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use frona::api::db;
 use frona::api::repo::generic::SurrealRepo;
 use frona::auth::jwt::JwtService;
 use frona::auth::token::models::CreatePatRequest;
+use frona::auth::token::repository::TokenRepository;
 use frona::auth::token::service::TokenService;
 use frona::auth::AuthService;
 use frona::core::models::User;
@@ -398,4 +399,160 @@ async fn test_duplicate_registration() {
         .await;
 
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_refresh_survives_service_restart() {
+    let db = test_db().await;
+    let user_repo: SurrealRepo<User> = SurrealRepo::new(db.clone());
+    let (keypair_svc, token_svc) = setup_services(&db);
+
+    let user = test_user();
+    user_repo.create(&user).await.unwrap();
+
+    let (_access_jwt, refresh_jwt) = token_svc
+        .create_session_pair(&keypair_svc, &user)
+        .await
+        .unwrap();
+
+    // Grab the refresh token's claims before dropping services
+    let refresh_claims = token_svc
+        .validate(&keypair_svc, &refresh_jwt)
+        .await
+        .unwrap();
+
+    // Drop services to clear all in-memory caches (simulates server restart)
+    drop(token_svc);
+    drop(keypair_svc);
+
+    // Verify the api_token record still exists in the DB via raw query
+    let raw: Option<String> = db
+        .query("SELECT VALUE meta::id(id) FROM api_token WHERE meta::id(id) = $id")
+        .bind(("id", refresh_claims.token_id.clone()))
+        .await
+        .unwrap()
+        .take(0)
+        .unwrap();
+    assert!(
+        raw.is_some(),
+        "api_token record missing from DB after service drop"
+    );
+
+    // Create fresh services from the same DB (restart)
+    let (keypair_svc2, token_svc2) = setup_services(&db);
+
+    // Refresh must succeed with new service instances
+    let (new_access, new_refresh, claims) = token_svc2
+        .refresh(&keypair_svc2, &refresh_jwt)
+        .await
+        .unwrap();
+
+    assert_eq!(claims.sub, user.id);
+
+    // New tokens should be valid
+    let access_claims = token_svc2
+        .validate(&keypair_svc2, &new_access)
+        .await
+        .unwrap();
+    assert_eq!(access_claims.sub, user.id);
+    assert_eq!(access_claims.token_type, "access");
+
+    let refresh_claims = token_svc2
+        .validate(&keypair_svc2, &new_refresh)
+        .await
+        .unwrap();
+    assert_eq!(refresh_claims.sub, user.id);
+    assert_eq!(refresh_claims.token_type, "refresh");
+}
+
+#[tokio::test]
+async fn test_expired_token_not_found_by_find_active() {
+    use frona::auth::token::models::{ApiToken, TokenType};
+
+    let db = test_db().await;
+    let token_repo: SurrealRepo<ApiToken> = SurrealRepo::new(db.clone());
+
+    let now = Utc::now();
+    let token = ApiToken {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id: "user-1".to_string(),
+        name: "short-lived".to_string(),
+        token_type: TokenType::Access,
+        agent_id: None,
+        scopes: vec![],
+        prefix: "test...".to_string(),
+        expires_at: now + Duration::seconds(1),
+        last_used_at: None,
+        refresh_pair_id: None,
+        created_at: now,
+        updated_at: now,
+    };
+
+    token_repo.create(&token).await.unwrap();
+
+    let found = TokenRepository::find_active_by_id(&token_repo, &token.id)
+        .await
+        .unwrap();
+    assert!(found.is_some(), "token should be active before expiry");
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let found = TokenRepository::find_active_by_id(&token_repo, &token.id)
+        .await
+        .unwrap();
+    assert!(found.is_none(), "token should not be found after expiry");
+}
+
+#[tokio::test]
+async fn test_refresh_cookie_round_trip() {
+    use frona::api::cookie::{extract_refresh_token_from_cookie_header, make_refresh_cookie};
+
+    let db = test_db().await;
+    let user_repo: SurrealRepo<User> = SurrealRepo::new(db.clone());
+    let (keypair_svc, token_svc) = setup_services(&db);
+
+    let user = test_user();
+    user_repo.create(&user).await.unwrap();
+
+    // Step 1: Create session pair (same as login/register handler)
+    let (_access_jwt, refresh_jwt) = token_svc
+        .create_session_pair(&keypair_svc, &user)
+        .await
+        .unwrap();
+
+    // Step 2: Build Set-Cookie header (same as HTTP handler)
+    let cookie_header = make_refresh_cookie(&refresh_jwt, token_svc.refresh_expiry_secs());
+    let cookie_str = cookie_header.to_str().unwrap();
+
+    // Step 3: Extract refresh token from cookie (same as refresh handler)
+    let extracted = extract_refresh_token_from_cookie_header(cookie_str)
+        .expect("refresh_token must be extractable from cookie");
+    assert_eq!(extracted, refresh_jwt);
+
+    // Step 4: Simulate server restart — drop and recreate services
+    drop(token_svc);
+    drop(keypair_svc);
+    let (keypair_svc2, token_svc2) = setup_services(&db);
+
+    // Step 5: Use extracted cookie value to refresh (same as refresh handler)
+    let (new_access, new_refresh, claims) = token_svc2
+        .refresh(&keypair_svc2, extracted)
+        .await
+        .expect("refresh with cookie-extracted token must succeed after restart");
+
+    assert_eq!(claims.sub, user.id);
+    assert_eq!(claims.token_type, "refresh");
+
+    // Step 6: Verify new tokens work
+    let access_claims = token_svc2
+        .validate(&keypair_svc2, &new_access)
+        .await
+        .unwrap();
+    assert_eq!(access_claims.token_type, "access");
+
+    let refresh_claims = token_svc2
+        .validate(&keypair_svc2, &new_refresh)
+        .await
+        .unwrap();
+    assert_eq!(refresh_claims.token_type, "refresh");
 }
