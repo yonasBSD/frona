@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { Logo } from "@/components/logo";
 
 export default function Home() {
   const router = useRouter();
@@ -16,7 +17,10 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen items-center justify-center">
-      <p className="text-text-secondary">Loading...</p>
+      <div className="flex items-center justify-center gap-2">
+          <Logo size={80} animate />
+          <span className="text-3xl font-bold text-text-primary tracking-wide" style={{ fontFamily: "var(--font-brand)" }}>FRONA</span>
+        </div>
     </div>
   );
 }
