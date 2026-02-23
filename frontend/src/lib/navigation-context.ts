@@ -8,7 +8,7 @@ import {
   useCallback,
   createElement,
 } from "react";
-import { api, archiveChat as apiArchiveChat, unarchiveChat as apiUnarchiveChat, deleteChat as apiDeleteChat, deleteTask as apiDeleteTask, getArchivedChats } from "./api-client";
+import { api, archiveChat as apiArchiveChat, unarchiveChat as apiUnarchiveChat, deleteChat as apiDeleteChat, deleteTask as apiDeleteTask, getArchivedChats, getTask } from "./api-client";
 import type {
   SpaceWithChats,
   ChatResponse,
@@ -37,6 +37,7 @@ interface NavigationContextValue {
   unarchiveChat: (chatId: string) => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
+  updateTaskInList: (taskId: string, fields: Partial<TaskResponse>) => void;
 }
 
 const NavigationContext = createContext<NavigationContextValue | null>(null);
@@ -139,6 +140,29 @@ export function NavigationProvider({
     }
   }, [tasks]);
 
+  const updateTaskInList = useCallback((taskId: string, fields: Partial<TaskResponse>) => {
+    setTasks((prev) => {
+      const idx = prev.findIndex((t) => t.id === taskId);
+      if (idx !== -1) {
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], ...fields };
+        return updated;
+      }
+      return prev;
+    });
+    const status = fields.status ?? "pending";
+    if (status === "pending" || status === "inprogress") {
+      getTask(taskId)
+        .then((task) => {
+          setTasks((prev) => {
+            if (prev.some((t) => t.id === task.id)) return prev;
+            return [task, ...prev];
+          });
+        })
+        .catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     if (showArchived) {
       getArchivedChats().then(setArchivedChats).catch(() => {});
@@ -181,6 +205,7 @@ export function NavigationProvider({
         unarchiveChat,
         deleteChat: deleteChatAction,
         deleteTask: deleteTaskAction,
+        updateTaskInList,
       },
     },
     children,

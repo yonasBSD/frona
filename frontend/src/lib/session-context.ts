@@ -10,7 +10,7 @@ import {
   useRef,
 } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { api, streamMessage, cancelGeneration, getTask } from "./api-client";
+import { api, streamMessage, cancelGeneration, getTask, getAccessToken } from "./api-client";
 import { useNavigation } from "./navigation-context";
 import type { ChatResponse, MessageResponse, CreateChatRequest, ToolCallStatus, TaskResponse, Attachment } from "./types";
 
@@ -58,7 +58,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const pendingMessageRef = useRef<string | null>(null);
   const activeChatIdRef = useRef<string | null>(null);
   const activeTaskIdRef = useRef<string | null>(null);
-  const { updateChatTitle, updateAgent, addStandaloneChat } = useNavigation();
+  const { updateChatTitle, updateAgent, addStandaloneChat, updateTaskInList } = useNavigation();
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -85,10 +85,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const es = new EventSource(
-      `${API_URL}/api/stream`,
-      { withCredentials: true },
-    );
+    const token = getAccessToken();
+    if (!token) return;
+    const url = `${API_URL}/api/stream?token=${encodeURIComponent(token)}`;
+    const es = new EventSource(url);
 
     es.addEventListener("chat_message", (event) => {
       try {
@@ -111,6 +111,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         const taskId = data.task_id as string;
         const status = data.status as string;
         const sourceChatId = data.source_chat_id as string | null;
+        updateTaskInList(taskId, {
+          status,
+          title: data.title as string,
+          chat_id: data.chat_id as string | null,
+          result_summary: data.result_summary as string | null,
+        });
         if (
           sourceChatId &&
           sourceChatId === activeChatIdRef.current &&
