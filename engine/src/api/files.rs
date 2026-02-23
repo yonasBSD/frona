@@ -32,12 +32,12 @@ pub struct PresignClaims {
 
 pub fn resolve_virtual_path(virtual_path: &str, config: &Config) -> Result<PathBuf, AppError> {
     if let Some(rest) = virtual_path.strip_prefix("user://") {
-        let resolved = Path::new(&config.files_base_path).join(rest);
-        validate_no_traversal(&resolved, &config.files_base_path)?;
+        let resolved = Path::new(&config.storage.files_path).join(rest);
+        validate_no_traversal(&resolved, &config.storage.files_path)?;
         Ok(resolved)
     } else if let Some(rest) = virtual_path.strip_prefix("agent://") {
-        let resolved = Path::new(&config.workspaces_base_path).join(rest);
-        validate_no_traversal(&resolved, &config.workspaces_base_path)?;
+        let resolved = Path::new(&config.storage.workspaces_path).join(rest);
+        validate_no_traversal(&resolved, &config.storage.workspaces_path)?;
         Ok(resolved)
     } else {
         Err(AppError::Validation(format!(
@@ -216,36 +216,7 @@ mod tests {
     use super::*;
 
     fn test_config() -> Config {
-        Config {
-            port: 3001,
-            jwt_secret: "test".into(),
-            surreal_path: "data/db".into(),
-            static_dir: "frontend/out".into(),
-            models_config_path: "data/models.json".into(),
-            browserless_ws_url: "ws://localhost:3333".into(),
-            browser_profiles_path: "/profiles".into(),
-            workspaces_base_path: "data/workspaces".into(),
-            files_base_path: "data/files".into(),
-            shared_config_dir: concat!(env!("CARGO_MANIFEST_DIR"), "/config").into(),
-            sandbox_disabled: false,
-            max_concurrent_tasks: 10,
-            scheduler_space_compaction_secs: 3600,
-            scheduler_insight_compaction_secs: 7200,
-            scheduler_poll_secs: 60,
-            issuer_url: "http://localhost:3001".into(),
-            access_token_expiry_secs: 900,
-            refresh_token_expiry_secs: 604800,
-            sso_enabled: false,
-            sso_authority: None,
-            sso_client_id: None,
-            sso_client_secret: None,
-            sso_scopes: "email profile offline_access".into(),
-            sso_allow_unknown_email_verification: false,
-            sso_client_cache_expiration: 0,
-            sso_only: false,
-            sso_signups_match_email: true,
-            presign_expiry_secs: 86400,
-        }
+        Config::default()
     }
 
     #[test]

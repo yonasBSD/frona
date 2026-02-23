@@ -146,12 +146,12 @@ async fn upload_file(
             .and_then(|n| n.to_str())
             .unwrap_or(&original_filename)
             .to_string();
-        let dir = Path::new(&state.config.files_base_path)
+        let dir = Path::new(&state.config.storage.files_path)
             .join(&auth.username)
             .join(&parent);
         (dir, leaf, Some(rel_path.clone()))
     } else {
-        let dir = Path::new(&state.config.files_base_path).join(&auth.username);
+        let dir = Path::new(&state.config.storage.files_path).join(&auth.username);
         (dir, original_filename.clone(), None)
     };
 
@@ -308,8 +308,8 @@ async fn presign_file(
         &jwt_svc,
         &auth.user_id,
         &auth.username,
-        &state.config.issuer_url,
-        state.config.presign_expiry_secs,
+        &state.config.server.issuer_url,
+        state.config.auth.presign_expiry_secs,
     )
     .await?;
 

@@ -1,72 +1,9 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
-use serde_aux::field_attributes::deserialize_bool_from_anything;
+pub use crate::core::config::{ModelGroupConfig, ModelProviderConfig, RetryConfig};
 
 use super::error::InferenceError;
 use super::provider::ModelRef;
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct RetryConfig {
-    pub max_retries: u32,
-    pub initial_backoff_ms: u64,
-    pub backoff_multiplier: f64,
-    pub max_backoff_ms: u64,
-}
-
-impl RetryConfig {
-    pub fn to_backoff(&self) -> backon::ExponentialBuilder {
-        backon::ExponentialBuilder::default()
-            .with_max_times(self.max_retries as usize)
-            .with_min_delay(std::time::Duration::from_millis(self.initial_backoff_ms))
-            .with_factor(self.backoff_multiplier as f32)
-            .with_max_delay(std::time::Duration::from_millis(self.max_backoff_ms))
-    }
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            initial_backoff_ms: 500,
-            backoff_multiplier: 2.0,
-            max_backoff_ms: 30_000,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ModelRegistryConfig {
-    #[serde(default)]
-    pub providers: HashMap<String, ModelProviderConfig>,
-    pub models: HashMap<String, ModelGroupConfig>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ModelProviderConfig {
-    pub api_key: Option<String>,
-    pub base_url: Option<String>,
-    #[serde(
-        default = "serde_aux::prelude::bool_true",
-        deserialize_with = "deserialize_bool_from_anything"
-    )]
-    pub enabled: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ModelGroupConfig {
-    pub main: String,
-    #[serde(default)]
-    pub fallbacks: Vec<String>,
-    #[serde(default)]
-    pub max_tokens: Option<u64>,
-    #[serde(default)]
-    pub temperature: Option<f64>,
-    #[serde(default)]
-    pub context_window: Option<usize>,
-    #[serde(default)]
-    pub retry: RetryConfig,
-}
 
 #[derive(Debug, Clone)]
 pub struct ModelGroup {
@@ -79,19 +16,13 @@ pub struct ModelGroup {
     pub retry: RetryConfig,
 }
 
+#[derive(Debug)]
+pub struct ModelRegistryConfig {
+    pub providers: HashMap<String, ModelProviderConfig>,
+    pub models: HashMap<String, ModelGroupConfig>,
+}
+
 impl ModelRegistryConfig {
-    pub fn load(path: &str) -> Result<Self, InferenceError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| InferenceError::ConfigError(format!("Failed to read {path}: {e}")))?;
-
-        let expanded = expand_env_vars(&content);
-
-        let config: ModelRegistryConfig = serde_json::from_str(&expanded)
-            .map_err(|e| InferenceError::ConfigError(format!("Failed to parse {path}: {e}")))?;
-
-        Ok(config)
-    }
-
     pub fn auto_discover() -> Self {
         let mut providers = HashMap::new();
 
@@ -179,31 +110,6 @@ impl ModelRegistryConfig {
     }
 }
 
-fn expand_env_vars(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '$' && chars.peek() == Some(&'{') {
-            chars.next();
-            let mut var_name = String::new();
-            for c in chars.by_ref() {
-                if c == '}' {
-                    break;
-                }
-                var_name.push(c);
-            }
-            if let Ok(val) = std::env::var(&var_name) {
-                result.push_str(&val)
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
-
 fn default_model_for_provider(provider: &str) -> &str {
     match provider {
         "anthropic" => "claude-haiku-4-5",
@@ -246,20 +152,6 @@ fn build_default_model_groups(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_expand_env_vars() {
-        unsafe { std::env::set_var("TEST_KEY_123", "my-secret") };
-        let result = expand_env_vars("key=${TEST_KEY_123}");
-        assert_eq!(result, "key=my-secret");
-        unsafe { std::env::remove_var("TEST_KEY_123") };
-    }
-
-    #[test]
-    fn test_expand_env_vars_missing() {
-        let result = expand_env_vars("key=${NONEXISTENT_VAR_XYZ}");
-        assert_eq!(result, "key=");
-    }
 
     #[test]
     fn test_model_ref_parse() {

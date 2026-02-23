@@ -197,8 +197,8 @@ impl AuthService {
         repo.update(&user).await?;
 
         // Rename files directory
-        let old_files_dir = std::path::Path::new(&config.files_base_path).join(&old_username);
-        let new_files_dir = std::path::Path::new(&config.files_base_path).join(&req.username);
+        let old_files_dir = std::path::Path::new(&config.storage.files_path).join(&old_username);
+        let new_files_dir = std::path::Path::new(&config.storage.files_path).join(&req.username);
         if old_files_dir.exists() {
             tokio::fs::rename(&old_files_dir, &new_files_dir)
                 .await
@@ -206,8 +206,8 @@ impl AuthService {
         }
 
         // Rename browser profiles directory
-        let old_profiles_dir = std::path::Path::new(&config.browser_profiles_path).join(&old_username);
-        let new_profiles_dir = std::path::Path::new(&config.browser_profiles_path).join(&req.username);
+        let old_profiles_dir = std::path::Path::new(&config.browser.profiles_path).join(&old_username);
+        let new_profiles_dir = std::path::Path::new(&config.browser.profiles_path).join(&req.username);
         if old_profiles_dir.exists() {
             tokio::fs::rename(&old_profiles_dir, &new_profiles_dir)
                 .await

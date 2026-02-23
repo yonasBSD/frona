@@ -34,32 +34,34 @@ pub struct OAuthService {
 impl OAuthService {
     pub fn new(config: &Config, repo: Arc<dyn OAuthRepository>) -> Result<Self, AppError> {
         let authority = config
-            .sso_authority
+            .sso
+            .authority
             .clone()
             .ok_or_else(|| {
                 AppError::Validation("SSO_AUTHORITY is required when SSO is enabled".into())
             })?;
-        let client_id = config.sso_client_id.clone().ok_or_else(|| {
+        let client_id = config.sso.client_id.clone().ok_or_else(|| {
             AppError::Validation("SSO_CLIENT_ID is required when SSO is enabled".into())
         })?;
-        let client_secret = config.sso_client_secret.clone().ok_or_else(|| {
+        let client_secret = config.sso.client_secret.clone().ok_or_else(|| {
             AppError::Validation("SSO_CLIENT_SECRET is required when SSO is enabled".into())
         })?;
 
         let scopes: Vec<String> = config
-            .sso_scopes
+            .sso
+            .scopes
             .split_whitespace()
             .map(String::from)
             .collect();
-        let redirect_uri = format!("{}/api/auth/sso/callback", config.issuer_url);
+        let redirect_uri = format!("{}/api/auth/sso/callback", config.server.issuer_url);
 
         Ok(Self {
             authority,
             client_id,
             client_secret,
             scopes,
-            allow_unknown_email_verification: config.sso_allow_unknown_email_verification,
-            signups_match_email: config.sso_signups_match_email,
+            allow_unknown_email_verification: config.sso.allow_unknown_email_verification,
+            signups_match_email: config.sso.signups_match_email,
             pending_states: Arc::new(Mutex::new(HashMap::new())),
             repo,
             redirect_uri,

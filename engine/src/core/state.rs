@@ -98,9 +98,15 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(db: Surreal<Db>, config: &Config, workspaces: AgentWorkspaceManager, metrics_handle: PrometheusHandle) -> Self {
+    pub fn new(
+        db: Surreal<Db>,
+        config: &Config,
+        models_config: Option<ModelRegistryConfig>,
+        workspaces: AgentWorkspaceManager,
+        metrics_handle: PrometheusHandle,
+    ) -> Self {
         let broadcast_service = BroadcastService::new();
-        let llm_config = load_models_config(&config.models_config_path);
+        let llm_config = load_models_config(models_config);
         let provider_registry = ModelProviderRegistry::from_config(llm_config, broadcast_service.clone())
             .expect("Failed to initialize provider registry");
 
@@ -109,19 +115,19 @@ impl AppState {
         let message_repo = SurrealRepo::new(db.clone());
 
         let browser_config = BrowserConfig {
-            browserless_ws_url: config.browserless_ws_url.clone(),
-            profiles_base_path: config.browser_profiles_path.clone(),
+            browserless_ws_url: config.browser.ws_url.clone(),
+            profiles_base_path: config.browser.profiles_path.clone(),
             connection_timeout_ms: 30000,
         };
 
         let workspace_manager = Arc::new(WorkspaceManager::new(
-            &config.workspaces_base_path,
-            config.sandbox_disabled,
+            &config.storage.workspaces_path,
+            config.server.sandbox_disabled,
         ));
         let search_provider = create_search_provider();
 
         let provider_registry_arc = Arc::new(provider_registry.clone());
-        let prompt_loader = PromptLoader::new(PathBuf::from(&config.shared_config_dir).join("prompts"));
+        let prompt_loader = PromptLoader::new(PathBuf::from(&config.storage.shared_config_dir).join("prompts"));
 
         let cli_tools_config = load_cli_tool_configs(&prompt_loader);
         crate::tool::init_configurable_tools(&cli_tools_config);
@@ -137,12 +143,12 @@ impl AppState {
         );
 
         let skill_repo = SurrealRepo::new(db.clone());
-        let skill_resolver = SkillResolver::new(skill_repo, &config.shared_config_dir, workspaces.clone());
+        let skill_resolver = SkillResolver::new(skill_repo, &config.storage.shared_config_dir, workspaces.clone());
 
         let keypair_repo: SurrealRepo<crate::credential::keypair::models::KeyPair> =
             SurrealRepo::new(db.clone());
         let keypair_service = KeyPairService::new(
-            &config.jwt_secret,
+            &config.auth.encryption_secret,
             Arc::new(keypair_repo),
         );
         let jwt_service = JwtService::new();
@@ -151,11 +157,11 @@ impl AppState {
         let token_service = TokenService::new(
             Arc::new(token_repo),
             jwt_service,
-            config.access_token_expiry_secs,
-            config.refresh_token_expiry_secs,
+            config.auth.access_token_expiry_secs,
+            config.auth.refresh_token_expiry_secs,
         );
 
-        let oauth_service = if config.sso_enabled {
+        let oauth_service = if config.sso.enabled {
             let oauth_repo: SurrealRepo<crate::auth::oauth::models::OAuthIdentity> =
                 SurrealRepo::new(db.clone());
             OAuthService::new(config, Arc::new(oauth_repo)).ok()
@@ -189,7 +195,7 @@ impl AppState {
             search_provider,
             skill_resolver,
             task_executor: Arc::new(OnceLock::new()),
-            max_concurrent_tasks: config.max_concurrent_tasks,
+            max_concurrent_tasks: config.server.max_concurrent_tasks,
             config: Arc::new(config.clone()),
             agent_workspaces: workspaces,
             prompts: prompt_loader,
@@ -210,19 +216,15 @@ impl AppState {
     }
 }
 
-fn load_models_config(path: &str) -> ModelRegistryConfig {
-    match ModelRegistryConfig::load(path) {
-        Ok(mut config) => {
+fn load_models_config(from_yaml: Option<ModelRegistryConfig>) -> ModelRegistryConfig {
+    match from_yaml {
+        Some(mut config) => {
             config.merge_with_auto_discovered();
-            tracing::info!(path = %path, "Loaded models config");
+            tracing::info!("Loaded models config from config file");
             config
         }
-        Err(e) => {
-            tracing::info!(
-                path = %path,
-                error = %e,
-                "No models config found, auto-discovering from environment"
-            );
+        None => {
+            tracing::info!("No models in config, auto-discovering from environment");
             ModelRegistryConfig::auto_discover()
         }
     }

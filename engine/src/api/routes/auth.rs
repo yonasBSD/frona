@@ -36,7 +36,7 @@ async fn register(
     Json(req): Json<RegisterRequest>,
 ) -> Result<(StatusCode, [(axum::http::HeaderName, axum::http::HeaderValue); 1], Json<AuthResponse>), ApiError>
 {
-    if state.config.sso_only {
+    if state.config.sso.only {
         return Err(ApiError(AppError::Validation(
             "SSO registration required".into(),
         )));
@@ -69,7 +69,7 @@ async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], Json<AuthResponse>), ApiError>
 {
-    if state.config.sso_only {
+    if state.config.sso.only {
         return Err(ApiError(AppError::Validation(
             "SSO login required".into(),
         )));
@@ -244,8 +244,8 @@ async fn sso_status(
     State(state): State<AppState>,
 ) -> Json<SsoStatusResponse> {
     Json(SsoStatusResponse {
-        enabled: state.config.sso_enabled,
-        sso_only: state.config.sso_only,
+        enabled: state.config.sso.enabled,
+        sso_only: state.config.sso.only,
     })
 }
 

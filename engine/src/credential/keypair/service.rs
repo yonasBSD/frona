@@ -24,9 +24,9 @@ pub struct KeyPairService {
 }
 
 impl KeyPairService {
-    pub fn new(jwt_secret: &str, repo: Arc<dyn KeyPairRepository>) -> Self {
+    pub fn new(encryption_secret: &str, repo: Arc<dyn KeyPairRepository>) -> Self {
         let mut hasher = Sha256::new();
-        hasher.update(jwt_secret.as_bytes());
+        hasher.update(encryption_secret.as_bytes());
         let encryption_key: [u8; 32] = hasher.finalize().into();
 
         Self {

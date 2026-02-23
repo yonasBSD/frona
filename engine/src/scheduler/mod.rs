@@ -48,9 +48,9 @@ impl Scheduler {
 
     pub fn start(self: Arc<Self>) {
         let cfg = &self.app_state.config;
-        let space = Duration::from_secs(cfg.scheduler_space_compaction_secs);
-        let insight = Duration::from_secs(cfg.scheduler_insight_compaction_secs);
-        let poll = Duration::from_secs(cfg.scheduler_poll_secs);
+        let space = Duration::from_secs(cfg.scheduler.space_compaction_secs);
+        let insight = Duration::from_secs(cfg.scheduler.insight_compaction_secs);
+        let poll = Duration::from_secs(cfg.scheduler.poll_secs);
 
         spawn_periodic!(self, space, "space_compaction", run_space_compaction);
         spawn_periodic!(self, insight, "insight_compaction", run_insight_compaction);

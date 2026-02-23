@@ -24,21 +24,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let config = Config::from_env();
+    let loaded = Config::load();
+    let config = loaded.config;
 
-    verify_sandbox(&config.workspaces_base_path, config.sandbox_disabled)
+    verify_sandbox(&config.storage.workspaces_path, config.server.sandbox_disabled)
         .expect("Sandbox verification failed — filesystem may not support sandboxing. Set SANDBOX_DISABLED=true to bypass.");
 
     let cors_origin = std::env::var("CORS_ORIGIN")
         .unwrap_or_else(|_| "http://localhost:3000".into());
 
-    let workspaces = AgentWorkspaceManager::new(&config.workspaces_base_path);
+    let workspaces = AgentWorkspaceManager::new(&config.storage.workspaces_path);
 
     let metrics_handle = setup_metrics_recorder();
 
-    let surreal = db::init(&config.surreal_path).await?;
+    let surreal = db::init(&config.database.path).await?;
     db::seed_config_agents(&surreal, &workspaces).await?;
-    let state = AppState::new(surreal.clone(), &config, workspaces, metrics_handle);
+    let state = AppState::new(surreal.clone(), &config, loaded.models, workspaces, metrics_handle);
     state.browser_session_manager.kill_all_sessions().await;
 
     state.init_task_executor();
@@ -57,9 +58,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let scheduler = Arc::new(Scheduler::new(state.clone(), compaction_group.clone()));
         scheduler.start();
         info!(
-            space_secs = config.scheduler_space_compaction_secs,
-            insight_secs = config.scheduler_insight_compaction_secs,
-            poll_secs = config.scheduler_poll_secs,
+            space_secs = config.scheduler.space_compaction_secs,
+            insight_secs = config.scheduler.insight_compaction_secs,
+            poll_secs = config.scheduler.poll_secs,
             "Scheduler started"
         );
     }
@@ -97,9 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
-        .fallback_service(ServeDir::new(&config.static_dir));
+        .fallback_service(ServeDir::new(&config.server.static_dir));
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
     info!("Server starting on {addr}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

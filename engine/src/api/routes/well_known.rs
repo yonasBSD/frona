@@ -14,7 +14,7 @@ pub fn router() -> Router<AppState> {
 async fn openid_configuration(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    let issuer = &state.config.issuer_url;
+    let issuer = &state.config.server.issuer_url;
     Json(serde_json::json!({
         "issuer": issuer,
         "jwks_uri": format!("{issuer}/.well-known/jwks.json"),

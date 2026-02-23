@@ -94,8 +94,8 @@ async fn list_messages(
             &jwt_svc,
             &auth.user_id,
             &auth.username,
-            &state.config.issuer_url,
-            state.config.presign_expiry_secs,
+            &state.config.server.issuer_url,
+            state.config.auth.presign_expiry_secs,
         )
         .await;
     }
@@ -148,7 +148,7 @@ pub async fn build_tool_registry(
         prompts.clone(),
     )));
 
-    let workspace_path = std::path::Path::new(&state.config.workspaces_base_path).join(agent_id);
+    let workspace_path = std::path::Path::new(&state.config.storage.workspaces_path).join(agent_id);
     registry.register(Arc::new(ProduceFileTool::new(
         agent_id.to_string(),
         workspace_path,
@@ -425,8 +425,8 @@ async fn stream_message(
         agent_id: chat.agent_id.clone(),
         model_group: model_group.name.clone(),
     };
-    let presign_issuer = state.config.issuer_url.clone();
-    let presign_expiry = state.config.presign_expiry_secs;
+    let presign_issuer = state.config.server.issuer_url.clone();
+    let presign_expiry = state.config.auth.presign_expiry_secs;
     let presign_keypair = state.keypair_service.clone();
 
     if let Some(pending_id) = pending_tool_id {
