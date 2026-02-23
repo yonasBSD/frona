@@ -16,10 +16,16 @@ RUN pip install --no-cache-dir --break-system-packages \
 # Install cargo-watch
 RUN cargo install cargo-watch
 
+# Create non-root user and fix directory ownership
+RUN groupadd -g 1000 frona && useradd -u 1000 -g frona -m -s /bin/bash frona
+RUN mkdir -p /app /app/target /app/frontend/node_modules /app/data \
+    && chown -R frona:frona /app /usr/local/cargo
+
+USER frona
 WORKDIR /app
 
 # Pre-install frontend dependencies (layer cached unless package.json changes)
-COPY frontend/package.json frontend/package-lock.json* frontend/
+COPY --chown=frona:frona frontend/package.json frontend/package-lock.json* frontend/
 RUN cd frontend && npm install
 
 # Source is mounted via docker-compose volumes
