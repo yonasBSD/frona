@@ -44,6 +44,10 @@ pub const ETC_READ_ALLOWLIST: &[&str] = &[
     "/etc/mime.types",
     "/etc/alternatives",
     "/etc/login.defs",
+    // OS identification (needed by pip/distro)
+    "/etc/os-release",
+    "/etc/lsb-release",
+    "/etc/debian_version",
     // Language runtimes
     "/etc/python3",
     "/etc/pip.conf",
