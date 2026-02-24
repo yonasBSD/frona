@@ -35,9 +35,10 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
         database: frona::core::config::DatabaseConfig {
             path: format!("{base}/db"),
         },
-        browser: frona::core::config::BrowserSettings {
+        browser: frona::core::config::BrowserConfig {
             ws_url: "ws://localhost:0".to_string(),
             profiles_path: format!("{base}/profiles"),
+            connection_timeout_ms: 30000,
         },
         storage: frona::core::config::StorageConfig {
             workspaces_path: format!("{base}/workspaces"),

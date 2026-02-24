@@ -365,7 +365,7 @@ async fn test_tool_loop_rate_limit_retry() {
     while let Ok(event) = event_rx.try_recv() {
         if matches!(
             event.kind,
-            ToolLoopEventKind::RateLimitRetry { retry_after_secs: 5 }
+            ToolLoopEventKind::RateLimitRetry { retry_after_ms: 1 }
         ) {
             saw_retry = true;
         }
@@ -377,7 +377,7 @@ async fn test_tool_loop_rate_limit_retry() {
 async fn test_tool_loop_rate_limit_exhausted() {
     init_metrics();
 
-    let responses: Vec<MockResponse> = (0..10)
+    let responses: Vec<MockResponse> = (0..3)
         .map(|_| {
             MockResponse::Error(InferenceError::RateLimited {
                 retry_after_secs: 5,
@@ -409,7 +409,7 @@ async fn test_tool_loop_rate_limit_exhausted() {
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::Inference(msg) => {
-            assert!(msg.contains("Rate limited"), "Got: {msg}");
+            assert!(msg.contains("retry limit exceeded"), "Got: {msg}");
         }
         other => panic!("Expected AppError::Inference, got {other:?}"),
     }
