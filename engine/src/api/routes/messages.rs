@@ -726,10 +726,10 @@ async fn stream_tool_loop_events(
                     .unwrap();
                 let _ = tx.send(Ok(update_event)).await;
             }
-            ToolLoopEventKind::RateLimitRetry { retry_after_secs } => {
+            ToolLoopEventKind::RateLimitRetry { retry_after_ms } => {
                 let event = Event::default()
                     .event("rate_limit")
-                    .json_data(serde_json::json!({ "retry_after_secs": retry_after_secs }))
+                    .json_data(serde_json::json!({ "retry_after_ms": retry_after_ms }))
                     .unwrap();
                 let _ = tx.send(Ok(event)).await;
             }

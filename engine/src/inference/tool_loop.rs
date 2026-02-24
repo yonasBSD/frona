@@ -20,8 +20,6 @@ use super::provider::ModelProvider;
 use super::registry::ModelProviderRegistry;
 
 const MAX_TOOL_TURNS: usize = 20;
-const RATE_LIMIT_BACKOFF_SECS: &[u64] = &[5, 10, 20, 40, 80, 160, 285];
-
 pub struct ToolLoopEvent {
     pub kind: ToolLoopEventKind,
 }
@@ -42,7 +40,7 @@ pub enum ToolLoopEventKind {
         record_id: String,
         fields: serde_json::Value,
     },
-    RateLimitRetry { retry_after_secs: u64 },
+    RateLimitRetry { retry_after_ms: u64 },
     Done(String),
     Cancelled(String),
     Error(String),
@@ -205,33 +203,32 @@ async fn stream_with_rate_limit_retry(
         };
 
         if should_retry {
-            let delay = RATE_LIMIT_BACKOFF_SECS
-                .get(rate_limit_attempt)
-                .copied();
-
-            match delay {
-                Some(secs) => {
-                    tracing::warn!(
-                        retry_after_secs = secs,
-                        attempt = rate_limit_attempt + 1,
-                        "Retryable inference issue, backing off"
-                    );
-                    let _ = event_tx
-                        .send(ToolLoopEvent {
-                            kind: ToolLoopEventKind::RateLimitRetry {
-                                retry_after_secs: secs,
-                            },
-                        })
-                        .await;
-                    rate_limit_attempt += 1;
-                    tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-                }
-                None => {
-                    return Err(AppError::Inference(
-                        "Inference retry limit exceeded".to_string(),
-                    ));
-                }
+            let retry = &model_group.retry;
+            if rate_limit_attempt >= retry.max_retries as usize {
+                return Err(AppError::Inference(
+                    "Inference retry limit exceeded".to_string(),
+                ));
             }
+
+            let delay_ms = (retry.initial_backoff_ms as f64
+                * retry.backoff_multiplier.powi(rate_limit_attempt as i32))
+                as u64;
+            let delay_ms = delay_ms.min(retry.max_backoff_ms);
+
+            tracing::warn!(
+                retry_after_ms = delay_ms,
+                attempt = rate_limit_attempt + 1,
+                "Retryable inference issue, backing off"
+            );
+            let _ = event_tx
+                .send(ToolLoopEvent {
+                    kind: ToolLoopEventKind::RateLimitRetry {
+                        retry_after_ms: delay_ms,
+                    },
+                })
+                .await;
+            rate_limit_attempt += 1;
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
     }
 }
