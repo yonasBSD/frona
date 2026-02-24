@@ -157,7 +157,18 @@ async fn stream_with_rate_limit_retry(
             return Ok(StreamResult::Cancelled);
         };
 
-        match result {
+        let should_retry = match result {
+            Ok(ref contents) if contents.is_empty() => {
+                metrics::record_inference_request(
+                    metrics_ctx,
+                    &model_group.main.model_id,
+                    &model_group.main.provider,
+                    duration,
+                    None,
+                    "empty_response",
+                );
+                true
+            }
             Ok(contents) => {
                 metrics::record_inference_request(
                     metrics_ctx,
@@ -178,33 +189,7 @@ async fn stream_with_rate_limit_retry(
                     None,
                     "rate_limited",
                 );
-                let delay = RATE_LIMIT_BACKOFF_SECS
-                    .get(rate_limit_attempt)
-                    .copied();
-
-                match delay {
-                    Some(secs) => {
-                        tracing::warn!(
-                            retry_after_secs = secs,
-                            attempt = rate_limit_attempt + 1,
-                            "Rate limited, retrying"
-                        );
-                        let _ = event_tx
-                            .send(ToolLoopEvent {
-                                kind: ToolLoopEventKind::RateLimitRetry {
-                                    retry_after_secs: secs,
-                                },
-                            })
-                            .await;
-                        rate_limit_attempt += 1;
-                        tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-                    }
-                    None => {
-                        return Err(AppError::Inference(
-                            "Rate limited: max retry time exceeded".to_string(),
-                        ));
-                    }
-                }
+                true
             }
             Err(e) => {
                 metrics::record_inference_request(
@@ -216,6 +201,36 @@ async fn stream_with_rate_limit_retry(
                     "error",
                 );
                 return Err(AppError::Inference(e.to_string()));
+            }
+        };
+
+        if should_retry {
+            let delay = RATE_LIMIT_BACKOFF_SECS
+                .get(rate_limit_attempt)
+                .copied();
+
+            match delay {
+                Some(secs) => {
+                    tracing::warn!(
+                        retry_after_secs = secs,
+                        attempt = rate_limit_attempt + 1,
+                        "Retryable inference issue, backing off"
+                    );
+                    let _ = event_tx
+                        .send(ToolLoopEvent {
+                            kind: ToolLoopEventKind::RateLimitRetry {
+                                retry_after_secs: secs,
+                            },
+                        })
+                        .await;
+                    rate_limit_attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                }
+                None => {
+                    return Err(AppError::Inference(
+                        "Inference retry limit exceeded".to_string(),
+                    ));
+                }
             }
         }
     }
