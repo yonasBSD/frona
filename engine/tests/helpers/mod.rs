@@ -353,6 +353,7 @@ pub fn test_model_group() -> ModelGroup {
             backoff_multiplier: 1.0,
             max_backoff_ms: 10,
         },
+        inference: Default::default(),
     }
 }
 

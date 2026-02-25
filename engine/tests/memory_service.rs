@@ -21,9 +21,11 @@ async fn test_db() -> Surreal<Db> {
 }
 
 fn make_memory_service(db: Surreal<Db>) -> MemoryService {
+    let inference = frona::core::config::InferenceConfig::default();
     let provider_registry = frona::inference::ModelProviderRegistry::from_config(
         frona::inference::config::ModelRegistryConfig::auto_discover(),
         frona::chat::broadcast::BroadcastService::new(),
+        &inference,
     )
     .unwrap();
 
