@@ -346,7 +346,7 @@ async fn test_login_wrong_password() {
                 username: "wrongpwtest".to_string(),
                 email: "test@example.com".to_string(),
                 name: "Test".to_string(),
-                password: "correct".to_string(),
+                password: "correct-password".to_string(),
             },
         )
         .await
@@ -379,7 +379,7 @@ async fn test_duplicate_registration() {
         username: "dupuser".to_string(),
         email: "dup@example.com".to_string(),
         name: "User".to_string(),
-        password: "pass".to_string(),
+        password: "password123".to_string(),
     };
 
     auth_svc
@@ -391,7 +391,7 @@ async fn test_duplicate_registration() {
         username: "dupuser2".to_string(),
         email: "dup@example.com".to_string(),
         name: "User 2".to_string(),
-        password: "pass2".to_string(),
+        password: "password456".to_string(),
     };
 
     let result = auth_svc
@@ -521,7 +521,7 @@ async fn test_refresh_cookie_round_trip() {
         .unwrap();
 
     // Step 2: Build Set-Cookie header (same as HTTP handler)
-    let cookie_header = make_refresh_cookie(&refresh_jwt, token_svc.refresh_expiry_secs());
+    let cookie_header = make_refresh_cookie(&refresh_jwt, token_svc.refresh_expiry_secs(), false);
     let cookie_str = cookie_header.to_str().unwrap();
 
     // Step 3: Extract refresh token from cookie (same as refresh handler)
