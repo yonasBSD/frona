@@ -35,6 +35,7 @@ impl AuthService {
         req: RegisterRequest,
     ) -> Result<(AuthResponse, String), AppError> {
         Self::validate_username(&req.username)?;
+        Self::validate_password(&req.password)?;
 
         if repo.find_by_email(&req.email).await?.is_some() {
             return Err(AppError::Validation("Email already registered".into()));
@@ -101,6 +102,15 @@ impl AuthService {
         };
 
         Ok((response, refresh_jwt))
+    }
+
+    pub fn validate_password(password: &str) -> Result<(), AppError> {
+        if password.len() < 8 {
+            return Err(AppError::Validation(
+                "Password must be at least 8 characters".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn validate_username(username: &str) -> Result<(), AppError> {
@@ -262,5 +272,31 @@ impl AuthService {
         Argon2::default()
             .verify_password(password.as_bytes(), &parsed)
             .map_err(|_| AppError::Auth("Invalid email or password".into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_password_accepts_8_chars() {
+        assert!(AuthService::validate_password("12345678").is_ok());
+    }
+
+    #[test]
+    fn validate_password_accepts_long_password() {
+        assert!(AuthService::validate_password("a-long-secure-passphrase!").is_ok());
+    }
+
+    #[test]
+    fn validate_password_rejects_short_password() {
+        let err = AuthService::validate_password("abc").unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn validate_password_rejects_7_chars() {
+        assert!(AuthService::validate_password("1234567").is_err());
     }
 }
