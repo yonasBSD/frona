@@ -68,14 +68,6 @@ fn extract_token(parts: &Parts) -> Result<&str, ApiError> {
         });
     }
 
-    if let Some(token) = parts
-        .uri
-        .query()
-        .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("token=")))
-    {
-        return Ok(token);
-    }
-
     Err(ApiError(crate::core::error::AppError::Auth(
         "Missing authorization".into(),
     )))

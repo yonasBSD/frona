@@ -29,15 +29,15 @@ impl IntoResponse for ApiError {
             }
             AppError::Inference(msg) => {
                 tracing::error!("Inference error: {msg}");
-                (StatusCode::BAD_GATEWAY, msg.clone())
+                (StatusCode::BAD_GATEWAY, "Inference service error".into())
             }
             AppError::Browser(msg) => {
                 tracing::error!("Browser error: {msg}");
-                (StatusCode::BAD_GATEWAY, msg.clone())
+                (StatusCode::BAD_GATEWAY, "Browser service error".into())
             }
             AppError::Tool(msg) => {
                 tracing::error!("Tool error: {msg}");
-                (StatusCode::INTERNAL_SERVER_ERROR, msg.clone())
+                (StatusCode::INTERNAL_SERVER_ERROR, "Tool execution error".into())
             }
             AppError::Http { status, message } => {
                 (StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY), message.clone())

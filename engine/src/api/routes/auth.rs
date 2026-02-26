@@ -3,6 +3,9 @@ use axum::http::header::SET_COOKIE;
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
+use tower_governor::GovernorLayer;
+use tower_governor::governor::GovernorConfigBuilder;
+use tower_governor::key_extractor::SmartIpKeyExtractor;
 
 use crate::api::cookie::{
     extract_refresh_token_from_cookie_header, make_clear_refresh_cookie, make_refresh_cookie,
@@ -17,9 +20,20 @@ use super::super::middleware::auth::AuthUser;
 use crate::core::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/api/auth/register", post(register))
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(5)
+        .burst_size(10)
+        .key_extractor(SmartIpKeyExtractor)
+        .finish()
+        .unwrap();
+
+    let rate_limited = Router::new()
         .route("/api/auth/login", post(login))
+        .route("/api/auth/register", post(register))
+        .layer(GovernorLayer::new(governor_conf));
+
+    Router::new()
+        .merge(rate_limited)
         .route("/api/auth/me", get(me))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/refresh", post(refresh))
@@ -52,9 +66,11 @@ async fn register(
         )
         .await?;
 
+    let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
     let cookie = make_refresh_cookie(
         &refresh_jwt,
         state.token_service.refresh_expiry_secs(),
+        secure,
     );
 
     Ok((
@@ -85,9 +101,11 @@ async fn login(
         )
         .await?;
 
+    let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
     let cookie = make_refresh_cookie(
         &refresh_jwt,
         state.token_service.refresh_expiry_secs(),
+        secure,
     );
 
     Ok(([(SET_COOKIE, cookie)], Json(response)))
@@ -129,9 +147,11 @@ async fn change_username(
         )
         .await?;
 
+    let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
     let cookie = make_refresh_cookie(
         &refresh_jwt,
         state.token_service.refresh_expiry_secs(),
+        secure,
     );
 
     Ok(([(SET_COOKIE, cookie)], Json(response)))
@@ -156,8 +176,9 @@ async fn logout(
         }
     }
 
+    let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
     Ok((
-        [(SET_COOKIE, make_clear_refresh_cookie())],
+        [(SET_COOKIE, make_clear_refresh_cookie(secure))],
         StatusCode::NO_CONTENT,
     ))
 }
@@ -178,9 +199,11 @@ async fn refresh(
         .refresh(&state.keypair_service, refresh_token)
         .await?;
 
+    let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
     let cookie = make_refresh_cookie(
         &new_refresh_jwt,
         state.token_service.refresh_expiry_secs(),
+        secure,
     );
 
     Ok((
@@ -293,9 +316,11 @@ async fn sso_callback(
         .create_session_pair(&state.keypair_service, &user)
         .await?;
 
+    let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
     let cookie = make_refresh_cookie(
         &refresh_jwt,
         state.token_service.refresh_expiry_secs(),
+        secure,
     );
 
     // Redirect to frontend callback page — the frontend will fetch a new access token via refresh
