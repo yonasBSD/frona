@@ -1,9 +1,11 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::http::{HeaderName, Method};
+use axum::extract::DefaultBodyLimit;
+use axum::http::{HeaderName, HeaderValue, Method};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -26,6 +28,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let loaded = Config::load();
     let config = loaded.config;
+
+    const DEFAULT_SECRET: &str = "dev-secret-change-in-production";
+    if config.auth.encryption_secret == DEFAULT_SECRET {
+        tracing::warn!(
+            "SECURITY WARNING: Using default encryption_secret. \
+             Set FRONA_AUTH_ENCRYPTION_SECRET to a strong random value before deploying."
+        );
+    }
 
     verify_sandbox(&config.storage.workspaces_path, config.server.sandbox_disabled)
         .expect("Sandbox verification failed — filesystem may not support sandboxing. Set FRONA_SERVER_SANDBOX_DISABLED=true to bypass.");
@@ -101,11 +111,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::tools::router())
         .merge(routes::files::router())
         .merge(routes::metrics::router())
+        .layer(DefaultBodyLimit::max(config.server.max_body_size_bytes))
         .layer(axum::middleware::from_fn(track_http_metrics));
     if let Some(cors) = cors {
         api = api.layer(cors);
     }
     let api = api
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-xss-protection"),
+            HeaderValue::from_static("1; mode=block"),
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
         .fallback_service(ServeDir::new(&config.server.static_dir));
@@ -114,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Server starting on {addr}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, api).await?;
+    axum::serve(listener, api.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     Ok(())
 }

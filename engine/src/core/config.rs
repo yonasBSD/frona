@@ -13,6 +13,8 @@ pub struct ServerConfig {
     pub max_concurrent_tasks: usize,
     pub sandbox_disabled: bool,
     pub cors_origins: Option<String>,
+    pub base_url: Option<String>,
+    pub max_body_size_bytes: usize,
 }
 
 impl Default for ServerConfig {
@@ -24,6 +26,8 @@ impl Default for ServerConfig {
             max_concurrent_tasks: 10,
             sandbox_disabled: false,
             cors_origins: None,
+            base_url: None,
+            max_body_size_bytes: 104_857_600,
         }
     }
 }
@@ -422,6 +426,8 @@ mod tests {
         assert!(config.sso.signups_match_email);
         assert!(config.browser.is_none());
         assert!(config.server.cors_origins.is_none());
+        assert!(config.server.base_url.is_none());
+        assert_eq!(config.server.max_body_size_bytes, 104_857_600);
         assert!(config.search.provider.is_none());
         assert!(config.search.searxng_base_url.is_none());
         assert_eq!(config.inference.max_tool_turns, 200);
