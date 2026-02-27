@@ -57,7 +57,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const pendingMessageRef = useRef<string | null>(null);
   const activeChatIdRef = useRef<string | null>(null);
   const activeTaskIdRef = useRef<string | null>(null);
-  const { updateChatTitle, updateAgent, addStandaloneChat, updateTaskInList } = useNavigation();
+  const { updateChatTitle, updateAgent, addStandaloneChat, updateTaskInList, setActiveTab } = useNavigation();
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -66,6 +66,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     activeTaskIdRef.current = taskIdParam;
   }, [taskIdParam]);
+
+  useEffect(() => {
+    if (taskIdParam) {
+      setActiveTab("tasks");
+    }
+  }, [taskIdParam, setActiveTab]);
 
   useEffect(() => {
     if (!taskIdParam) {
