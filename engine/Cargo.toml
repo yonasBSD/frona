@@ -20,7 +20,9 @@ aes-gcm = "0.10"
 sha2 = "0.10"
 openidconnect = "4"
 async-trait = "0.1"
-axum = { version = "0.8", features = ["macros", "http2", "multipart"] }
+axum = { version = "0.8", features = ["macros", "http2", "multipart", "ws"] }
+twilio-async = "0.5"
+xml-rs = "0.8"
 tower-http = { version = "0.6", features = ["cors", "fs", "trace", "set-header"] }
 tower_governor = "0.8"
 surrealdb = { version = "3.0.0", features = ["kv-rocksdb"] }
@@ -52,3 +54,4 @@ landlock = "0.4"
 surrealdb = { version = "3.0.0", features = ["kv-mem"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
