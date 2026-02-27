@@ -55,9 +55,16 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE INDEX IF NOT EXISTS idx_api_token_user ON TABLE api_token COLUMNS user_id;
         DEFINE INDEX IF NOT EXISTS idx_api_token_pair ON TABLE api_token COLUMNS refresh_pair_id;
 
+        DEFINE TABLE IF NOT EXISTS contact SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_contact_user ON TABLE contact COLUMNS user_id;
+        DEFINE INDEX IF NOT EXISTS idx_contact_phone ON TABLE contact COLUMNS user_id, phone;
+
         DEFINE TABLE IF NOT EXISTS oauth_identity SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_oauth_identity_sub ON TABLE oauth_identity COLUMNS external_sub UNIQUE;
         DEFINE INDEX IF NOT EXISTS idx_oauth_identity_user ON TABLE oauth_identity COLUMNS user_id;
+
+        DEFINE TABLE IF NOT EXISTS call SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_call_chat ON TABLE call COLUMNS chat UNIQUE;
 
         DEFINE EVENT IF NOT EXISTS cascade_delete_chat_messages ON TABLE chat
           WHEN $event = 'DELETE'
@@ -90,13 +97,17 @@ pub async fn seed_config_agents(db: &Surreal<Db>, workspaces: &AgentWorkspaceMan
         }
 
         let ws = workspaces.get(&agent_id);
-        let (description, model_group) = ws
+        let (description, model_group, tools) = ws
             .read("AGENT.md")
             .map(|content| {
                 let entry = parse_frontmatter(&content);
                 let desc = entry.metadata.get("description").cloned().unwrap_or_default();
                 let mg = entry.metadata.get("model_group").cloned().unwrap_or_else(|| "primary".to_string());
-                (desc, mg)
+                let tools: Vec<String> = entry.metadata
+                    .get("tools")
+                    .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+                    .unwrap_or_default();
+                (desc, mg, tools)
             })
             .unwrap_or_default();
 
@@ -106,7 +117,7 @@ pub async fn seed_config_agents(db: &Surreal<Db>, workspaces: &AgentWorkspaceMan
                 description = $description,
                 model_group = $model_group,
                 enabled = true,
-                tools = [],
+                tools = $tools,
                 identity = {},
                 created_at = time::now(),
                 updated_at = time::now()"
@@ -114,6 +125,7 @@ pub async fn seed_config_agents(db: &Surreal<Db>, workspaces: &AgentWorkspaceMan
         .bind(("id", agent_id.clone()))
         .bind(("description", description))
         .bind(("model_group", model_group))
+        .bind(("tools", tools))
         .await?;
 
         info!(agent_id = %agent_id, "Seeded config agent into database");

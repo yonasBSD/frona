@@ -12,6 +12,7 @@ pub mod skill;
 pub mod time;
 pub mod update_entity;
 pub mod update_identity;
+pub mod voice;
 pub mod web_fetch;
 pub mod web_search;
 pub mod workspace;
@@ -73,6 +74,7 @@ pub struct ToolOutput {
     images: Vec<ImageData>,
     attachments: Vec<crate::api::files::Attachment>,
     tool_data: Option<crate::chat::message::models::MessageTool>,
+    system_prompt: Option<String>,
 }
 
 impl ToolOutput {
@@ -82,6 +84,7 @@ impl ToolOutput {
             images: Vec::new(),
             attachments: Vec::new(),
             tool_data: None,
+            system_prompt: None,
         }
     }
 
@@ -91,6 +94,7 @@ impl ToolOutput {
             images,
             attachments: Vec::new(),
             tool_data: None,
+            system_prompt: None,
         }
     }
 
@@ -101,6 +105,11 @@ impl ToolOutput {
 
     pub fn with_tool_data(mut self, td: crate::chat::message::models::MessageTool) -> Self {
         self.tool_data = Some(td);
+        self
+    }
+
+    pub fn with_system_prompt(mut self, s: impl Into<String>) -> Self {
+        self.system_prompt = Some(s.into());
         self
     }
 
@@ -118,6 +127,10 @@ impl ToolOutput {
 
     pub fn tool_data(&self) -> Option<&crate::chat::message::models::MessageTool> {
         self.tool_data.as_ref()
+    }
+
+    pub fn system_prompt(&self) -> Option<&str> {
+        self.system_prompt.as_deref()
     }
 }
 

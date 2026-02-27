@@ -258,6 +258,22 @@ impl Default for InferenceConfig {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct VoiceConfig {
+    pub provider: Option<String>,
+    pub twilio_account_sid: Option<String>,
+    pub twilio_auth_token: Option<String>,
+    pub twilio_from_number: Option<String>,
+    pub twilio_voice_id: Option<String>,
+    pub twilio_speech_model: Option<String>,
+    /// Public-facing base URL used for Twilio callback and WebSocket URLs.
+    /// Overrides `server.base_url` for voice only, so cookies remain non-secure
+    /// when accessing the app locally while still allowing Twilio to reach a
+    /// public ngrok/tunnel endpoint.
+    pub callback_base_url: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct Config {
@@ -270,6 +286,7 @@ pub struct Config {
     pub storage: StorageConfig,
     pub scheduler: SchedulerConfig,
     pub inference: InferenceConfig,
+    pub voice: VoiceConfig,
     #[serde(default)]
     pub models: HashMap<String, ModelGroupConfig>,
     #[serde(default)]
@@ -343,6 +360,8 @@ impl Config {
         if let Ok(mut v) = serde_json::to_value(&config) {
             redact(&mut v, &["auth", "encryption_secret"]);
             redact(&mut v, &["sso", "client_secret"]);
+            redact(&mut v, &["voice", "twilio_account_sid"]);
+            redact(&mut v, &["voice", "twilio_auth_token"]);
             if let Some(providers) = v.get_mut("providers").and_then(|p| p.as_object_mut()) {
                 for provider in providers.values_mut() {
                     redact(provider, &["api_key"]);

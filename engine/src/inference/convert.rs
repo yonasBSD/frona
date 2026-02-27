@@ -55,6 +55,14 @@ pub fn to_rig_messages(messages: &[Message], chat_agent_id: &str) -> Vec<RigMess
                 let content = format_content_with_attachments(&msg.content, &msg.attachments);
                 Some(RigMessage::user(&content))
             }
+            MessageRole::Contact => {
+                let content = format_content_with_attachments(&msg.content, &msg.attachments);
+                Some(RigMessage::user(&content))
+            }
+            MessageRole::LiveCall => {
+                let content = format_content_with_attachments(&msg.content, &msg.attachments);
+                Some(RigMessage::user(format!("[LIVE_CALL] {content}")))
+            }
         })
         .collect()
 }
@@ -77,6 +85,8 @@ mod tests {
             tool_call_id: None,
             tool: None,
             attachments: vec![],
+            contact_id: None,
+            system_prompt: None,
             created_at: Utc::now(),
         }
     }
@@ -219,6 +229,15 @@ mod tests {
         let text = extract_user_text(&result[0]);
         assert_eq!(text, "hello world");
         assert!(!text.contains("<files>"));
+    }
+
+    #[test]
+    fn live_call_message_prefixed_with_live_call_tag() {
+        let msg = make_message(MessageRole::LiveCall, "Hi, how can I help you?");
+        let result = to_rig_messages(&[msg], "agent-1");
+        assert_eq!(result.len(), 1);
+        let text = extract_user_text(&result[0]);
+        assert_eq!(text, "[LIVE_CALL] Hi, how can I help you?");
     }
 
     #[test]

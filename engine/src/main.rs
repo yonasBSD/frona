@@ -103,6 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::agents::router())
         .merge(routes::spaces::router())
         .merge(routes::chats::router())
+        .merge(routes::contacts::router())
         .merge(routes::messages::router())
         .merge(routes::tasks::router())
         .merge(routes::credentials::router())
@@ -111,6 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::tools::router())
         .merge(routes::files::router())
         .merge(routes::metrics::router())
+        .merge(routes::voice::router())
         .layer(DefaultBodyLimit::max(config.server.max_body_size_bytes))
         .layer(axum::middleware::from_fn(track_http_metrics));
     if let Some(cors) = cors {

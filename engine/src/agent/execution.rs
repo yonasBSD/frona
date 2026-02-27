@@ -30,7 +30,7 @@ pub async fn run_agent_loop(
         system_prompt, model_group, rig_history, registry,
         tool_registry, tool_ctx, tool_event_tx,
         mut tool_event_rx, ..
-    } = ChatSessionContext::build(state, user_id, chat, tool_event_tx, tool_event_rx).await?;
+    } = ChatSessionContext::build(state, user_id, chat, cancel_token.clone(), tool_event_tx, tool_event_rx).await?;
 
     let metrics_ctx = InferenceMetricsContext {
         user_id: user_id.to_string(),

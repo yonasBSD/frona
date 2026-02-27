@@ -12,6 +12,8 @@ pub enum MessageRole {
     Agent,
     ToolResult,
     TaskCompletion,
+    Contact,
+    LiveCall,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
@@ -59,6 +61,10 @@ pub struct Message {
     pub tool: Option<MessageTool>,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -73,6 +79,8 @@ impl Message {
             tool_call_id: None,
             tool: None,
             attachments: vec![],
+            contact_id: None,
+            system_prompt: None,
         }
     }
 }
@@ -86,6 +94,8 @@ pub struct MessageBuilder {
     tool_call_id: Option<String>,
     tool: Option<MessageTool>,
     attachments: Vec<Attachment>,
+    contact_id: Option<String>,
+    system_prompt: Option<String>,
 }
 
 impl MessageBuilder {
@@ -114,6 +124,16 @@ impl MessageBuilder {
         self
     }
 
+    pub fn contact_id(mut self, id: impl Into<String>) -> Self {
+        self.contact_id = Some(id.into());
+        self
+    }
+
+    pub fn system_prompt(mut self, sp: impl Into<String>) -> Self {
+        self.system_prompt = Some(sp.into());
+        self
+    }
+
     pub fn build(self) -> Message {
         Message {
             id: uuid::Uuid::new_v4().to_string(),
@@ -125,6 +145,8 @@ impl MessageBuilder {
             tool_call_id: self.tool_call_id,
             tool: self.tool,
             attachments: self.attachments,
+            contact_id: self.contact_id,
+            system_prompt: self.system_prompt,
             created_at: chrono::Utc::now(),
         }
     }
@@ -158,6 +180,8 @@ pub struct MessageResponse {
     pub tool: Option<MessageTool>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -173,6 +197,7 @@ impl From<Message> for MessageResponse {
             tool_call_id: msg.tool_call_id,
             tool: msg.tool,
             attachments: msg.attachments,
+            contact_id: msg.contact_id,
             created_at: msg.created_at,
         }
     }

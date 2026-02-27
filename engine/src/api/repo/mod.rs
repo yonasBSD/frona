@@ -1,5 +1,7 @@
 pub mod agents;
+pub mod calls;
 pub mod chats;
+pub mod contacts;
 pub mod credentials;
 pub mod insights;
 pub mod generic;

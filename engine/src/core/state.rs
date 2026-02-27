@@ -15,8 +15,10 @@ use crate::auth::AuthService;
 use crate::auth::jwt::JwtService;
 use crate::auth::oauth::service::OAuthService;
 use crate::auth::token::service::TokenService;
+use crate::call::CallService;
 use crate::chat::broadcast::BroadcastService;
 use crate::chat::service::ChatService;
+use crate::contact::ContactService;
 use crate::credential::keypair::service::KeyPairService;
 use crate::credential::service::CredentialService;
 use crate::inference::ModelProviderRegistry;
@@ -27,6 +29,7 @@ use crate::space::service::SpaceService;
 use crate::agent::task::service::TaskService;
 use crate::tool::browser::session::BrowserSessionManager;
 use crate::tool::cli::{CliToolConfig, load_cli_tool_configs};
+use crate::tool::voice::{VoiceProvider, create_voice_provider};
 use crate::tool::web_search::{SearchProvider, create_search_provider};
 use crate::tool::workspace::WorkspaceManager;
 use surrealdb::Surreal;
@@ -74,7 +77,9 @@ pub struct AppState {
     pub user_repo: SurrealUserRepo,
     pub agent_service: AgentService,
     pub space_service: SpaceService,
+    pub call_service: CallService,
     pub chat_service: ChatService,
+    pub contact_service: ContactService,
     pub task_service: TaskService,
     pub credential_service: CredentialService,
     pub broadcast_service: BroadcastService,
@@ -84,6 +89,7 @@ pub struct AppState {
     pub workspace_manager: Arc<WorkspaceManager>,
     pub cli_tools_config: Arc<Vec<CliToolConfig>>,
     pub search_provider: Option<Arc<dyn SearchProvider>>,
+    pub voice_provider: Option<Arc<dyn VoiceProvider>>,
     pub skill_resolver: SkillResolver,
     pub task_executor: Arc<OnceLock<Arc<TaskExecutor>>>,
     pub max_concurrent_tasks: usize,
@@ -118,6 +124,10 @@ impl AppState {
             config.server.sandbox_disabled,
         ));
         let search_provider = create_search_provider(&config.search);
+        let local_base_url = config.server.base_url.clone()
+            .unwrap_or_else(|| format!("http://localhost:{}", config.server.port));
+        let voice_base_url = config.voice.callback_base_url.clone()
+            .unwrap_or_else(|| local_base_url.clone());
 
         let provider_registry_arc = Arc::new(provider_registry.clone());
         let prompt_loader = PromptLoader::new(PathBuf::from(&config.storage.shared_config_dir).join("prompts"));
@@ -144,6 +154,11 @@ impl AppState {
             &config.auth.encryption_secret,
             Arc::new(keypair_repo),
         );
+        let voice_provider = create_voice_provider(&config.voice, &voice_base_url, keypair_service.clone());
+        match &voice_provider {
+            Some(p) => tracing::info!(provider = %p.name(), callback_base_url = %voice_base_url, "Voice calling enabled"),
+            None => tracing::info!("Voice calling disabled (no provider configured)"),
+        }
         let jwt_service = JwtService::new();
         let token_repo: SurrealRepo<crate::auth::token::models::ApiToken> =
             SurrealRepo::new(db.clone());
@@ -168,6 +183,8 @@ impl AppState {
             user_repo: SurrealRepo::new(db.clone()),
             agent_service: AgentService::new(SurrealRepo::new(db.clone())),
             space_service: SpaceService::new(SurrealRepo::new(db.clone())),
+            call_service: CallService::new(SurrealRepo::new(db.clone())),
+            contact_service: ContactService::new(SurrealRepo::new(db.clone())),
             chat_service: ChatService::new(
                 chat_repo,
                 message_repo,
@@ -186,6 +203,7 @@ impl AppState {
             workspace_manager,
             cli_tools_config,
             search_provider,
+            voice_provider,
             skill_resolver,
             task_executor: Arc::new(OnceLock::new()),
             max_concurrent_tasks: config.server.max_concurrent_tasks,

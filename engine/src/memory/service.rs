@@ -132,6 +132,8 @@ impl MemoryService {
                 crate::chat::message::models::MessageRole::Agent => "Agent",
                 crate::chat::message::models::MessageRole::ToolResult => "Tool",
                 crate::chat::message::models::MessageRole::TaskCompletion => "System",
+                crate::chat::message::models::MessageRole::Contact => "Contact",
+                crate::chat::message::models::MessageRole::LiveCall => "Caller",
             };
             compaction_input.push_str(&format!("{role_str}: {}\n", msg.content));
         }

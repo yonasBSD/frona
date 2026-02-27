@@ -256,6 +256,38 @@ impl ChatService {
         self.save_message(msg).await
     }
 
+    pub async fn create_contact_message(
+        &self,
+        user_id: &str,
+        chat_id: &str,
+        content: &str,
+        contact_id: Option<&str>,
+    ) -> Result<MessageResponse, AppError> {
+        self.get_chat(user_id, chat_id).await?;
+
+        let mut builder = Message::builder(chat_id, MessageRole::Contact, content.to_string());
+        if let Some(cid) = contact_id {
+            builder = builder.contact_id(cid);
+        }
+        self.save_message(builder.build()).await
+    }
+
+    pub async fn save_live_call_message(
+        &self,
+        user_id: &str,
+        chat_id: &str,
+        content: &str,
+        contact_id: Option<&str>,
+    ) -> Result<MessageResponse, AppError> {
+        self.get_chat(user_id, chat_id).await?;
+
+        let mut builder = Message::builder(chat_id, MessageRole::LiveCall, content.to_string());
+        if let Some(cid) = contact_id {
+            builder = builder.contact_id(cid);
+        }
+        self.save_message(builder.build()).await
+    }
+
     async fn save_message(&self, message: Message) -> Result<MessageResponse, AppError> {
         let saved = self.message_repo.create(&message).await?;
         Ok(saved.into())
@@ -306,11 +338,15 @@ impl ChatService {
         tool_call_id: &str,
         content: String,
         tool: Option<MessageTool>,
+        system_prompt: Option<String>,
     ) -> Result<MessageResponse, AppError> {
         let mut builder = Message::builder(chat_id, MessageRole::ToolResult, content)
             .tool_call_id(tool_call_id.to_string());
         if let Some(t) = tool {
             builder = builder.tool(t);
+        }
+        if let Some(sp) = system_prompt {
+            builder = builder.system_prompt(sp);
         }
         self.save_message(builder.build()).await
     }
@@ -387,6 +423,7 @@ impl ChatService {
                     &tr.tool_call_id,
                     tr.result.clone(),
                     tr.tool_data.clone(),
+                    None,
                 )
                 .await;
         }
@@ -396,6 +433,7 @@ impl ChatService {
             &external_tool.tool_call_id,
             external_tool.result,
             external_tool.tool_data,
+            external_tool.system_prompt,
         )
         .await
     }
@@ -430,14 +468,22 @@ impl ChatService {
             });
         }
 
-        let raw_prompt = ws.read("AGENT.md")
-            .map(|c| parse_frontmatter(&c).template)
+        let raw_content = ws.read("AGENT.md")
             .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?;
+        let parsed = parse_frontmatter(&raw_content);
+
+        let model_group = parsed.metadata.get("model_group")
+            .cloned()
+            .unwrap_or_else(|| "primary".to_string());
+
+        let tools = parsed.metadata.get("tools")
+            .map(|t| t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .unwrap_or_else(|| crate::tool::configurable_tools().to_vec());
 
         Ok(AgentConfig {
-            system_prompt: raw_prompt,
-            model_group: "primary".to_string(),
-            tools: crate::tool::configurable_tools().to_vec(),
+            system_prompt: parsed.template,
+            model_group,
+            tools,
             sandbox_config: None,
             identity: std::collections::BTreeMap::new(),
         })

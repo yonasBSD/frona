@@ -256,6 +256,27 @@ pub async fn build_tool_registry(
         )));
     }
 
+    if allowed_tools.iter().any(|t| t == "make_voice_call") {
+        registry.register(Arc::new(crate::tool::voice::VoiceCallTool {
+            provider: state.voice_provider.clone(),
+            prompts: prompts.clone(),
+            contact_service: state.contact_service.clone(),
+            call_service: state.call_service.clone(),
+        }));
+    }
+
+    if allowed_tools.iter().any(|t| t == "send_dtmf") {
+        registry.register(Arc::new(crate::tool::voice::SendDtmfTool {
+            prompts: prompts.clone(),
+        }));
+    }
+
+    if allowed_tools.iter().any(|t| t == "hangup_call") {
+        registry.register(Arc::new(crate::tool::voice::HangupCallTool {
+            prompts: prompts.clone(),
+        }));
+    }
+
     let skill_dirs: Vec<(String, String)> = state
         .skill_resolver
         .list(agent_id)
@@ -369,8 +390,9 @@ async fn stream_message(
     });
 
     let (tool_event_tx, tool_event_rx) = tokio::sync::mpsc::channel::<ToolLoopEvent>(32);
+    let cancel_token = state.active_sessions.register(&chat_id).await;
     let mut ctx = crate::chat::session::ChatSessionContext::build(
-        &state, &auth.user_id, chat, tool_event_tx, tool_event_rx,
+        &state, &auth.user_id, chat, cancel_token, tool_event_tx, tool_event_rx,
     )
     .await
     .map_err(ApiError::from)?;
@@ -781,6 +803,7 @@ async fn stream_tool_loop_events(
                     tool_calls_json,
                     tool_results,
                     external_tool,
+                    system_prompt: _,
                 } => {
                     if let Ok(tool_msg) = chat_service
                         .save_external_tool_pending(
@@ -816,12 +839,13 @@ pub async fn resume_tool_loop(
 
     let agent_id = chat.agent_id.clone();
     let (tool_event_tx, tool_event_rx) = tokio::sync::mpsc::channel::<ToolLoopEvent>(32);
+    let cancel_token = state.active_sessions.register(chat_id).await;
     let crate::chat::session::ChatSessionContext {
         system_prompt, model_group, rig_history, registry,
         tool_registry, tool_ctx, cancel_token, tool_event_tx,
         mut tool_event_rx, ..
     } = crate::chat::session::ChatSessionContext::build(
-        state, user_id, chat, tool_event_tx, tool_event_rx,
+        state, user_id, chat, cancel_token, tool_event_tx, tool_event_rx,
     ).await?;
 
     let metrics_ctx = InferenceMetricsContext {
@@ -875,6 +899,7 @@ pub async fn resume_tool_loop(
                     tool_calls_json,
                     tool_results,
                     external_tool,
+                    system_prompt: _,
                 } => {
                     let text = if accumulated.is_empty() { accumulated_text } else { accumulated };
                     if let Ok(tool_msg) = state.chat_service

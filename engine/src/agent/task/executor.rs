@@ -185,6 +185,7 @@ impl TaskExecutor {
                     tool_calls_json,
                     tool_results,
                     external_tool,
+                    system_prompt: _,
                 } => {
                     let _ = self
                         .app_state

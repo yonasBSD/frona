@@ -1,6 +1,6 @@
 use rig::completion::Message as RigMessage;
 use tokio::sync::mpsc::Sender;
-use tokio_util::sync::CancellationToken;
+pub use tokio_util::sync::CancellationToken;
 
 use crate::chat::models::Chat;
 use crate::chat::service::AgentConfig;
@@ -33,6 +33,7 @@ impl ChatSessionContext {
         state: &AppState,
         user_id: &str,
         chat: Chat,
+        cancel_token: CancellationToken,
         tool_event_tx: Sender<ToolLoopEvent>,
         tool_event_rx: tokio::sync::mpsc::Receiver<ToolLoopEvent>,
     ) -> Result<Self, AppError> {
@@ -58,7 +59,7 @@ impl ChatSessionContext {
             )
             .await;
 
-        let system_prompt = match state
+        let mut system_prompt = match state
             .memory_service
             .build_augmented_system_prompt(
                 &agent_config.system_prompt,
@@ -84,6 +85,16 @@ impl ChatSessionContext {
             .resolve_model_group(&agent_config.model_group)?;
 
         let stored_messages = state.chat_service.get_stored_messages(&chat.id).await;
+
+        // Append any per-turn context injected by tools (e.g. active_call block),
+        // in the order they appear in the conversation.
+        for msg in &stored_messages {
+            if let Some(sp) = &msg.system_prompt {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(sp);
+            }
+        }
+
         let rig_history = to_rig_messages(&stored_messages, &chat.agent_id);
 
         let registry = state.chat_service.provider_registry().clone();
@@ -115,8 +126,6 @@ impl ChatSessionContext {
             chat: chat.clone(),
             event_tx: tool_event_tx.clone(),
         };
-
-        let cancel_token = state.active_sessions.register(&chat.id).await;
 
         Ok(Self {
             chat,

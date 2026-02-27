@@ -132,6 +132,10 @@ impl TaskService {
         self.repo.find_by_id(task_id).await
     }
 
+    pub async fn find_by_chat_id(&self, chat_id: &str) -> Result<Option<Task>, AppError> {
+        self.repo.find_by_chat_id(chat_id).await
+    }
+
     pub async fn find_by_source_chat_id(&self, source_chat_id: &str) -> Result<Vec<Task>, AppError> {
         self.repo.find_by_source_chat_id(source_chat_id).await
     }

@@ -51,6 +51,7 @@ pub struct ToolCallResult {
     pub tool_name: String,
     pub result: String,
     pub tool_data: Option<MessageTool>,
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Debug)]
@@ -65,6 +66,7 @@ pub enum ToolLoopOutcome {
         tool_calls_json: serde_json::Value,
         tool_results: Vec<ToolCallResult>,
         external_tool: Box<ToolCallResult>,
+        system_prompt: Option<String>,
     },
 }
 
@@ -307,6 +309,7 @@ struct ToolExecutionResult {
     has_external: bool,
     external_tool_result: Option<ToolCallResult>,
     internal_tool_results: Vec<ToolCallResult>,
+    accumulated_system_prompts: Vec<String>,
 }
 
 async fn execute_tool_calls(
@@ -322,6 +325,7 @@ async fn execute_tool_calls(
         has_external: false,
         external_tool_result: None,
         internal_tool_results: Vec::new(),
+        accumulated_system_prompts: Vec::new(),
     };
 
     for content in contents {
@@ -378,6 +382,7 @@ async fn execute_tool_calls(
             .await;
 
         let td = tool_output.as_ref().and_then(|o| o.tool_data().cloned());
+        let sp = tool_output.as_ref().and_then(|o| o.system_prompt().map(str::to_string));
 
         if let Some(ref output) = tool_output {
             for attachment in output.attachments() {
@@ -390,12 +395,16 @@ async fn execute_tool_calls(
             tool_name: tool_name.clone(),
             result: text.clone(),
             tool_data: td,
+            system_prompt: sp.clone(),
         };
 
         if is_external {
             result.has_external = true;
             result.external_tool_result = Some(tool_call_result);
         } else {
+            if let Some(sp_value) = sp {
+                result.accumulated_system_prompts.push(sp_value);
+            }
             result.internal_tool_results.push(tool_call_result);
             if let Some(output) = tool_output {
                 let msg = build_tool_result_message(tool_call.id.clone(), text, &output);
@@ -448,6 +457,7 @@ pub async fn run_tool_loop(
 
     let mut accumulated_text = String::new();
     let mut all_attachments: Vec<crate::api::files::Attachment> = Vec::new();
+    let mut current_system_prompt = system_prompt.to_string();
 
     let max_tool_turns = model_group.inference.max_tool_turns;
     for turn in 0..max_tool_turns {
@@ -460,7 +470,7 @@ pub async fn run_tool_loop(
         let max_output = model_group.max_tokens.unwrap_or(model_group.inference.default_max_tokens) as usize;
         chat_history = crate::inference::context::truncate_history(
             chat_history,
-            system_prompt,
+            &current_system_prompt,
             &model_group.main.model_id,
             model_group.context_window,
             max_output,
@@ -470,7 +480,7 @@ pub async fn run_tool_loop(
         let contents = match stream_with_rate_limit_retry(
             provider,
             model_group,
-            system_prompt,
+            &current_system_prompt,
             &chat_history,
             &rig_tools,
             &event_tx,
@@ -520,12 +530,19 @@ pub async fn run_tool_loop(
 
         if exec_result.has_external {
             let external_tool = exec_result.external_tool_result.unwrap();
+            let system_prompt_injection = external_tool.system_prompt.clone();
             return Ok(ToolLoopOutcome::ExternalToolPending {
                 accumulated_text,
                 tool_calls_json: build_tool_calls_json(&contents),
                 tool_results: exec_result.internal_tool_results,
                 external_tool: Box::new(external_tool),
+                system_prompt: system_prompt_injection,
             });
+        }
+
+        for sp in exec_result.accumulated_system_prompts {
+            current_system_prompt.push_str("\n\n");
+            current_system_prompt.push_str(&sp);
         }
 
         if turn == max_tool_turns - 1 {
