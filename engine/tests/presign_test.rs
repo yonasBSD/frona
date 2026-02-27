@@ -43,6 +43,7 @@ fn make_message_response(attachments: Vec<Attachment>) -> MessageResponse {
         tool_call_id: None,
         tool: None,
         attachments,
+        contact_id: None,
         created_at: Utc::now(),
     }
 }

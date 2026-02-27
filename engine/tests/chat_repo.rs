@@ -61,6 +61,8 @@ fn test_message(chat_id: &str, content: &str) -> Message {
         tool_call_id: None,
         tool: None,
         attachments: vec![],
+        contact_id: None,
+        system_prompt: None,
         created_at: Utc::now(),
     }
 }
