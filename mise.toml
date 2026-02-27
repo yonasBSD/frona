@@ -78,3 +78,11 @@ run = "docker compose --profile dev up --build"
 [tasks."docker:dev:down"]
 description = "Stop dev Docker stack"
 run = "docker compose --profile dev down"
+
+[tasks.clean]
+description = "Remove build artifacts and generated files"
+run = """
+cargo clean
+rm -rf frontend/.next frontend/node_modules frontend/out
+rm -rf data/db
+"""
