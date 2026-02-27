@@ -52,8 +52,27 @@ services:
       - FRONA_SERVER_PORT=3001
       - CARGO_BUILD_JOBS=4
       - WATCHPACK_POLLING=true
+      - FRONA_VOICE_CALLBACK_BASE_URL
+      - FRONA_VOICE_TWILIO_ACCOUNT_SID
+      - FRONA_VOICE_TWILIO_AUTH_TOKEN
+      - FRONA_VOICE_TWILIO_FROM_NUMBER
+      - FRONA_VOICE_TWILIO_VOICE_ID
+      - FRONA_VOICE_TWILIO_SPEECH_MODEL
     depends_on: [browserless, searxng]
     restart: unless-stopped
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    command:
+      - http
+      - frona-dev:3001
+      - "--log=stdout"
+      # - "--log-level=debug"
+    environment:
+      - NGROK_AUTHTOKEN
+    ports:
+      - "4040:4040"
 
 volumes:
   cargo-cache:
