@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::core::error::AppError;
-use crate::tool::{AgentTool, ImageData, ToolContext, ToolDefinition, ToolOutput};
+use crate::tool::{AgentTool, ImageData, InferenceContext, ToolDefinition, ToolOutput};
 
 use super::session::BrowserSessionManager;
 
@@ -365,7 +365,7 @@ impl AgentTool for BrowserTool {
         ]
     }
 
-    async fn execute(&self, tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let browser_tool_name = match tool_name {
             "browser_navigate" => "navigate",
             "browser_go_back" => "go_back",

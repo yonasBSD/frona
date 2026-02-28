@@ -10,7 +10,7 @@ use crate::agent::task::service::TaskService;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
-use super::{ToolContext, ToolOutput};
+use super::{InferenceContext, ToolOutput};
 
 pub fn parse_cron(expression: &str) -> Result<cron::Schedule, AppError> {
     let seven_field = format!("0 {} *", expression);
@@ -193,7 +193,7 @@ impl ScheduleTaskTool {
 
 #[agent_tool(name = "schedule")]
 impl ScheduleTaskTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let action = arguments
             .get("action")
             .and_then(|v| v.as_str())

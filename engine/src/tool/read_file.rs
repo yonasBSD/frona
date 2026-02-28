@@ -10,7 +10,7 @@ use crate::api::files::{
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
-use super::{ImageData, ToolContext, ToolOutput};
+use super::{ImageData, InferenceContext, ToolOutput};
 
 pub struct ReadFileTool {
     config: Config,
@@ -25,7 +25,7 @@ impl ReadFileTool {
 
 #[agent_tool]
 impl ReadFileTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let path = arguments
             .get("path")
             .and_then(|v| v.as_str())

@@ -11,16 +11,20 @@ use super::config::ModelGroup;
 use super::registry::ModelProviderRegistry;
 use super::tool_loop::{InferenceEvent, ToolCallResult};
 
-pub struct InferenceRequest<'a> {
-    pub registry: &'a ModelProviderRegistry,
-    pub model_group: &'a ModelGroup,
-    pub system_prompt: &'a str,
-    pub history: Vec<RigMessage>,
-    pub tool_registry: &'a AgentToolRegistry,
-    pub user: &'a User,
-    pub agent: &'a Agent,
-    pub chat: &'a Chat,
+pub struct InferenceContext {
+    pub user: User,
+    pub agent: Agent,
+    pub chat: Chat,
     pub event_tx: mpsc::Sender<InferenceEvent>,
+}
+
+pub struct InferenceRequest {
+    pub registry: ModelProviderRegistry,
+    pub model_group: ModelGroup,
+    pub system_prompt: String,
+    pub history: Vec<RigMessage>,
+    pub tool_registry: AgentToolRegistry,
+    pub ctx: InferenceContext,
     pub cancel_token: CancellationToken,
 }
 

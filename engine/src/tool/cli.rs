@@ -9,7 +9,7 @@ use crate::agent::prompt::PromptLoader;
 use crate::core::error::AppError;
 
 use super::workspace::WorkspaceManager;
-use super::{AgentTool, ToolContext, ToolDefinition, ToolOutput, parse_frontmatter};
+use super::{AgentTool, InferenceContext, ToolDefinition, ToolOutput, parse_frontmatter};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliToolConfig {
@@ -96,7 +96,7 @@ impl AgentTool for CliTool {
         }]
     }
 
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let args_map = arguments
             .as_object()
             .ok_or_else(|| AppError::Tool("Arguments must be a JSON object".to_string()))?;
@@ -299,9 +299,9 @@ mod tests {
         assert_eq!(defs[0].name, "shell");
     }
 
-    fn mock_context() -> ToolContext {
+    fn mock_context() -> InferenceContext {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        ToolContext {
+        InferenceContext {
             user: crate::core::models::user::User {
                 id: "test-user".into(),
                 username: "testuser".into(),

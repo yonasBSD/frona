@@ -11,7 +11,7 @@ pub mod tool_loop;
 pub use error::InferenceError;
 pub use provider::ModelRef;
 pub use registry::ModelProviderRegistry;
-pub use request::{InferenceRequest, InferenceResponse};
+pub use request::{InferenceRequest, InferenceResponse, InferenceContext};
 pub use rig::completion::request::Usage;
 pub use tool_loop::{InferenceEvent, InferenceEventKind};
 
@@ -19,14 +19,13 @@ use rig::completion::Message as RigMessage;
 
 use crate::core::error::AppError;
 use crate::core::metrics::InferenceMetricsContext;
-use crate::tool::ToolContext;
 
 use self::config::ModelGroup;
 
-pub async fn inference(request: InferenceRequest<'_>) -> Result<InferenceResponse, AppError> {
+pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, AppError> {
     let metrics_ctx = InferenceMetricsContext {
-        user_id: request.user.id.clone(),
-        agent_id: request.agent.id.clone(),
+        user_id: request.ctx.user.id.clone(),
+        agent_id: request.ctx.agent.id.clone(),
         model_group: request.model_group.name.clone(),
     };
 
@@ -38,7 +37,7 @@ pub async fn inference(request: InferenceRequest<'_>) -> Result<InferenceRespons
             as usize;
         let history = context::truncate_history(
             request.history,
-            request.system_prompt,
+            &request.system_prompt,
             &request.model_group.main.model_id,
             request.model_group.context_window,
             max_output,
@@ -46,13 +45,14 @@ pub async fn inference(request: InferenceRequest<'_>) -> Result<InferenceRespons
         );
 
         let mut accumulated_text = String::new();
+        let event_tx = request.ctx.event_tx;
         match retry::stream_with_retry_and_fallback(
-            request.registry,
-            request.model_group,
-            request.system_prompt,
+            &request.registry,
+            &request.model_group,
+            &request.system_prompt,
             &history,
             &[],
-            &request.event_tx,
+            &event_tx,
             &request.cancel_token,
             &mut accumulated_text,
             &metrics_ctx,
@@ -60,8 +60,7 @@ pub async fn inference(request: InferenceRequest<'_>) -> Result<InferenceRespons
         .await?
         {
             retry::StreamResult::Contents(_) => {
-                let _ = request
-                    .event_tx
+                let _ = event_tx
                     .send(InferenceEvent {
                         kind: InferenceEventKind::Done(accumulated_text.clone()),
                     })
@@ -72,8 +71,7 @@ pub async fn inference(request: InferenceRequest<'_>) -> Result<InferenceRespons
                 })
             }
             retry::StreamResult::Cancelled => {
-                let _ = request
-                    .event_tx
+                let _ = event_tx
                     .send(InferenceEvent {
                         kind: InferenceEventKind::Cancelled(accumulated_text.clone()),
                     })
@@ -82,22 +80,16 @@ pub async fn inference(request: InferenceRequest<'_>) -> Result<InferenceRespons
             }
         }
     } else {
-        let tool_ctx = ToolContext {
-            user: request.user.clone(),
-            agent: request.agent.clone(),
-            chat: request.chat.clone(),
-            event_tx: request.event_tx.clone(),
-        };
-
+        let event_tx = request.ctx.event_tx.clone();
         let outcome = tool_loop::run_tool_loop(
-            request.registry,
-            request.model_group,
-            request.system_prompt,
+            &request.registry,
+            &request.model_group,
+            &request.system_prompt,
             request.history,
-            request.tool_registry,
-            request.event_tx,
+            &request.tool_registry,
+            event_tx,
             request.cancel_token,
-            &tool_ctx,
+            &request.ctx,
             &metrics_ctx,
         )
         .await?;

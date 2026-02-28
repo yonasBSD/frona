@@ -35,7 +35,6 @@ use crate::tool::schedule::ScheduleTaskTool;
 use crate::tool::time::TimeTool;
 use crate::tool::update_entity::UpdateEntityTool;
 use crate::tool::update_identity::UpdateIdentityTool;
-use crate::tool::ToolContext;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
@@ -388,10 +387,9 @@ async fn stream_message(
         _ => None,
     });
 
-    let (tool_event_tx, tool_event_rx) = tokio::sync::mpsc::channel::<InferenceEvent>(32);
     let cancel_token = state.active_sessions.register(&chat_id).await;
     let mut ctx = crate::chat::session::ChatSessionContext::build(
-        &state, &auth.user_id, chat, cancel_token, tool_event_tx, tool_event_rx,
+        &state, &auth.user_id, chat, cancel_token,
     )
     .await
     .map_err(ApiError::from)?;
@@ -440,7 +438,7 @@ async fn stream_message(
 
     let crate::chat::session::ChatSessionContext {
         system_prompt, model_group, rig_history, registry, tool_registry,
-        tool_ctx, cancel_token, tool_event_tx, mut tool_event_rx, ..
+        tool_ctx, cancel_token, mut tool_event_rx, ..
     } = ctx;
     let presign_issuer = state.config.server.issuer_url.clone();
     let presign_expiry = state.config.auth.presign_expiry_secs;
@@ -493,10 +491,13 @@ async fn stream_message(
             let stored_messages = chat_service.get_stored_messages(&chat_id).await;
             let rig_history = to_rig_messages(&stored_messages, &agent_id);
 
-            let handle = spawn_inference(
-                registry, model_group, system_prompt,
-                rig_history, tool_registry, tool_ctx, tool_event_tx, cancel_token,
-            );
+            let handle = tokio::spawn(async move {
+                crate::inference::inference(InferenceRequest {
+                    registry, model_group, system_prompt,
+                    history: rig_history, tool_registry,
+                    ctx: tool_ctx, cancel_token,
+                }).await
+            });
 
             stream_inference_events(&tx, &mut tool_event_rx, handle, &chat_service, &chat_id).await;
             active_sessions.remove(&chat_id_clone).await;
@@ -558,10 +559,13 @@ async fn stream_message(
             let mut full_history = rig_history;
             full_history.push(user_rig_msg);
 
-            let handle = spawn_inference(
-                registry, model_group, system_prompt,
-                full_history, tool_registry, tool_ctx, tool_event_tx, cancel_token,
-            );
+            let handle = tokio::spawn(async move {
+                crate::inference::inference(InferenceRequest {
+                    registry, model_group, system_prompt,
+                    history: full_history, tool_registry,
+                    ctx: tool_ctx, cancel_token,
+                }).await
+            });
 
             stream_inference_events(&tx, &mut tool_event_rx, handle, &chat_service, &chat_id).await;
             active_sessions.remove(&chat_id_clone).await;
@@ -570,34 +574,6 @@ async fn stream_message(
 
     let stream = ReceiverStream::new(rx);
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn spawn_inference(
-    registry: crate::inference::ModelProviderRegistry,
-    model_group: crate::inference::config::ModelGroup,
-    system_prompt: String,
-    history: Vec<RigMessage>,
-    tool_registry: AgentToolRegistry,
-    tool_ctx: ToolContext,
-    event_tx: tokio::sync::mpsc::Sender<InferenceEvent>,
-    cancel_token: tokio_util::sync::CancellationToken,
-) -> tokio::task::JoinHandle<Result<InferenceResponse, crate::core::error::AppError>> {
-    tokio::spawn(async move {
-        crate::inference::inference(InferenceRequest {
-            registry: &registry,
-            model_group: &model_group,
-            system_prompt: &system_prompt,
-            history,
-            tool_registry: &tool_registry,
-            user: &tool_ctx.user,
-            agent: &tool_ctx.agent,
-            chat: &tool_ctx.chat,
-            event_tx,
-            cancel_token,
-        })
-        .await
-    })
 }
 
 async fn stream_inference_events(
@@ -745,22 +721,24 @@ pub async fn resume_tool_loop(
     let chat = state.chat_service.find_chat(chat_id).await?
         .ok_or_else(|| crate::core::error::AppError::NotFound("Chat not found".into()))?;
 
-    let (tool_event_tx, tool_event_rx) = tokio::sync::mpsc::channel::<InferenceEvent>(32);
     let cancel_token = state.active_sessions.register(chat_id).await;
     let crate::chat::session::ChatSessionContext {
         system_prompt, model_group, rig_history, registry,
-        tool_registry, tool_ctx, cancel_token, tool_event_tx,
+        tool_registry, tool_ctx, cancel_token,
         mut tool_event_rx, ..
     } = crate::chat::session::ChatSessionContext::build(
-        state, user_id, chat, cancel_token, tool_event_tx, tool_event_rx,
+        state, user_id, chat, cancel_token,
     ).await?;
 
     let chat_id_owned = chat_id.to_string();
     let user_id_owned = user_id.to_string();
-    let handle = spawn_inference(
-        registry, model_group, system_prompt,
-        rig_history, tool_registry, tool_ctx, tool_event_tx, cancel_token,
-    );
+    let handle = tokio::spawn(async move {
+        crate::inference::inference(InferenceRequest {
+            registry, model_group, system_prompt,
+            history: rig_history, tool_registry,
+            ctx: tool_ctx, cancel_token,
+        }).await
+    });
 
     let mut accumulated = String::new();
     while let Some(event) = tool_event_rx.recv().await {

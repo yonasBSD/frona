@@ -5,7 +5,7 @@ use crate::agent::prompt::PromptLoader;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
-use super::{ToolContext, ToolOutput};
+use super::{InferenceContext, ToolOutput};
 
 pub struct TimeTool {
     prompts: PromptLoader,
@@ -19,7 +19,7 @@ impl TimeTool {
 
 #[agent_tool(files("get_time"))]
 impl TimeTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let mut dt = Utc::now();
 
         if let Some(minutes) = arguments.get("add_minutes").and_then(|v| v.as_i64()) {
@@ -61,11 +61,11 @@ impl TimeTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::{AgentTool, ToolContext};
+    use crate::tool::{AgentTool, InferenceContext};
 
-    fn mock_context() -> ToolContext {
+    fn mock_context() -> InferenceContext {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        ToolContext {
+        InferenceContext {
             user: crate::core::models::user::User {
                 id: "u".into(), username: "u".into(), email: "e".into(), name: "n".into(),
                 password_hash: String::new(),

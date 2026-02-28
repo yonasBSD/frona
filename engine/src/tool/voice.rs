@@ -14,7 +14,7 @@ use crate::contact::ContactService;
 use crate::core::config::VoiceConfig;
 use crate::core::error::AppError;
 use crate::credential::keypair::service::KeyPairService;
-use crate::tool::{AgentTool, ToolContext, ToolDefinition, ToolOutput, ToolType, load_tool_definition};
+use crate::tool::{AgentTool, InferenceContext, ToolDefinition, ToolOutput, ToolType, load_tool_definition};
 
 /// Short-lived JWT embedded in the Twilio callback URL.
 /// Owner "voice", signed by the provider.
@@ -186,7 +186,7 @@ impl AgentTool for VoiceCallTool {
             .unwrap_or_default()
     }
 
-    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let phone_number = arguments
             .get("phone_number")
             .and_then(|v| v.as_str())
@@ -265,7 +265,7 @@ impl AgentTool for SendDtmfTool {
             .unwrap_or_default()
     }
 
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let digits = arguments
             .get("digits")
             .and_then(|v| v.as_str())
@@ -299,7 +299,7 @@ impl AgentTool for HangupCallTool {
             .unwrap_or_default()
     }
 
-    async fn execute(&self, _tool_name: &str, _arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, _arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         Ok(ToolOutput::text("hangup"))
     }
 }

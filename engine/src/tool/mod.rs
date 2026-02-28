@@ -22,13 +22,10 @@ use std::sync::OnceLock;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::mpsc;
 
-use crate::agent::models::Agent;
-use crate::chat::models::Chat;
 use crate::core::error::AppError;
-use crate::inference::tool_loop::InferenceEvent;
-use crate::core::models::user::User;
+
+pub use crate::inference::request::InferenceContext;
 
 use crate::agent::prompt::PromptLoader;
 use self::cli::CliToolConfig;
@@ -134,13 +131,6 @@ impl ToolOutput {
     }
 }
 
-pub struct ToolContext {
-    pub user: User,
-    pub agent: Agent,
-    pub chat: Chat,
-    pub event_tx: mpsc::Sender<InferenceEvent>,
-}
-
 #[async_trait]
 pub trait AgentTool: Send + Sync {
     fn name(&self) -> &str;
@@ -148,7 +138,7 @@ pub trait AgentTool: Send + Sync {
     fn tool_type(&self, _tool_name: &str) -> ToolType {
         ToolType::Internal
     }
-    async fn execute(&self, tool_name: &str, arguments: Value, ctx: &ToolContext) -> Result<ToolOutput, AppError>;
+    async fn execute(&self, tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError>;
     async fn cleanup(&self) -> Result<(), AppError> {
         Ok(())
     }

@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::core::error::AppError;
 
-use super::{AgentTool, ToolContext, ToolDefinition, ToolOutput, ToolType};
+use super::{AgentTool, InferenceContext, ToolDefinition, ToolOutput, ToolType};
 
 pub struct AgentToolRegistry {
     tools: HashMap<String, Arc<dyn AgentTool>>,
@@ -53,7 +53,7 @@ impl AgentToolRegistry {
         self.tools.insert(owner_name, tool);
     }
 
-    pub async fn execute(&self, tool_name: &str, arguments: Value, ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    pub async fn execute(&self, tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let owner = self
             .tool_name_to_owner
             .get(tool_name)
@@ -110,14 +110,14 @@ mod tests {
             }]
         }
 
-        async fn execute(&self, tool_name: &str, _arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+        async fn execute(&self, tool_name: &str, _arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
             Ok(ToolOutput::text(format!("executed {tool_name}")))
         }
     }
 
-    fn mock_context() -> ToolContext {
+    fn mock_context() -> InferenceContext {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        ToolContext {
+        InferenceContext {
             user: crate::core::models::user::User {
                 id: "test-user".into(),
                 username: "testuser".into(),

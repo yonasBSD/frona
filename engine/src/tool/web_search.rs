@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
 use crate::core::error::AppError;
-use crate::tool::{ToolContext, ToolOutput};
+use crate::tool::{InferenceContext, ToolOutput};
 use frona_derive::agent_tool;
 
 #[derive(Debug, Clone)]
@@ -263,7 +263,7 @@ fn format_results(results: &[SearchResult]) -> String {
 
 #[agent_tool]
 impl WebSearchTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let provider = self.provider.as_ref().ok_or_else(|| {
             AppError::Tool(
                 "No search provider configured. Set one of the following environment variables:\n\
@@ -371,9 +371,9 @@ mod tests {
         ]
     }
 
-    fn mock_context() -> ToolContext {
+    fn mock_context() -> InferenceContext {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        ToolContext {
+        InferenceContext {
             user: crate::core::models::user::User {
                 id: "u".into(), username: "u".into(), email: "e".into(), name: "n".into(),
                 password_hash: String::new(),

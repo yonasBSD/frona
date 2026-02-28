@@ -6,7 +6,7 @@ use crate::inference::config::ModelGroup;
 use crate::memory::service::MemoryService;
 use frona_derive::agent_tool;
 
-use super::{ToolContext, ToolOutput};
+use super::{InferenceContext, ToolOutput};
 
 pub struct RememberTool {
     memory_service: MemoryService,
@@ -36,7 +36,7 @@ impl RememberTool {
 
 #[agent_tool(name = "remember_agent_fact")]
 impl RememberTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let fact = arguments
             .get("fact")
             .and_then(|v| v.as_str())
@@ -111,7 +111,7 @@ impl RememberUserFactTool {
 
 #[agent_tool]
 impl RememberUserFactTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let fact = arguments
             .get("fact")
             .and_then(|v| v.as_str())

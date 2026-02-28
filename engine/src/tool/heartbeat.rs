@@ -7,7 +7,7 @@ use crate::agent::workspace::AgentWorkspaceManager;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
-use super::{ToolContext, ToolOutput};
+use super::{InferenceContext, ToolOutput};
 
 pub struct HeartbeatTool {
     agent_service: AgentService,
@@ -34,7 +34,7 @@ impl HeartbeatTool {
 
 #[agent_tool(files("set_heartbeat"))]
 impl HeartbeatTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let interval_minutes = arguments
             .get("interval_minutes")
             .and_then(|v| v.as_u64())

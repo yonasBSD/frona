@@ -8,7 +8,7 @@ use frona::inference::error::InferenceError;
 use frona::inference::provider::{ModelProvider, ModelRef};
 use frona::inference::registry::ModelProviderRegistry;
 use frona::inference::Usage;
-use frona::tool::{AgentTool, ToolContext, ToolDefinition, ToolOutput, ToolType};
+use frona::tool::{AgentTool, InferenceContext, ToolDefinition, ToolOutput, ToolType};
 use rig::completion::request::ToolDefinition as RigToolDefinition;
 use rig::completion::{AssistantContent, Message as RigMessage};
 use rig::completion::message::{ToolCall, ToolFunction};
@@ -142,7 +142,7 @@ impl AgentTool for MockInternalTool {
         &self,
         _tool_name: &str,
         _arguments: Value,
-        _ctx: &ToolContext,
+        _ctx: &InferenceContext,
     ) -> Result<ToolOutput, frona::core::error::AppError> {
         let mut responses = self.responses.lock().unwrap();
         let text = if responses.is_empty() {
@@ -188,7 +188,7 @@ impl AgentTool for MockExternalTool {
         &self,
         _tool_name: &str,
         _arguments: Value,
-        _ctx: &ToolContext,
+        _ctx: &InferenceContext,
     ) -> Result<ToolOutput, frona::core::error::AppError> {
         Ok(ToolOutput::text("external result"))
     }
@@ -224,15 +224,15 @@ impl AgentTool for MockFailingTool {
         &self,
         _tool_name: &str,
         _arguments: Value,
-        _ctx: &ToolContext,
+        _ctx: &InferenceContext,
     ) -> Result<ToolOutput, frona::core::error::AppError> {
         Err(frona::core::error::AppError::Tool("tool failed".into()))
     }
 }
 
-pub fn mock_context() -> ToolContext {
+pub fn mock_context() -> InferenceContext {
     let (tx, _rx) = mpsc::channel(100);
-    ToolContext {
+    InferenceContext {
         user: frona::core::models::user::User {
             id: "test-user".into(),
             username: "testuser".into(),

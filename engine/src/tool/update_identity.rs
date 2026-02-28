@@ -10,7 +10,7 @@ use crate::core::error::AppError;
 use crate::inference::tool_loop::{InferenceEvent, InferenceEventKind};
 use frona_derive::agent_tool;
 
-use super::{ToolContext, ToolOutput};
+use super::{InferenceContext, ToolOutput};
 
 pub struct UpdateIdentityTool {
     db: Surreal<Db>,
@@ -37,7 +37,7 @@ impl UpdateIdentityTool {
 
 #[agent_tool]
 impl UpdateIdentityTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let attrs = arguments
             .get("attributes")
             .and_then(|v| v.as_object().cloned())

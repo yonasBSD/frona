@@ -7,7 +7,7 @@ use crate::api::files::detect_content_type;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
-use super::{ToolContext, ToolOutput};
+use super::{InferenceContext, ToolOutput};
 
 pub struct ProduceFileTool {
     agent_id: String,
@@ -27,7 +27,7 @@ impl ProduceFileTool {
 
 #[agent_tool]
 impl ProduceFileTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let relative_path = arguments
             .get("path")
             .and_then(|v| v.as_str())

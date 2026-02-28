@@ -6,7 +6,7 @@ use crate::core::error::AppError;
 use crate::chat::message::models::{MessageTool, ToolStatus};
 use frona_derive::agent_tool;
 
-use super::{ToolContext, ToolOutput, ToolType};
+use super::{InferenceContext, ToolOutput, ToolType};
 
 const EXTERNAL_TOOLS: &[&str] = &["ask_user_question", "request_user_takeover"];
 
@@ -33,7 +33,7 @@ impl NotifyHumanTool {
         }
     }
 
-    async fn execute(&self, tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         match tool_name {
             "request_user_takeover" => {
                 let reason = arguments

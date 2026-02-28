@@ -1,5 +1,4 @@
 use rig::completion::Message as RigMessage;
-use tokio::sync::mpsc::Sender;
 pub use tokio_util::sync::CancellationToken;
 
 use crate::chat::models::Chat;
@@ -12,7 +11,7 @@ use crate::inference::convert::to_rig_messages;
 use crate::inference::tool_loop::InferenceEvent;
 use crate::inference::ModelProviderRegistry;
 use crate::tool::registry::AgentToolRegistry;
-use crate::tool::ToolContext;
+use crate::tool::InferenceContext;
 
 pub struct ChatSessionContext {
     pub chat: Chat,
@@ -22,9 +21,8 @@ pub struct ChatSessionContext {
     pub rig_history: Vec<RigMessage>,
     pub registry: ModelProviderRegistry,
     pub tool_registry: AgentToolRegistry,
-    pub tool_ctx: ToolContext,
+    pub tool_ctx: InferenceContext,
     pub cancel_token: CancellationToken,
-    pub tool_event_tx: Sender<InferenceEvent>,
     pub tool_event_rx: tokio::sync::mpsc::Receiver<InferenceEvent>,
 }
 
@@ -34,9 +32,8 @@ impl ChatSessionContext {
         user_id: &str,
         chat: Chat,
         cancel_token: CancellationToken,
-        tool_event_tx: Sender<InferenceEvent>,
-        tool_event_rx: tokio::sync::mpsc::Receiver<InferenceEvent>,
     ) -> Result<Self, AppError> {
+        let (tool_event_tx, tool_event_rx) = tokio::sync::mpsc::channel::<InferenceEvent>(32);
         let agent_config = state
             .chat_service
             .resolve_agent_config(&chat.agent_id)
@@ -120,11 +117,11 @@ impl ChatSessionContext {
             .find_by_id(&chat.agent_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
-        let tool_ctx = ToolContext {
+        let tool_ctx = InferenceContext {
             user,
             agent,
             chat: chat.clone(),
-            event_tx: tool_event_tx.clone(),
+            event_tx: tool_event_tx,
         };
 
         Ok(Self {
@@ -137,7 +134,6 @@ impl ChatSessionContext {
             tool_registry,
             tool_ctx,
             cancel_token,
-            tool_event_tx,
             tool_event_rx,
         })
     }

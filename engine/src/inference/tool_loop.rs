@@ -13,7 +13,7 @@ use crate::chat::message::models::MessageTool;
 use crate::core::error::AppError;
 use crate::core::metrics::{self, InferenceMetricsContext};
 use crate::tool::registry::AgentToolRegistry;
-use crate::tool::{ToolContext, ToolDefinition};
+use crate::tool::{InferenceContext, ToolDefinition};
 
 use super::config::ModelGroup;
 use super::registry::ModelProviderRegistry;
@@ -180,7 +180,7 @@ struct ToolExecutionResult {
 async fn execute_tool_calls(
     contents: &[AssistantContent],
     tool_registry: &AgentToolRegistry,
-    ctx: &ToolContext,
+    ctx: &InferenceContext,
     event_tx: &mpsc::Sender<InferenceEvent>,
     chat_history: &mut Vec<RigMessage>,
     all_attachments: &mut Vec<crate::api::files::Attachment>,
@@ -310,7 +310,7 @@ pub async fn run_tool_loop(
     tool_registry: &AgentToolRegistry,
     event_tx: mpsc::Sender<InferenceEvent>,
     cancel_token: CancellationToken,
-    ctx: &ToolContext,
+    ctx: &InferenceContext,
     metrics_ctx: &InferenceMetricsContext,
 ) -> Result<ToolLoopOutcome, AppError> {
     let tool_defs = &tool_registry.definitions;

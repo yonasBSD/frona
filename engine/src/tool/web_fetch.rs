@@ -6,7 +6,7 @@ use crate::agent::prompt::PromptLoader;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
-use super::{ToolContext, ToolOutput};
+use super::{InferenceContext, ToolOutput};
 use super::browser::session::BrowserSessionManager;
 
 pub struct WebFetchTool {
@@ -31,7 +31,7 @@ impl WebFetchTool {
 
 #[agent_tool]
 impl WebFetchTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let url = arguments
             .get("url")
             .and_then(|v| v.as_str())

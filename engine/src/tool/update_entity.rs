@@ -7,7 +7,7 @@ use surrealdb::types::RecordId;
 use crate::core::error::AppError;
 use crate::inference::tool_loop::{InferenceEvent, InferenceEventKind};
 
-use super::{AgentTool, ToolContext, ToolDefinition, ToolOutput};
+use super::{AgentTool, InferenceContext, ToolDefinition, ToolOutput};
 
 const PROTECTED_FIELDS: &[&str] = &["id", "user_id", "created_at"];
 
@@ -63,7 +63,7 @@ impl AgentTool for UpdateEntityTool {
         }]
     }
 
-    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         tracing::debug!(
             table = %self.table,
             record_id = %self.record_id,

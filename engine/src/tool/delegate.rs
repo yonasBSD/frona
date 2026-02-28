@@ -11,7 +11,7 @@ use crate::chat::broadcast::BroadcastService;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
-use super::{ToolContext, ToolOutput};
+use super::{InferenceContext, ToolOutput};
 
 pub struct DelegateTaskTool {
     task_service: TaskService,
@@ -54,7 +54,7 @@ impl DelegateTaskTool {
 
 #[agent_tool(name = "delegate", files("delegate_task", "run_subtask"))]
 impl DelegateTaskTool {
-    async fn execute(&self, tool_name: &str, arguments: Value, _ctx: &ToolContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let deliver_directly = tool_name == "delegate_task";
 
         let target_agent_name = arguments
