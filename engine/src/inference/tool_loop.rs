@@ -191,6 +191,12 @@ async fn stream_with_rate_limit_retry(
                 true
             }
             Err(e) => {
+                tracing::error!(
+                    error = ?e,
+                    model = %model_group.main.model_id,
+                    provider = %model_group.main.provider,
+                    "Inference request failed"
+                );
                 metrics::record_inference_request(
                     metrics_ctx,
                     &model_group.main.model_id,
