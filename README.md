@@ -1,8 +1,10 @@
+<p align="center">
+    <a href="https://docs.frona.ai/" target="_blank">
+        <img width="300" src="https://docs.frona.ai/logo-light.svg" alt="Frona AI">
+    </a>
+</p>
+
 # Frona
-
-Self-hosted AI agent platform.
-
-## What is Frona
 
 Frona is a self-hosted AI agent platform. You create autonomous agents, give them tools, and talk to them through a chat interface. Agents act on their own. They browse the web, run code, develop applications, search the internet, make phone calls, delegate work to each other, and remember context across conversations. You give them a task and they figure out how to get it done.
 
@@ -39,9 +41,13 @@ AI agents are powerful. They can execute code, browse websites, and access your 
 - **Chat** is how you interact with agents. Each conversation belongs to one agent, but multiple agents can contribute to it through delegation. Messages stream in real-time over Server-Sent Events.
 - **Spaces** are groups of chats that share the same context. When you link conversations to a space, the platform summarizes those conversations and feeds the context back into new chats.
 
+## Quickstart
+
+See the [docker-compose example](examples/docker-compose) to get started, or check out the [documentation](https://docs.frona.ai) for more details.
+
 ## Model Providers
 
-Frona connects to any of the following LLM providers. Set the corresponding API key in your `.env` file and the provider is auto-discovered.
+Frona connects to any of the following LLM providers. Set the corresponding API key in your env and the provider is auto-discovered.
 
 | Provider | Environment Variable |
 |---|---|
@@ -80,10 +86,6 @@ Agents can make and receive phone calls. Set `FRONA_VOICE_PROVIDER` or let Frona
 | Provider | Environment Variables |
 |---|---|
 | Twilio | `FRONA_VOICE_TWILIO_ACCOUNT_SID`, `FRONA_VOICE_TWILIO_AUTH_TOKEN`, `FRONA_VOICE_TWILIO_FROM_NUMBER` |
-
-## Quickstart
-
-See the [docker-compose example](examples/docker-compose) to get started.
 
 ## Architecture
 
