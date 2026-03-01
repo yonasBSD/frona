@@ -10,7 +10,7 @@ services:
       - PORT=3333
       - TIMEOUT=1800000
     volumes:
-      - ./data/browser_profiles:/profiles
+      - ../data/browser_profiles:/profiles
     restart: unless-stopped
 
   searxng:
@@ -20,25 +20,26 @@ services:
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080
     volumes:
-      - ./data/searxng:/etc/searxng
+      - ../data/searxng:/etc/searxng
     restart: unless-stopped
 
   frona-dev:
     profiles: [dev]
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ..
+      dockerfile: build/Dockerfile
+      target: dev
     ports:
       - "3001:3001"
       - "3000:3000"
     volumes:
-      - ./engine:/app/engine
-      - ./Cargo.toml:/app/Cargo.toml
-      - ./Cargo.lock:/app/Cargo.lock
+      - ../engine:/app/engine
+      - ../Cargo.toml:/app/Cargo.toml
+      - ../Cargo.lock:/app/Cargo.lock
       - cargo-cache:/app/target
       - node-modules:/app/frontend/node_modules
-      - ./frontend:/app/frontend
-      - ./data:/app/data
+      - ../frontend:/app/frontend
+      - ../data:/app/data
     environment:
       - ANTHROPIC_API_KEY
       - FRONA_SERVER_CORS_ORIGINS
@@ -62,12 +63,13 @@ services:
   frona:
     profiles: [prod]
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: build/Dockerfile
+      target: prod
     ports:
       - "3001:3001"
     volumes:
-      - ./data:/app/data
+      - ../data:/app/data
     environment:
       - ANTHROPIC_API_KEY
       - FRONA_AUTH_ENCRYPTION_SECRET

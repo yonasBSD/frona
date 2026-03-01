@@ -69,31 +69,31 @@ run = "cargo test --workspace"
 
 [tasks.docker]
 description = "Build production Docker image"
-run = "docker build -t frona ."
+run = "build/build.sh"
 
 [tasks."docker:publish"]
 description = "Build production image and push to GHCR"
-run = """
-docker build -t frona .
-docker tag frona:latest ghcr.io/fronalabs/frona:latest
-docker push ghcr.io/fronalabs/frona:latest
-"""
+run = "build/publish.sh"
 
 [tasks."docker:dev"]
 description = "Run full dev stack in Docker (with hot-reload)"
-run = "docker compose --profile dev up --build"
+run = "docker compose -f build/docker-compose.yml --profile dev up --build"
 
 [tasks."docker:dev:down"]
 description = "Stop dev Docker stack"
-run = "docker compose --profile dev down"
+run = "docker compose -f build/docker-compose.yml --profile dev down"
 
 [tasks."docker:prod"]
 description = "Run production stack in Docker"
-run = "docker compose --profile prod up --build"
+run = "docker compose -f build/docker-compose.yml --profile prod up --build"
 
 [tasks."docker:prod:down"]
 description = "Stop production Docker stack"
-run = "docker compose --profile prod down"
+run = "docker compose -f build/docker-compose.yml --profile prod down"
+
+[tasks."docker:update-versions"]
+description = "Pull latest dependencies and update version locks"
+run = "build/update-versions.sh"
 
 [tasks.clean]
 description = "Remove build artifacts and generated files"
