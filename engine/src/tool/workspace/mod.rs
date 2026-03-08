@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::core::error::AppError;
 
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
 use self::sandbox::{SandboxConfig, SandboxOutput, create_sandbox, execute_sandboxed};
 
 pub struct WorkspaceManager {
@@ -112,8 +115,10 @@ impl Workspace {
         &self,
         program: &str,
         args: &[&str],
-        stdin: Option<&str>,
         timeout_secs: u64,
+        on_stdout: Option<mpsc::Sender<String>>,
+        stdin_rx: Option<mpsc::Receiver<String>>,
+        cancel_token: Option<CancellationToken>,
     ) -> Result<SandboxOutput, AppError> {
         self.setup()?;
 
@@ -169,7 +174,16 @@ impl Workspace {
             ..Default::default()
         };
 
-        execute_sandboxed(&*self.sandbox, program, &resolved_refs, stdin, &config).await
+        execute_sandboxed(
+            &*self.sandbox,
+            program,
+            &resolved_refs,
+            &config,
+            on_stdout,
+            stdin_rx,
+            cancel_token,
+        )
+        .await
     }
 }
 
@@ -258,8 +272,10 @@ mod tests {
             .execute(
                 "bash",
                 &["-c", "echo $HOME; echo $XDG_CONFIG_HOME; echo $XDG_CACHE_HOME"],
-                None,
                 10,
+                None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -281,7 +297,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&ws.path);
 
         let result = ws
-            .execute("bash", &["-c", "echo $FRONA_TEST_SECRET"], None, 10)
+            .execute("bash", &["-c", "echo $FRONA_TEST_SECRET"], 10, None, None, None)
             .await
             .unwrap();
 
@@ -304,6 +320,39 @@ mod tests {
         ws.setup().unwrap();
 
         assert!(ws.venv_path().exists());
+
+        let _ = std::fs::remove_dir_all(&ws.path);
+    }
+
+    #[tokio::test]
+    async fn test_execute_async_streaming() {
+        let ws = temp_workspace(&format!("streaming_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&ws.path);
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let result = ws
+            .execute(
+                "bash",
+                &["-c", "echo hello; echo world"],
+                10,
+                Some(tx),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, Some(0));
+        assert!(result.stdout.contains("hello"));
+        assert!(result.stdout.contains("world"));
+
+        let mut lines = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            lines.push(line);
+        }
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "hello");
+        assert_eq!(lines[1], "world");
 
         let _ = std::fs::remove_dir_all(&ws.path);
     }

@@ -4,6 +4,9 @@ pub mod noop;
 
 use std::process::Command;
 
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
 /// Specific /etc paths allowed for read access.
 /// We intentionally exclude /etc/passwd, /etc/shadow, /etc/group,
 /// /etc/ssh/, and other sensitive files.
@@ -87,6 +90,7 @@ pub struct SandboxOutput {
     pub stderr: String,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
+    pub cancelled: bool,
 }
 
 pub trait Sandbox: Send + Sync {
@@ -165,8 +169,10 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
         &*sandbox,
         "bash",
         &["-c", "echo ok > probe.txt && cat probe.txt"],
-        None,
         &config,
+        None,
+        None,
+        None,
     )
     .await
     .map_err(|e| format!("Sandbox probe spawn failed: {e}"))?;
@@ -188,8 +194,10 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
         &*sandbox,
         "bash",
         &["-c", &forbidden_cmd],
-        None,
         &config,
+        None,
+        None,
+        None,
     )
     .await
     .map_err(|e| format!("Sandbox probe spawn failed: {e}"))?;
@@ -209,12 +217,14 @@ pub async fn execute_sandboxed(
     sandbox: &dyn Sandbox,
     program: &str,
     args: &[&str],
-    stdin_data: Option<&str>,
     config: &SandboxConfig,
+    on_stdout: Option<mpsc::Sender<String>>,
+    stdin_rx: Option<mpsc::Receiver<String>>,
+    cancel_token: Option<CancellationToken>,
 ) -> Result<SandboxOutput, AppError> {
-    let mut cmd = sandbox.sandboxed_command(program, args, config)?;
+    let mut std_cmd = sandbox.sandboxed_command(program, args, config)?;
 
-    cmd.env_clear();
+    std_cmd.env_clear();
 
     const PASSTHROUGH_VARS: &[&str] = &[
         "TERM", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "USER", "LOGNAME", "TMPDIR", "SHELL",
@@ -222,95 +232,128 @@ pub async fn execute_sandboxed(
 
     for key in PASSTHROUGH_VARS {
         if let Ok(val) = std::env::var(key) {
-            cmd.env(key, val);
+            std_cmd.env(key, val);
         }
     }
 
     {
         let existing = std::env::var("PATH").unwrap_or_default();
         if config.additional_path_dirs.is_empty() {
-            cmd.env("PATH", existing);
+            std_cmd.env("PATH", existing);
         } else {
             let extra = config.additional_path_dirs.join(":");
-            cmd.env("PATH", format!("{extra}:{existing}"));
+            std_cmd.env("PATH", format!("{extra}:{existing}"));
         }
     }
 
     for (key, value) in &config.env_vars {
-        cmd.env(key, value);
+        std_cmd.env(key, value);
     }
 
-    if stdin_data.is_some() {
-        cmd.stdin(std::process::Stdio::piped());
+    if stdin_rx.is_some() {
+        std_cmd.stdin(std::process::Stdio::piped());
     }
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
+    std_cmd.stdout(std::process::Stdio::piped());
+    std_cmd.stderr(std::process::Stdio::piped());
+
+    let mut cmd = tokio::process::Command::from(std_cmd);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::Tool(format!("Failed to spawn process: {e}")))?;
+
+    if let Some(mut rx) = stdin_rx {
+        let mut stdin_pipe = child.stdin.take().expect("stdin pipe was configured");
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            while let Some(data) = rx.recv().await {
+                if stdin_pipe.write_all(data.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .expect("stdout pipe was configured");
+    let mut stdout_reader =
+        tokio::io::BufReader::new(stdout_pipe).lines();
 
     let timeout = std::time::Duration::from_secs(config.timeout_secs);
     let max_bytes = config.max_output_bytes;
-    let stdin_owned = stdin_data.map(|s| s.to_string());
 
-    tokio::task::spawn_blocking(move || {
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| AppError::Tool(format!("Failed to spawn process: {e}")))?;
+    let mut stdout_lines: Vec<String> = Vec::new();
+    let mut timed_out = false;
+    let mut cancelled = false;
 
-        if let Some(data) = stdin_owned {
-            use std::io::Write;
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(data.as_bytes());
-                drop(stdin);
-            }
-        }
+    use tokio::io::AsyncBufReadExt;
 
-        let start = std::time::Instant::now();
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let mut stdout_bytes = Vec::new();
-                    let mut stderr_bytes = Vec::new();
-                    use std::io::Read;
-                    if let Some(mut out) = child.stdout.take() {
-                        let _ = out.read_to_end(&mut stdout_bytes);
+    loop {
+        tokio::select! {
+            line = stdout_reader.next_line() => {
+                match line {
+                    Ok(Some(line)) => {
+                        if let Some(tx) = &on_stdout {
+                            let _ = tx.send(line.clone()).await;
+                        }
+                        stdout_lines.push(line);
                     }
-                    if let Some(mut err) = child.stderr.take() {
-                        let _ = err.read_to_end(&mut stderr_bytes);
-                    }
-
-                    return Ok(SandboxOutput {
-                        stdout: truncate_output(
-                            String::from_utf8_lossy(&stdout_bytes).into_owned(),
-                            max_bytes,
-                        ),
-                        stderr: truncate_output(
-                            String::from_utf8_lossy(&stderr_bytes).into_owned(),
-                            max_bytes,
-                        ),
-                        exit_code: status.code(),
-                        timed_out: false,
-                    });
-                }
-                Ok(None) => {
-                    if start.elapsed() >= timeout {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Ok(SandboxOutput {
-                            stdout: String::new(),
-                            stderr: "Process timed out".to_string(),
-                            exit_code: None,
-                            timed_out: true,
-                        });
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(e) => {
-                    return Err(AppError::Tool(format!("Failed to wait on process: {e}")));
+                    Ok(None) => break,
+                    Err(_) => break,
                 }
             }
+            _ = tokio::time::sleep(timeout) => {
+                timed_out = true;
+                let _ = child.kill().await;
+                break;
+            }
+            _ = async {
+                if let Some(token) = &cancel_token {
+                    token.cancelled().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {
+                cancelled = true;
+                let _ = child.kill().await;
+                break;
+            }
         }
+    }
+
+    let status = child.wait().await.ok();
+
+    let mut stderr_bytes = Vec::new();
+    if let Some(mut err) = child.stderr.take() {
+        use tokio::io::AsyncReadExt;
+        let _ = err.read_to_end(&mut stderr_bytes).await;
+    }
+
+    let stdout = stdout_lines.join("\n");
+    let stdout = if !stdout.is_empty() && !stdout_lines.is_empty() {
+        format!("{stdout}\n")
+    } else {
+        stdout
+    };
+
+    let stderr = if timed_out && stderr_bytes.is_empty() {
+        "Process timed out".to_string()
+    } else {
+        String::from_utf8_lossy(&stderr_bytes).into_owned()
+    };
+
+    Ok(SandboxOutput {
+        stdout: truncate_output(stdout, max_bytes),
+        stderr: truncate_output(stderr, max_bytes),
+        exit_code: if timed_out || cancelled {
+            None
+        } else {
+            status.and_then(|s| s.code())
+        },
+        timed_out,
+        cancelled,
     })
-    .await
-    .map_err(|e| AppError::Tool(format!("Task join error: {e}")))?
 }
 
 fn truncate_output(s: String, max_bytes: usize) -> String {
@@ -320,5 +363,308 @@ fn truncate_output(s: String, max_bytes: usize) -> String {
         let truncated = &s.as_bytes()[..max_bytes];
         let valid = String::from_utf8_lossy(truncated);
         format!("{valid}\n... (output truncated at {max_bytes} bytes)")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_sandbox() -> Box<dyn Sandbox> {
+        create_sandbox(false)
+    }
+
+    fn test_config(timeout_secs: u64) -> SandboxConfig {
+        let dir = std::env::temp_dir()
+            .join("frona_sandbox_test")
+            .join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        SandboxConfig {
+            workspace_dir: dir.to_string_lossy().into_owned(),
+            timeout_secs,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_basic() {
+        let sandbox = test_sandbox();
+        let config = test_config(10);
+
+        let output = execute_sandboxed(&*sandbox, "echo", &["hello"], &config, None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(output.exit_code, Some(0));
+        assert!(output.stdout.contains("hello"));
+        assert!(!output.timed_out);
+        assert!(!output.cancelled);
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_streaming_stdout() {
+        let sandbox = test_sandbox();
+        let config = test_config(10);
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "bash",
+            &["-c", "echo line1; echo line2; echo line3"],
+            &config,
+            Some(tx),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mut lines = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            lines.push(line);
+        }
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "line1");
+        assert_eq!(lines[1], "line2");
+        assert_eq!(lines[2], "line3");
+        assert!(output.stdout.contains("line1"));
+        assert!(output.stdout.contains("line3"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_streaming_slow_process() {
+        let sandbox = test_sandbox();
+        let config = test_config(10);
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let handle = tokio::spawn(async move {
+            let mut timestamps = Vec::new();
+            while let Some(_line) = rx.recv().await {
+                timestamps.push(tokio::time::Instant::now());
+            }
+            timestamps
+        });
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "bash",
+            &["-c", "for i in 1 2 3; do echo $i; sleep 0.1; done"],
+            &config,
+            Some(tx),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let timestamps = handle.await.unwrap();
+        assert_eq!(timestamps.len(), 3);
+        assert_eq!(output.exit_code, Some(0));
+
+        let spread = timestamps.last().unwrap().duration_since(*timestamps.first().unwrap());
+        assert!(
+            spread >= std::time::Duration::from_millis(150),
+            "lines should arrive incrementally, spread was {:?}",
+            spread
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_timeout() {
+        let sandbox = test_sandbox();
+        let config = test_config(1);
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "sleep",
+            &["60"],
+            &config,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(output.timed_out);
+        assert!(!output.cancelled);
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_timeout_returns_partial_output() {
+        let sandbox = test_sandbox();
+        let config = test_config(1);
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "bash",
+            &["-c", "echo partial; sleep 60"],
+            &config,
+            Some(tx),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(output.timed_out);
+        assert!(output.stdout.contains("partial"));
+
+        let mut lines = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            lines.push(line);
+        }
+        assert!(lines.iter().any(|l| l == "partial"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_cancel() {
+        let sandbox = test_sandbox();
+        let config = test_config(60);
+        let token = CancellationToken::new();
+        let token_clone = token.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            token_clone.cancel();
+        });
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "sleep",
+            &["60"],
+            &config,
+            None,
+            None,
+            Some(token),
+        )
+        .await
+        .unwrap();
+
+        assert!(output.cancelled);
+        assert!(!output.timed_out);
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_cancel_returns_partial_output() {
+        let sandbox = test_sandbox();
+        let config = test_config(60);
+        let token = CancellationToken::new();
+        let token_clone = token.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            token_clone.cancel();
+        });
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "bash",
+            &["-c", "echo before_cancel; sleep 60"],
+            &config,
+            None,
+            None,
+            Some(token),
+        )
+        .await
+        .unwrap();
+
+        assert!(output.cancelled);
+        assert!(output.stdout.contains("before_cancel"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_stdin_channel() {
+        let sandbox = test_sandbox();
+        let config = test_config(10);
+        let (tx, rx) = mpsc::channel(16);
+
+        tx.send("hello\n".to_string()).await.unwrap();
+        drop(tx);
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "cat",
+            &[],
+            &config,
+            None,
+            Some(rx),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.exit_code, Some(0));
+        assert!(output.stdout.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_stdin_then_closes() {
+        let sandbox = test_sandbox();
+        let config = test_config(10);
+        let (tx, rx) = mpsc::channel(16);
+
+        tx.send("first line\n".to_string()).await.unwrap();
+        drop(tx);
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "head",
+            &["-1"],
+            &config,
+            None,
+            Some(rx),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.exit_code, Some(0));
+        assert!(output.stdout.contains("first line"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_output_truncation() {
+        let sandbox = test_sandbox();
+        let mut config = test_config(10);
+        config.max_output_bytes = 50;
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "bash",
+            &["-c", "yes | head -100"],
+            &config,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(output.stdout.contains("output truncated at 50 bytes"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_sandboxed_nonzero_exit() {
+        let sandbox = test_sandbox();
+        let config = test_config(10);
+
+        let output = execute_sandboxed(
+            &*sandbox,
+            "bash",
+            &["-c", "exit 42"],
+            &config,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.exit_code, Some(42));
+        assert!(!output.timed_out);
+        assert!(!output.cancelled);
     }
 }

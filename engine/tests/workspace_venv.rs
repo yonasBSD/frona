@@ -29,8 +29,10 @@ async fn test_execute_uses_venv_python() {
         .execute(
             "python3",
             &["-c", "import sys; print(sys.prefix)"],
-            None,
             30,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -61,7 +63,7 @@ async fn test_shell_uses_venv_python() {
     let ws = mgr.get_workspace("agent-venv-which", false, vec![]);
 
     let output = ws
-        .execute("which", &["python3"], None, 30)
+        .execute("which", &["python3"], 30, None, None, None)
         .await
         .unwrap();
 
@@ -86,7 +88,7 @@ async fn test_pip_install_isolated() {
     let ws_b = mgr.get_workspace("agent-pip-b", false, vec![]);
 
     let install = ws_a
-        .execute("pip", &["install", "cowsay"], None, 60)
+        .execute("pip", &["install", "cowsay"], 60, None, None, None)
         .await
         .unwrap();
     assert!(
@@ -99,8 +101,10 @@ async fn test_pip_install_isolated() {
         .execute(
             "python3",
             &["-c", "import cowsay; print('ok')"],
-            None,
             30,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -110,8 +114,10 @@ async fn test_pip_install_isolated() {
         .execute(
             "python3",
             &["-c", "import cowsay; print('ok')"],
-            None,
             30,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();

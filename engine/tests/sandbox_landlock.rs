@@ -20,7 +20,7 @@ async fn test_sandbox_allows_read_system_paths() {
     let ws = mgr.get_workspace("landlock-read-sys", false, vec![]);
 
     let output = ws
-        .execute("cat", &["/etc/hostname"], None, 10)
+        .execute("cat", &["/etc/hostname"], 10, None, None, None)
         .await
         .unwrap();
 
@@ -44,8 +44,10 @@ async fn test_sandbox_blocks_write_to_system_paths() {
         .execute(
             "bash",
             &["-c", "echo hacked > /etc/landlock_test_file"],
-            None,
             10,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -70,8 +72,10 @@ async fn test_sandbox_allows_write_to_workspace() {
         .execute(
             "bash",
             &["-c", "echo hello > testfile.txt && cat testfile.txt"],
-            None,
             10,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -93,7 +97,7 @@ async fn test_sandbox_blocks_read_outside_allowed_paths() {
     let ws = mgr.get_workspace("landlock-block-read", false, vec![]);
 
     let output = ws
-        .execute("ls", &["/root"], None, 10)
+        .execute("ls", &["/root"], 10, None, None, None)
         .await
         .unwrap();
 
@@ -120,8 +124,10 @@ async fn test_sandbox_allows_write_to_tmp() {
                 "-c",
                 "echo test > /tmp/frona_landlock_test && cat /tmp/frona_landlock_test && rm /tmp/frona_landlock_test",
             ],
-            None,
             10,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -146,8 +152,10 @@ async fn test_sandbox_blocks_write_outside_workspace() {
         .execute(
             "bash",
             &["-c", "echo hacked > /usr/landlock_test_file"],
-            None,
             10,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -172,8 +180,10 @@ async fn test_sandbox_python_in_workspace() {
         .execute(
             "python3",
             &["-c", "print('sandboxed python works')"],
-            None,
             30,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -201,8 +211,10 @@ async fn test_sandbox_python_cannot_write_system() {
                 "-c",
                 "open('/etc/landlock_test', 'w').write('hacked')",
             ],
-            None,
             30,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -229,8 +241,10 @@ async fn test_sandbox_write_with_relative_workspace_path() {
         .execute(
             "bash",
             &["-c", "echo hello > testfile.txt && cat testfile.txt"],
-            None,
             10,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -263,8 +277,10 @@ async fn test_sandbox_heredoc_write() {
                 "-c",
                 "cat <<'EOF' > data.csv\nname,date\nAlice,2024-01-01\nBob,2024-02-02\nEOF\ncat data.csv",
             ],
-            None,
             10,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -297,8 +313,10 @@ async fn test_sandbox_python_write_to_workspace() {
                 "-c",
                 "with open('output.txt', 'w') as f: f.write('hello from python')\nwith open('output.txt') as f: print(f.read())",
             ],
-            None,
             30,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -320,7 +338,7 @@ async fn test_sandbox_blocks_read_etc_shadow() {
     let ws = mgr.get_workspace("landlock-etc-shadow", false, vec![]);
 
     let output = ws
-        .execute("cat", &["/etc/shadow"], None, 10)
+        .execute("cat", &["/etc/shadow"], 10, None, None, None)
         .await
         .unwrap();
 
@@ -339,7 +357,7 @@ async fn test_sandbox_blocks_read_etc_passwd() {
     let ws = mgr.get_workspace("landlock-etc-passwd", false, vec![]);
 
     let output = ws
-        .execute("cat", &["/etc/passwd"], None, 10)
+        .execute("cat", &["/etc/passwd"], 10, None, None, None)
         .await
         .unwrap();
 
@@ -358,7 +376,7 @@ async fn test_sandbox_allows_read_etc_ssl() {
     let ws = mgr.get_workspace("landlock-etc-ssl", false, vec![]);
 
     let output = ws
-        .execute("ls", &["/etc/ssl"], None, 10)
+        .execute("ls", &["/etc/ssl"], 10, None, None, None)
         .await
         .unwrap();
 
@@ -390,8 +408,10 @@ async fn test_sandbox_fallback_on_unsupported_fs() {
         .execute(
             "bash",
             &["-c", "echo works > test.txt && cat test.txt"],
-            None,
             10,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();

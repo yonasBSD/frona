@@ -118,12 +118,6 @@ impl AgentTool for CliTool {
             .collect();
         let args_refs: Vec<&str> = substituted_args.iter().map(|s| s.as_str()).collect();
 
-        let stdin_data = self
-            .config
-            .stdin
-            .as_ref()
-            .map(|tmpl| Self::substitute(tmpl, args_map));
-
         let mut workspace = self.workspace_manager.get_workspace(
             &self.agent_id,
             self.network_access,
@@ -143,8 +137,10 @@ impl AgentTool for CliTool {
             .execute(
                 &self.config.program,
                 &args_refs,
-                stdin_data.as_deref(),
                 timeout,
+                None,
+                None,
+                None,
             )
             .await?;
 
