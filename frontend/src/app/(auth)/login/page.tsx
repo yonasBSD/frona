@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { Logo } from "@/components/logo";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get("redirect") || "/chat";
   const { login, user, revalidate, ssoStatus, initiateSso } = useAuth();
 
   useEffect(() => {
@@ -15,8 +17,14 @@ export default function LoginPage() {
   }, [revalidate]);
 
   useEffect(() => {
-    if (user) router.replace("/chat");
-  }, [user, router]);
+    if (user) {
+      if (redirectTo.startsWith("http")) {
+        window.location.href = redirectTo;
+      } else {
+        router.replace(redirectTo);
+      }
+    }
+  }, [user, router, redirectTo]);
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -28,7 +36,11 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login({ identifier, password });
-      router.replace("/chat");
+      if (redirectTo.startsWith("http")) {
+        window.location.href = redirectTo;
+      } else {
+        router.replace(redirectTo);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

@@ -69,10 +69,13 @@ export function NavigationPanel() {
         style={{ width }}
       >
         <div className="flex items-center px-2 py-1">
-          <div className="flex flex-1 items-center justify-center gap-1">
+          <button
+            onClick={() => router.push("/chat")}
+            className="flex flex-1 items-center justify-center gap-1"
+          >
             <Logo size={52} animate={inferring} />
             <span className="text-2xl font-bold text-text-primary tracking-wide" style={{ fontFamily: "var(--font-brand)" }}>FRONA</span>
-          </div>
+          </button>
           <button
             onClick={handleNewChat}
             className="rounded-lg p-1.5 text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
