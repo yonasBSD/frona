@@ -377,6 +377,10 @@ impl ChatService {
                 *status = ToolStatus::Resolved;
                 *resp = Some(response_text.clone());
             }
+            Some(MessageTool::ServiceApproval { status, response: resp, .. }) => {
+                *status = ToolStatus::Resolved;
+                *resp = Some(response_text.clone());
+            }
             _ => return Err(AppError::Validation("Message has no resolvable tool".into())),
         }
 
@@ -402,6 +406,10 @@ impl ChatService {
 
         match &mut message.tool {
             Some(MessageTool::VaultApproval { status, response: resp, .. }) => {
+                *status = ToolStatus::Denied;
+                *resp = Some(response_text.clone());
+            }
+            Some(MessageTool::ServiceApproval { status, response: resp, .. }) => {
                 *status = ToolStatus::Denied;
                 *resp = Some(response_text.clone());
             }

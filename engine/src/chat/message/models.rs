@@ -53,6 +53,13 @@ pub enum MessageTool {
         status: ToolStatus,
         response: Option<String>,
     },
+    ServiceApproval {
+        action: String,
+        manifest: serde_json::Value,
+        previous_manifest: Option<serde_json::Value>,
+        status: ToolStatus,
+        response: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
