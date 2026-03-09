@@ -23,6 +23,7 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["macros", "http2", "multipart", "ws"] }
 twilio-async = "0.5"
 xml-rs = "0.8"
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "fs", "trace", "set-header"] }
 tower_governor = "0.8"
 surrealdb = { version = "3.0.0", features = ["kv-rocksdb"] }
@@ -48,6 +49,7 @@ metrics-exporter-prometheus = { version = "0.16", default-features = false }
 vaultrs = { version = "0.7", default-features = false, features = ["rustls"] }
 keepass = "0.10"
 keeper-secrets-manager-core = "17"
+cookie = "0.18.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"

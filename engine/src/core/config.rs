@@ -23,7 +23,29 @@ pub struct ServerConfig {
     pub sandbox_disabled: bool,
     pub cors_origins: Option<String>,
     pub base_url: Option<String>,
+    pub backend_url: Option<String>,
+    pub frontend_url: Option<String>,
     pub max_body_size_bytes: usize,
+}
+
+impl ServerConfig {
+    pub fn public_base_url(&self) -> String {
+        self.backend_url
+            .as_deref()
+            .or(self.base_url.as_deref())
+            .unwrap_or("")
+            .trim_end_matches('/')
+            .to_string()
+    }
+
+    pub fn public_frontend_url(&self) -> String {
+        self.frontend_url
+            .as_deref()
+            .or(self.base_url.as_deref())
+            .unwrap_or("")
+            .trim_end_matches('/')
+            .to_string()
+    }
 }
 
 impl Default for ServerConfig {
@@ -36,6 +58,8 @@ impl Default for ServerConfig {
             sandbox_disabled: false,
             cors_origins: None,
             base_url: None,
+            backend_url: None,
+            frontend_url: None,
             max_body_size_bytes: 104_857_600,
         }
     }
@@ -302,6 +326,28 @@ pub struct VaultConfig {
 }
 
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AppConfig {
+    pub port_range_start: u16,
+    pub port_range_end: u16,
+    pub health_check_timeout_secs: u64,
+    pub max_restart_attempts: u32,
+    pub hibernate_after_secs: u64,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            port_range_start: 4000,
+            port_range_end: 4100,
+            health_check_timeout_secs: 30,
+            max_restart_attempts: 3,
+            hibernate_after_secs: 259200,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct Config {
@@ -316,6 +362,7 @@ pub struct Config {
     pub scheduler: SchedulerConfig,
     pub inference: InferenceConfig,
     pub voice: VoiceConfig,
+    pub app: AppConfig,
     #[serde(default)]
     pub models: HashMap<String, ModelGroupConfig>,
     #[serde(default)]
