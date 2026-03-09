@@ -144,6 +144,9 @@ impl ToolOutput {
 pub trait AgentTool: Send + Sync {
     fn name(&self) -> &str;
     fn definitions(&self) -> Vec<ToolDefinition>;
+    fn definition_vars(&self) -> Vec<(&str, &str)> {
+        vec![]
+    }
     async fn execute(&self, tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError>;
     async fn cleanup(&self) -> Result<(), AppError> {
         Ok(())
@@ -197,7 +200,11 @@ fn build_parameters_json(yaml: &Value) -> Value {
 }
 
 pub fn load_tool_definition(prompts: &PromptLoader, path: &str) -> Option<ToolDefinition> {
-    let raw = prompts.read(path)?;
+    load_tool_definition_with_vars(prompts, path, &[])
+}
+
+pub fn load_tool_definition_with_vars(prompts: &PromptLoader, path: &str, vars: &[(&str, &str)]) -> Option<ToolDefinition> {
+    let raw = prompts.read_with_vars(path, vars)?;
     let (yaml, body) = parse_frontmatter(&raw)?;
     let name = yaml.get("name")?.as_str()?.to_string();
     let parameters = build_parameters_json(&yaml);

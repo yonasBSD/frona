@@ -12,6 +12,7 @@ use self::sandbox::{SandboxConfig, SandboxOutput, create_sandbox, execute_sandbo
 pub struct WorkspaceManager {
     base_path: PathBuf,
     sandbox_disabled: bool,
+    shared_read_paths: Vec<String>,
 }
 
 impl WorkspaceManager {
@@ -19,7 +20,13 @@ impl WorkspaceManager {
         Self {
             base_path: base_path.into(),
             sandbox_disabled,
+            shared_read_paths: Vec::new(),
         }
+    }
+
+    pub fn with_shared_read_paths(mut self, paths: Vec<String>) -> Self {
+        self.shared_read_paths = paths;
+        self
     }
 
     pub fn get_workspace(
@@ -37,6 +44,7 @@ impl WorkspaceManager {
             allowed_network_destinations,
             skill_dirs: Vec::new(),
             extra_env_vars: Vec::new(),
+            shared_read_paths: self.shared_read_paths.clone(),
         }
     }
 }
@@ -48,6 +56,7 @@ pub struct Workspace {
     allowed_network_destinations: Vec<String>,
     skill_dirs: Vec<(String, String)>,
     extra_env_vars: Vec<(String, String)>,
+    shared_read_paths: Vec<String>,
 }
 
 impl Workspace {
@@ -124,7 +133,7 @@ impl Workspace {
 
         let canonical_path = std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
 
-        let mut additional_read_paths = Vec::new();
+        let mut additional_read_paths = self.shared_read_paths.clone();
         let mut additional_path_dirs = Vec::new();
         let mut env_vars = Vec::new();
         let mut resolved_args: Vec<String> = Vec::new();
@@ -208,6 +217,7 @@ mod tests {
             allowed_network_destinations: Vec::new(),
             skill_dirs: Vec::new(),
             extra_env_vars: Vec::new(),
+            shared_read_paths: Vec::new(),
         }
     }
 
@@ -247,6 +257,7 @@ mod tests {
             allowed_network_destinations: Vec::new(),
             skill_dirs: Vec::new(),
             extra_env_vars: Vec::new(),
+            shared_read_paths: Vec::new(),
         };
         ws.setup().unwrap();
 

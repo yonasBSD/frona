@@ -124,10 +124,14 @@ impl AppState {
         let chat_repo = SurrealRepo::new(db.clone());
         let message_repo = SurrealRepo::new(db.clone());
 
+        let shared_config_dir = PathBuf::from(&config.storage.shared_config_dir);
+        let shared_config_abs = std::fs::canonicalize(&shared_config_dir)
+            .unwrap_or_else(|_| shared_config_dir.clone());
+
         let workspace_manager = Arc::new(WorkspaceManager::new(
             &config.storage.workspaces_path,
             config.server.sandbox_disabled,
-        ));
+        ).with_shared_read_paths(vec![shared_config_abs.to_string_lossy().into_owned()]));
         let search_provider = create_search_provider(&config.search);
         let local_base_url = config.server.base_url.clone()
             .unwrap_or_else(|| format!("http://localhost:{}", config.server.port));
@@ -135,7 +139,10 @@ impl AppState {
             .unwrap_or_else(|| local_base_url.clone());
 
         let provider_registry_arc = Arc::new(provider_registry.clone());
-        let prompt_loader = PromptLoader::new(PathBuf::from(&config.storage.shared_config_dir).join("prompts"));
+        let schema_path = shared_config_abs.join("schemas").join("service_manifest.json")
+            .to_string_lossy().into_owned();
+        let prompt_loader = PromptLoader::new(shared_config_abs.join("prompts"))
+            .with_var("schema_path", &schema_path);
 
         let cli_tools_config = load_cli_tool_configs(&prompt_loader);
         crate::tool::init_configurable_tools(&cli_tools_config);

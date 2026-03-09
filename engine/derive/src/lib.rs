@@ -108,7 +108,7 @@ pub fn agent_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
     let definitions_body = if file_names.len() == 1 {
         let path = format!("tools/{}.md", file_names[0]);
         quote! {
-            crate::tool::load_tool_definition(&self.prompts, #path)
+            crate::tool::load_tool_definition_with_vars(&self.prompts, #path, &self.definition_vars())
                 .into_iter()
                 .collect()
         }
@@ -116,7 +116,7 @@ pub fn agent_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
         let stmts = file_names.iter().map(|f| {
             let path = format!("tools/{f}.md");
             quote! {
-                if let Some(d) = crate::tool::load_tool_definition(&self.prompts, #path) {
+                if let Some(d) = crate::tool::load_tool_definition_with_vars(&self.prompts, #path, &self.definition_vars()) {
                     defs.push(d);
                 }
             }

@@ -1,7 +1,7 @@
 ---
 name: shell
 program: /bin/bash
-args: ["-c", "{{command}}"]
+args: ["-c", "${command}"]
 timeout_secs: 30
 parameters:
   command:

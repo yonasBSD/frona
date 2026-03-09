@@ -227,11 +227,12 @@ impl AgentTool for VoiceCallTool {
             .await?;
 
         let call_connected_block = self.prompts
-            .read("active_call.md")
-            .unwrap_or_default()
-            .replace("{{caller_name}}", &contact.name)
-            .replace("{{phone_number}}", phone_number)
-            .replace("{{objective}}", objective);
+            .read_with_vars("active_call.md", &[
+                ("caller_name", &contact.name),
+                ("phone_number", phone_number),
+                ("objective", objective),
+            ])
+            .unwrap_or_default();
 
         Ok(ToolOutput::text(call_connected_block).as_pending_external())
     }

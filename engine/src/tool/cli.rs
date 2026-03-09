@@ -60,7 +60,7 @@ impl CliTool {
     fn substitute(template: &str, arguments: &Map<String, Value>) -> String {
         let mut result = template.to_string();
         for (key, value) in arguments {
-            let placeholder = format!("{{{{{key}}}}}");
+            let placeholder = format!("${{{key}}}");
             let replacement = match value {
                 Value::String(s) => s.clone(),
                 other => other.to_string(),
@@ -254,7 +254,7 @@ mod tests {
         let mut args = Map::new();
         args.insert("command".to_string(), Value::String("echo hello".to_string()));
 
-        let result = CliTool::substitute("{{command}}", &args);
+        let result = CliTool::substitute("${command}", &args);
         assert_eq!(result, "echo hello");
     }
 
@@ -284,7 +284,7 @@ mod tests {
             name: "shell".to_string(),
             description: "Execute a shell command".to_string(),
             program: "/bin/bash".to_string(),
-            args: vec!["-c".to_string(), "{{command}}".to_string()],
+            args: vec!["-c".to_string(), "${command}".to_string()],
             stdin: None,
             parameters: {
                 let mut m = HashMap::new();
@@ -357,7 +357,7 @@ mod tests {
             name: "shell".to_string(),
             description: "Execute a shell command".to_string(),
             program: "/bin/bash".to_string(),
-            args: vec!["-c".to_string(), "{{command}}".to_string()],
+            args: vec!["-c".to_string(), "${command}".to_string()],
             stdin: None,
             parameters: {
                 let mut m = HashMap::new();

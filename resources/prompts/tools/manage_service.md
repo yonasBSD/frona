@@ -81,6 +81,8 @@ base_path = os.environ.get("BASE_PATH", "/")
 
 **Important:** Your app is served behind a reverse proxy at `BASE_PATH`. All fetch calls, links, and asset references in your HTML/JS must use paths relative to `BASE_PATH`, not absolute paths from `/`. For example, use `fetch('api/prices')` (relative) or `fetch(BASE_PATH + 'api/prices')`, never `fetch('/api/prices')`.
 
+The full JSON Schema for the manifest is available at: {{schema_path}}
+
 ### Static Mode
 
 For static sites, build your HTML/CSS/JS and specify the output directory:

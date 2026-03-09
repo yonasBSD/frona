@@ -5,6 +5,7 @@ use crate::api::repo::chats::SurrealChatRepo;
 use crate::api::repo::messages::SurrealMessageRepo;
 use crate::core::error::AppError;
 use crate::core::metrics::InferenceMetricsContext;
+use crate::core::template::render_template;
 use crate::inference::ModelProviderRegistry;
 use crate::inference::convert::to_rig_messages;
 use crate::inference::text_inference;
@@ -496,7 +497,8 @@ impl ChatService {
                 .map(|c| parse_frontmatter(&c).template)
                 .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?;
 
-            let system_prompt = raw_prompt.replace("{{agent_name}}", &agent.name);
+            let system_prompt = render_template(&raw_prompt, &[("agent_name", &agent.name)])
+                .unwrap_or(raw_prompt);
 
             return Ok(AgentConfig {
                 system_prompt,
