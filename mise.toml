@@ -5,7 +5,6 @@ rust-analyzer = "latest"
 "cargo:cargo-watch" = "latest"
 
 [env]
-FRONA_AUTH_ENCRYPTION_SECRET = "dev-secret-change-in-production"
 FRONA_DATABASE_PATH = "data/db"
 FRONA_LOG_LEVEL = "debug"
 FRONA_SERVER_BACKEND_URL = "http://localhost:3001"

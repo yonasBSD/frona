@@ -40,7 +40,22 @@ COPY Cargo.toml Cargo.lock ./
 COPY engine/ engine/
 RUN cargo build --release -p frona
 
-# Stage 4: python packages
+# Stage 4: CLI tools (op, bw)
+FROM debian:bookworm-slim AS cli-tools
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,source=build/pkgs/prod-cli.txt,target=/tmp/cli.txt \
+  OP_VER=$(grep '^op=' /tmp/cli.txt | cut -d= -f2) \
+  && BW_VER=$(grep '^bw=' /tmp/cli.txt | cut -d= -f2) \
+  && curl -sSfLo /tmp/op.zip "https://cache.agilebits.com/dist/1P/op2/pkg/v${OP_VER}/op_linux_amd64_v${OP_VER}.zip" \
+  && unzip -o /tmp/op.zip -d /usr/local/bin op \
+  && chmod +x /usr/local/bin/op \
+  && rm /tmp/op.zip \
+  && curl -sSfLo /tmp/bw.zip "https://github.com/bitwarden/clients/releases/download/cli-v${BW_VER}/bw-linux-${BW_VER}.zip" \
+  && unzip -o /tmp/bw.zip -d /usr/local/bin \
+  && chmod +x /usr/local/bin/bw \
+  && rm /tmp/bw.zip
+
+# Stage 5: python packages
 FROM python:3.12-slim-bookworm AS python-builder
 RUN --mount=type=bind,source=build/pkgs/builder-python-apt.txt,target=/tmp/packages.txt \
   apt-get update && apt-get install -y --no-install-recommends \
@@ -70,6 +85,8 @@ RUN --mount=type=bind,source=build/pkgs/dev-rust-cargo.txt,target=/tmp/cargo.txt
     cargo install "$crate" --version "$version"; \
   done
 
+COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/
+
 RUN groupadd -g 1000 frona && useradd -u 1000 -g frona -m -s /bin/bash frona
 RUN mkdir -p /app /app/target /app/frontend/node_modules /app/data \
     && chown -R frona:frona /app /usr/local/cargo
@@ -77,7 +94,7 @@ USER frona
 WORKDIR /app
 COPY --chown=frona:frona frontend/package.json frontend/package-lock.json* frontend/
 RUN cd frontend && npm install
-CMD ["bash", "-c", "cargo watch -w engine/ -w Cargo.toml -w Cargo.lock --delay 3 -x 'run -p frona' & cd frontend && npm run dev & wait"]
+CMD ["bash", "-c", "cd frontend && npm install && cd /app && cargo watch --poll -w engine/ -w Cargo.toml -w Cargo.lock --delay 3 -x 'run -p frona' & cd frontend && npm run dev & wait"]
 
 # ============================
 # PROD TARGET (default)
@@ -88,6 +105,8 @@ RUN --mount=type=bind,source=build/pkgs/prod-apt.txt,target=/tmp/packages.txt \
   apt-get update && apt-get install -y --no-install-recommends \
   $(grep -vE '^\s*(#|$)' /tmp/packages.txt | tr '\n' ' ') \
   && rm -rf /var/lib/apt/lists/*
+
+COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/
 
 RUN groupadd -g 1000 frona && useradd -u 1000 -g frona -d /app -s /bin/bash frona
 RUN mkdir -p /app /data && chown -R frona:frona /app /data

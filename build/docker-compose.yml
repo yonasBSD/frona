@@ -46,7 +46,6 @@ services:
       - FRONA_SERVER_CORS_ORIGINS
       - FRONA_SERVER_BACKEND_URL
       - FRONA_SERVER_FRONTEND_URL
-      - FRONA_AUTH_ENCRYPTION_SECRET=dev-secret-change-in-production
       - FRONA_LOG_LEVEL=debug
       - FRONA_BROWSER_WS_URL=ws://browserless:3333
       - FRONA_SEARCH_SEARXNG_BASE_URL=http://searxng:8080
