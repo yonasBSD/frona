@@ -42,15 +42,17 @@ RUN cargo build --release -p frona
 
 # Stage 4: CLI tools (op, bw)
 FROM debian:bookworm-slim AS cli-tools
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN --mount=type=bind,source=build/pkgs/prod-cli.txt,target=/tmp/cli.txt \
   OP_VER=$(grep '^op=' /tmp/cli.txt | cut -d= -f2) \
   && BW_VER=$(grep '^bw=' /tmp/cli.txt | cut -d= -f2) \
-  && curl -sSfLo /tmp/op.zip "https://cache.agilebits.com/dist/1P/op2/pkg/v${OP_VER}/op_linux_amd64_v${OP_VER}.zip" \
+  && curl -sSfLo /tmp/op.zip "https://cache.agilebits.com/dist/1P/op2/pkg/v${OP_VER}/op_linux_${TARGETARCH}_v${OP_VER}.zip" \
   && unzip -o /tmp/op.zip -d /usr/local/bin op \
   && chmod +x /usr/local/bin/op \
   && rm /tmp/op.zip \
-  && curl -sSfLo /tmp/bw.zip "https://github.com/bitwarden/clients/releases/download/cli-v${BW_VER}/bw-linux-${BW_VER}.zip" \
+  && if [ "$TARGETARCH" = "amd64" ]; then BW_ARCH=""; else BW_ARCH="-${TARGETARCH}"; fi \
+  && curl -sSfLo /tmp/bw.zip "https://github.com/bitwarden/clients/releases/download/cli-v${BW_VER}/bw-linux${BW_ARCH}-${BW_VER}.zip" \
   && unzip -o /tmp/bw.zip -d /usr/local/bin \
   && chmod +x /usr/local/bin/bw \
   && rm /tmp/bw.zip
