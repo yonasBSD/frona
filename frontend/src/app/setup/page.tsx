@@ -1,0 +1,342 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { AuthGuard } from "@/components/auth/auth-guard";
+import { api } from "@/lib/api-client";
+import { CheckCircleIcon } from "@heroicons/react/24/outline";
+import { ProvidersSection } from "@/components/settings/sections/providers-section";
+import { ModelsSection } from "@/components/settings/sections/models-section";
+import { ServerSection } from "@/components/settings/sections/server-section";
+import { AuthSection } from "@/components/settings/sections/auth-section";
+import { SsoSection } from "@/components/settings/sections/sso-section";
+import { BrowserSection } from "@/components/settings/sections/browser-section";
+import { SearchSection } from "@/components/settings/sections/search-section";
+import { VoiceSection } from "@/components/settings/sections/voice-section";
+import { VaultSection } from "@/components/settings/sections/vault-section";
+import { AdvancedSection } from "@/components/settings/sections/advanced-section";
+import { getConfig, updateConfig, isSensitiveSet } from "@/lib/config-types";
+import type { Config } from "@/lib/config-types";
+import { Logo } from "@/components/logo";
+
+function generateStrongSecret(length: number): string {
+  const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += charset[bytes[i] % charset.length];
+  }
+  return result;
+}
+
+const STEPS = [
+  { id: "providers" },
+  { id: "models" },
+  { id: "server" },
+  { id: "auth" },
+  { id: "sso" },
+  { id: "browser" },
+  { id: "search" },
+  { id: "voice" },
+  { id: "vault" },
+  { id: "advanced" },
+] as const;
+
+export default function SetupPage() {
+  return (
+    <AuthGuard>
+      <SetupWizard />
+    </AuthGuard>
+  );
+}
+
+function SetupComplete() {
+  const router = useRouter();
+  const [restarting, setRestarting] = useState(false);
+
+  const handleRestart = async () => {
+    setRestarting(true);
+    try {
+      await api.post("/system/restart", {});
+    } catch {
+      // Server may drop connection during restart
+    }
+    setTimeout(() => {
+      router.push("/chat");
+    }, 3000);
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center px-4 bg-surface">
+      <div className="w-full max-w-md space-y-6 text-center">
+        <CheckCircleIcon className="h-16 w-16 text-accent mx-auto" />
+        <h1 className="text-2xl font-bold text-text-primary">Setup Complete</h1>
+        <p className="text-text-secondary">
+          Your settings have been saved to <code className="text-sm bg-surface-secondary px-1.5 py-0.5 rounded">config.yaml</code>.
+          The server needs to restart for changes to take effect.
+        </p>
+
+        {restarting ? (
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-center gap-2 text-sm text-text-tertiary">
+              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Restarting server...
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-3 pt-2">
+            <button
+              onClick={handleRestart}
+              className="rounded-lg bg-accent px-6 py-2.5 text-sm font-medium text-surface hover:bg-accent-hover transition"
+            >
+              Restart Server
+            </button>
+            <button
+              onClick={() => router.push("/settings")}
+              className="text-sm text-text-tertiary hover:text-text-secondary transition"
+            >
+              Skip, I&apos;ll restart later
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SetupWizard() {
+  const router = useRouter();
+  const [config, setConfig] = useState<Config | null>(null);
+  const [patch, setPatch] = useState<Record<string, unknown>>({});
+  const [step, setStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [completed, setCompleted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [providersBlock, setProvidersBlock] = useState<string | null>(null);
+
+  useEffect(() => {
+    getConfig()
+      .then((cfg) => {
+        setConfig(cfg);
+        if (!isSensitiveSet(cfg.auth.encryption_secret)) {
+          const secret = generateStrongSecret(64);
+          updatePatch("auth", { ...cfg.auth, encryption_secret: secret });
+        }
+      })
+      .catch(() => setError("Failed to load configuration"))
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const currentStep = STEPS[step];
+  const isLastStep = step === STEPS.length - 1;
+
+  function getBlockReason(): string | null {
+    if (currentStep.id === "providers") return providersBlock;
+    if (currentStep.id === "auth" && config) {
+      const secret = config.auth.encryption_secret;
+      const hasSecret = typeof secret === "string" ? secret.length > 0 : (typeof secret === "object" && secret?.is_set);
+      if (!hasSecret) return "Encryption secret is required";
+    }
+    return null;
+  }
+  const blockReason = getBlockReason();
+  const canAdvance = !blockReason;
+
+  const updatePatch = useCallback((section: string, value: unknown) => {
+    setPatch((prev) => ({ ...prev, [section]: value }));
+    setConfig((prev) => prev ? { ...prev, [section]: value } as Config : prev);
+  }, []);
+
+  const handleComplete = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await updateConfig(patch);
+      setConfig(result.config);
+      setPatch({});
+      setCompleted(true);
+      // restart_required is always true after config update
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save configuration");
+    } finally {
+      setSaving(false);
+    }
+  }, [patch]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-sm text-text-tertiary">Loading configuration...</p>
+      </div>
+    );
+  }
+
+  if (completed) {
+    return <SetupComplete />;
+  }
+
+  if (!config) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-sm text-error-text">{error || "Failed to load configuration"}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-screen flex-col bg-surface">
+      {/* Header */}
+      <div className="border-b border-border bg-surface-secondary px-6 py-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="relative flex items-center justify-center mb-6">
+            <div className="absolute left-0 flex items-center gap-2">
+              <Logo size={56} />
+              <span className="text-2xl font-bold text-text-primary tracking-wide" style={{ fontFamily: "var(--font-brand)" }}>FRONA</span>
+            </div>
+            <span className="text-sm text-text-tertiary">{step + 1} of {STEPS.length}</span>
+            <h1 className="absolute right-0 text-2xl font-bold text-text-primary tracking-wide" style={{ fontFamily: "var(--font-brand)" }}>
+              SETUP
+            </h1>
+          </div>
+          <div className="w-full bg-surface-tertiary rounded-full h-1.5">
+            <div
+              className="bg-accent h-1.5 rounded-full transition-all"
+              style={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+          {error && (
+            <div className="rounded-lg bg-error-bg p-3 text-sm text-error-text">{error}</div>
+          )}
+
+          <div className="min-h-[300px]">
+            {currentStep.id === "providers" && (
+              <ProvidersSection
+                providers={config.providers}
+                onChange={(v) => updatePatch("providers", v)}
+                onReadyChange={setProvidersBlock}
+              />
+            )}
+            {currentStep.id === "models" && (
+              <ModelsSection
+                models={config.models}
+                enabledProviders={Object.keys(config.providers)}
+                providerConfigs={config.providers}
+                onChange={(v) => updatePatch("models", v)}
+              />
+            )}
+            {currentStep.id === "server" && (
+              <ServerSection
+                server={config.server}
+                onChange={(v) => updatePatch("server", v)}
+              />
+            )}
+            {currentStep.id === "auth" && (
+              <AuthSection
+                auth={config.auth}
+                onChange={(v) => updatePatch("auth", v)}
+              />
+            )}
+            {currentStep.id === "sso" && (
+              <SsoSection
+                sso={config.sso}
+                onChange={(v) => updatePatch("sso", v)}
+              />
+            )}
+            {currentStep.id === "browser" && (
+              <BrowserSection
+                browser={config.browser}
+                onChange={(v) => updatePatch("browser", v)}
+              />
+            )}
+            {currentStep.id === "search" && (
+              <SearchSection
+                search={config.search}
+                onChange={(v) => updatePatch("search", v)}
+              />
+            )}
+            {currentStep.id === "voice" && (
+              <VoiceSection
+                voice={config.voice}
+                onChange={(v) => updatePatch("voice", v)}
+              />
+            )}
+            {currentStep.id === "vault" && (
+              <VaultSection
+                vault={config.vault}
+                onChange={(v) => updatePatch("vault", v)}
+              />
+            )}
+            {currentStep.id === "advanced" && (
+              <AdvancedSection
+                inference={config.inference}
+                scheduler={config.scheduler}
+                app={config.app}
+                onChange={(update) => {
+                  if (update.inference) updatePatch("inference", update.inference);
+                  if (update.scheduler) updatePatch("scheduler", update.scheduler);
+                  if (update.app) updatePatch("app", update.app);
+                }}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Navigation */}
+      <div className="border-t border-border bg-surface-secondary px-6 py-4">
+        <div className="max-w-2xl mx-auto flex items-center justify-between">
+          <button
+            onClick={() => setStep((s) => Math.max(0, s - 1))}
+            disabled={step === 0}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 transition"
+          >
+            Back
+          </button>
+          {blockReason && (
+            <p className="text-xs text-text-tertiary">
+              {blockReason}
+            </p>
+          )}
+          <div className="flex items-center gap-3">
+            {!isLastStep && (
+              <button
+                onClick={() => setStep((s) => s + 1)}
+                disabled={!canAdvance}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition"
+              >
+                Skip
+              </button>
+            )}
+            {isLastStep ? (
+              <button
+                onClick={handleComplete}
+                disabled={saving}
+                className="rounded-lg bg-accent px-6 py-2 text-sm font-medium text-surface hover:bg-accent-hover disabled:opacity-50 transition"
+              >
+                {saving ? "Saving..." : "Complete Setup"}
+              </button>
+            ) : (
+              <button
+                onClick={() => setStep((s) => s + 1)}
+                disabled={!canAdvance}
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-surface hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                Next
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

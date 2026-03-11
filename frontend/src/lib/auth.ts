@@ -22,6 +22,7 @@ const API_URL = process.env.FRONA_SERVER_BACKEND_URL || "http://localhost:3001";
 interface AuthContextValue {
   user: UserInfo | null;
   loading: boolean;
+  needsSetup: boolean;
   ssoStatus: SsoStatus | null;
   login: (req: LoginRequest) => Promise<void>;
   register: (req: RegisterRequest) => Promise<void>;
@@ -70,12 +71,14 @@ async function fetchSsoStatus(): Promise<SsoStatus | null> {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [ssoStatus, setSsoStatus] = useState<SsoStatus | null>(null);
 
   useEffect(() => {
     Promise.all([fetchCurrentUser(), fetchSsoStatus()])
       .then(([u, sso]) => {
         setUser(u);
+        setNeedsSetup(u?.needs_setup === true);
         setSsoStatus(sso);
       })
       .finally(() => setLoading(false));
@@ -95,6 +98,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setAccessToken(res.token);
     }
     setUser(res.user);
+    // After registration, check if setup is needed
+    const me = await fetchCurrentUser();
+    if (me?.needs_setup) {
+      setNeedsSetup(true);
+    }
   }, []);
 
   const logout = useCallback(async () => {
@@ -118,6 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value: {
         user,
         loading,
+        needsSetup,
         ssoStatus,
         login,
         register,

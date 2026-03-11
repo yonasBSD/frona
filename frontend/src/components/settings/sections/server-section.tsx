@@ -1,0 +1,88 @@
+"use client";
+
+import type { ServerConfig } from "@/lib/config-types";
+import { TextInput, NumberInput, Toggle, SectionHeader, SectionPanel } from "@/components/settings/field";
+import { ServerIcon } from "@heroicons/react/24/outline";
+
+interface ServerSectionProps {
+  server: ServerConfig;
+  onChange: (server: ServerConfig) => void;
+}
+
+export function ServerSection({ server, onChange }: ServerSectionProps) {
+  return (
+    <div>
+      <SectionHeader title="Server" description="Core server settings and network configuration" icon={ServerIcon} />
+      <SectionPanel>
+
+      <NumberInput
+        label="Port"
+        description="Port the backend server listens on"
+        value={server.port}
+        onChange={(port) => onChange({ ...server, port })}
+        min={1}
+        max={65535}
+        placeholder="3001"
+      />
+
+      <TextInput
+        label="Base URL"
+        description="Public URL used for generating links and callbacks"
+        value={server.base_url}
+        onChange={(base_url) => onChange({ ...server, base_url })}
+        placeholder="https://example.com"
+      />
+
+      <TextInput
+        label="Backend URL"
+        description="Optional override for the backend API URL"
+        value={server.backend_url}
+        onChange={(backend_url) => onChange({ ...server, backend_url })}
+        placeholder="http://localhost:3001"
+      />
+
+      <TextInput
+        label="Frontend URL"
+        description="Optional override for the frontend URL"
+        value={server.frontend_url}
+        onChange={(frontend_url) => onChange({ ...server, frontend_url })}
+        placeholder="http://localhost:3000"
+      />
+
+      <TextInput
+        label="CORS Origins"
+        description="Comma-separated list of allowed origins"
+        value={server.cors_origins}
+        onChange={(cors_origins) => onChange({ ...server, cors_origins })}
+        placeholder="http://localhost:3000, https://example.com"
+      />
+
+      <NumberInput
+        label="Max Concurrent Tasks"
+        description="Maximum number of tasks that can run simultaneously"
+        value={server.max_concurrent_tasks}
+        onChange={(max_concurrent_tasks) => onChange({ ...server, max_concurrent_tasks })}
+        min={1}
+        placeholder="10"
+      />
+
+      <NumberInput
+        label="Max Body Size (MB)"
+        description="Maximum request body size in megabytes"
+        value={Math.round(server.max_body_size_bytes / 1048576)}
+        onChange={(mb) => onChange({ ...server, max_body_size_bytes: mb * 1048576 })}
+        min={1}
+        placeholder="100"
+      />
+
+      <Toggle
+        label="Sandbox Disabled"
+        description="Disable CLI sandboxing for tool execution"
+        value={server.sandbox_disabled}
+        onChange={(sandbox_disabled) => onChange({ ...server, sandbox_disabled })}
+        warning="Disabling the sandbox allows unrestricted command execution"
+      />
+      </SectionPanel>
+    </div>
+  );
+}

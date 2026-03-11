@@ -10,7 +10,6 @@ import { PanelFooter } from "./panel-footer";
 import { ChatsTab } from "../nav/chats-tab";
 import { TasksTab } from "../nav/tasks-tab";
 import { AgentsTab } from "../nav/agents-tab";
-import { SettingsModal } from "../settings/settings-modal";
 import { Logo } from "../logo";
 
 const MIN_WIDTH = 200;
@@ -21,7 +20,6 @@ export function NavigationPanel() {
   const { activeTab, addStandaloneChat } = useNavigation();
   const { createChat, inferring } = useSession();
   const router = useRouter();
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const dragging = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -62,47 +60,43 @@ export function NavigationPanel() {
   }, []);
 
   return (
-    <>
-      <div
-        ref={panelRef}
-        className="relative flex h-full flex-col border-r border-border bg-surface-nav"
-        style={{ width }}
-      >
-        <div className="flex items-center px-2 py-1">
-          <button
-            onClick={() => router.push("/chat")}
-            className="flex flex-1 items-center justify-center gap-1"
-          >
-            <Logo size={52} animate={inferring} />
-            <span className="text-2xl font-bold text-text-primary tracking-wide" style={{ fontFamily: "var(--font-brand)" }}>FRONA</span>
-          </button>
-          <button
-            onClick={handleNewChat}
-            className="rounded-lg p-1.5 text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
-            title="New chat"
-          >
-            <PlusIcon className="h-5 w-5" />
-          </button>
-        </div>
-
-        <TabBar />
-
-        <div className="flex-1 overflow-y-auto">
-          {activeTab === "chat" && <ChatsTab />}
-          {activeTab === "tasks" && <TasksTab />}
-          {activeTab === "agents" && <AgentsTab />}
-        </div>
-
-        <PanelFooter onOpenSettings={() => setSettingsOpen(true)} />
-
-        {/* Resize handle */}
-        <div
-          onMouseDown={onMouseDown}
-          className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/20 active:bg-accent/30 transition-colors"
-        />
+    <div
+      ref={panelRef}
+      className="relative flex h-full flex-col border-r border-border bg-surface-nav"
+      style={{ width }}
+    >
+      <div className="flex items-center px-2 py-1">
+        <button
+          onClick={() => router.push("/chat")}
+          className="flex flex-1 items-center justify-center gap-1"
+        >
+          <Logo size={52} animate={inferring} />
+          <span className="text-2xl font-bold text-text-primary tracking-wide" style={{ fontFamily: "var(--font-brand)" }}>FRONA</span>
+        </button>
+        <button
+          onClick={handleNewChat}
+          className="rounded-lg p-1.5 text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+          title="New chat"
+        >
+          <PlusIcon className="h-5 w-5" />
+        </button>
       </div>
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-    </>
+      <TabBar />
+
+      <div className="flex-1 overflow-y-auto">
+        {activeTab === "chat" && <ChatsTab />}
+        {activeTab === "tasks" && <TasksTab />}
+        {activeTab === "agents" && <AgentsTab />}
+      </div>
+
+      <PanelFooter />
+
+      {/* Resize handle */}
+      <div
+        onMouseDown={onMouseDown}
+        className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/20 active:bg-accent/30 transition-colors"
+      />
+    </div>
   );
 }

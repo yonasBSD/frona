@@ -21,7 +21,7 @@ export default function RegisterPage() {
     setSubmitting(true);
     try {
       await register({ username, name, email, password });
-      router.replace("/chat");
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {

@@ -4,11 +4,7 @@ import { Cog6ToothIcon, ArrowRightStartOnRectangleIcon } from "@heroicons/react/
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 
-interface PanelFooterProps {
-  onOpenSettings: () => void;
-}
-
-export function PanelFooter({ onOpenSettings }: PanelFooterProps) {
+export function PanelFooter() {
   const { user, logout } = useAuth();
   const router = useRouter();
 
@@ -24,7 +20,7 @@ export function PanelFooter({ onOpenSettings }: PanelFooterProps) {
       )}
       <div className="flex items-center gap-1">
         <button
-          onClick={onOpenSettings}
+          onClick={() => router.push("/settings")}
           className="flex flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
         >
           <Cog6ToothIcon className="h-4 w-4" />
