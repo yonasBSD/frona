@@ -1,10 +1,15 @@
 mod agents;
 mod auth;
 mod chats;
+mod contacts;
 mod files;
+mod messages;
+mod misc;
+mod navigation;
 mod security;
 mod spaces;
 mod tasks;
+mod vaults;
 
 use std::net::SocketAddr;
 
@@ -54,6 +59,14 @@ fn build_app(state: AppState) -> Router {
         .merge(routes::spaces::router())
         .merge(routes::tasks::router())
         .merge(routes::files::router())
+        .merge(routes::contacts::router())
+        .merge(routes::navigation::router())
+        .merge(routes::messages::router())
+        .merge(routes::vaults::router())
+        .merge(routes::tools::router())
+        .merge(routes::well_known::router())
+        .merge(routes::metrics::router())
+        .merge(routes::config::router())
         .with_state(state)
 }
 

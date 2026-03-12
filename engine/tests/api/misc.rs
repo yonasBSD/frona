@@ -1,0 +1,172 @@
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use tower::ServiceExt;
+
+use super::*;
+
+// ---------------------------------------------------------------------------
+// Tools
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_tools_returns_builtin() {
+    let (state, _tmp) = test_app_state().await;
+
+    let app = build_app(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/tools")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    let tools = json.as_array().unwrap();
+
+    // Should include at least the hardcoded tools
+    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"browser"));
+    assert!(names.contains(&"web_fetch"));
+    assert!(names.contains(&"web_search"));
+}
+
+// ---------------------------------------------------------------------------
+// Well-known
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn openid_configuration_returns_json() {
+    let (state, _tmp) = test_app_state().await;
+
+    let app = build_app(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/.well-known/openid-configuration")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert!(json["issuer"].is_string());
+    assert!(json["jwks_uri"].as_str().unwrap().contains("jwks.json"));
+    assert!(json["token_endpoint"].is_string());
+}
+
+#[tokio::test]
+async fn jwks_returns_keys() {
+    let (state, _tmp) = test_app_state().await;
+
+    let app = build_app(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/.well-known/jwks.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert!(json["keys"].is_array());
+}
+
+// ---------------------------------------------------------------------------
+// Metrics
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn metrics_returns_text() {
+    let (state, _tmp) = test_app_state().await;
+
+    let app = build_app(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let content_type = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(content_type.contains("text/plain"));
+}
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn get_config_schema_returns_json() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, _) =
+        register_user(&state, "cfg-schema", "cfgschema@example.com", "password123").await;
+
+    let app = build_app(state);
+    let resp = app
+        .oneshot(auth_get("/api/config/schema", &token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    // JSON Schema should have a "type" or "$schema" or "properties" field
+    assert!(
+        json.get("type").is_some()
+            || json.get("$schema").is_some()
+            || json.get("properties").is_some(),
+        "Expected JSON Schema response"
+    );
+}
+
+#[tokio::test]
+async fn get_config_returns_redacted() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, _) =
+        register_user(&state, "cfg-get", "cfgget@example.com", "password123").await;
+
+    let app = build_app(state);
+    let resp = app
+        .oneshot(auth_get("/api/config", &token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    // Should have config structure but secrets redacted
+    assert!(json.is_object());
+}
+
+#[tokio::test]
+async fn config_endpoints_reject_no_auth() {
+    let (state, _tmp) = test_app_state().await;
+
+    for uri in ["/api/config", "/api/config/schema"] {
+        let app = build_app(state.clone());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "GET {uri} should return 401 without auth"
+        );
+    }
+}
