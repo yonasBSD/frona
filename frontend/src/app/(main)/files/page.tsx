@@ -1,11 +1,16 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { AuthGuard } from "@/components/auth/auth-guard";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
-import { ArrowLeftIcon, ArrowUpTrayIcon } from "@heroicons/react/24/outline";
+import {
+  EllipsisVerticalIcon,
+  ArrowUpTrayIcon,
+  FolderArrowDownIcon,
+  ListBulletIcon,
+  Squares2X2Icon,
+  ViewColumnsIcon,
+} from "@heroicons/react/24/outline";
 import {
   api as apiClient,
   listUserFiles,
@@ -28,7 +33,6 @@ import "@svar-ui/react-filemanager/all.css";
 const MYFILES_ROOT = "/My Files";
 const WORKSPACES_ROOT = "/Workspaces";
 
-
 function toSvarEntries(
   entries: FileEntry[],
   parentPrefix: string,
@@ -43,15 +47,6 @@ function toSvarEntries(
 }
 
 export default function FilesPage() {
-  return (
-    <AuthGuard>
-      <FilesContent />
-    </AuthGuard>
-  );
-}
-
-function FilesContent() {
-  const router = useRouter();
   const { user } = useAuth();
   const { resolved } = useTheme();
 
@@ -66,7 +61,7 @@ function FilesContent() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const fmApiRef = useRef<IApi | null>(null);
 
-  const [showUploadMenu, setShowUploadMenu] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
 
   function getCurrentUploadPath(): { currentPath: string; parentSub: string } {
@@ -130,7 +125,6 @@ function FilesContent() {
     const items = e.dataTransfer.items;
     if (!items || items.length === 0) return;
 
-    // Check if any item is a directory
     const entries: FileSystemEntry[] = [];
     let hasDirectory = false;
     for (const item of Array.from(items)) {
@@ -141,9 +135,8 @@ function FilesContent() {
       }
     }
 
-    if (!hasDirectory) return; // Let SVAR handle plain file drops
+    if (!hasDirectory) return;
 
-    // Recursively read all files from directory entries
     async function readEntry(entry: FileSystemEntry, path: string): Promise<{ file: File; path: string }[]> {
       if (entry.isFile) {
         const file = await new Promise<File>((resolve) =>
@@ -188,7 +181,6 @@ function FilesContent() {
   useEffect(() => {
     apiClient.get<Agent[]>("/api/agents").then(setAgents).catch(() => {});
   }, []);
-
 
   const buildRootData = useCallback(
     async (agentList: Agent[]) => {
@@ -279,15 +271,12 @@ function FilesContent() {
     (fmApi: IApi) => {
       fmApiRef.current = fmApi;
 
-      // Default to My Files on load
       fmApi.exec("set-path", { id: MYFILES_ROOT });
 
-      // Server-side search: fetch results and provide-data into parent folders
       fmApi.on("filter-files", (ev) => {
         if (!ev.text) return;
 
         searchFiles(ev.text).then((results) => {
-          // Group results by parent folder and provide-data for each
           const byParent = new Map<string, IEntity[]>();
 
           for (const result of results) {
@@ -303,13 +292,11 @@ function FilesContent() {
                 : `${WORKSPACES_ROOT}/${agent.name}`;
             }
 
-            // Skip if already in tree
             if (fmApi.getFile(treeId)) continue;
 
             const lastSlash = treeId.lastIndexOf("/");
             const parentId = lastSlash <= 0 ? "/" : treeId.substring(0, lastSlash);
 
-            // Ensure parent folders exist up the chain
             const parts = treeId.split("/").filter(Boolean);
             for (let i = 1; i < parts.length - 1; i++) {
               const folderPath = "/" + parts.slice(0, i + 1).join("/");
@@ -337,22 +324,17 @@ function FilesContent() {
             byParent.set(parentId, group);
           }
 
-          // Provide data to each parent — SVAR merges into tree properly
           for (const [parentId, entries] of byParent) {
             fmApi.exec("provide-data", { id: parentId, data: entries });
           }
-        }).catch(() => {
-          // ignore — client-side search already ran
-        });
+        }).catch(() => {});
       });
 
-      // On double-click (open-file) in search: navigate to file's parent folder and select it
       fmApi.intercept("open-file", (ev) => {
         const id = ev.id as string;
         const file = fmApi.getFile(id);
         if (!file || file.type === "folder") return;
 
-        // Exit search mode, navigate to parent, select the file
         const parentId = file.parent as string;
         fmApi.exec("set-mode", { mode: "table" });
         fmApi.exec("set-path", { id: parentId, selected: [id] });
@@ -371,7 +353,6 @@ function FilesContent() {
           }
         }
       });
-
 
       fmApi.on("rename-file", async (ev) => {
         if (!isMyFilesPath(ev.id)) return;
@@ -457,7 +438,6 @@ function FilesContent() {
         }
       });
 
-      // Download: fetch as blob and save
       fmApi.on("download-file", async (ev) => {
         const info = getFileOwnerPath(ev.id);
         if (!info) return;
@@ -526,18 +506,8 @@ function FilesContent() {
   const ThemeWrapper = resolved === "dark" ? WillowDark : Willow;
 
   return (
-    <div className="flex h-screen bg-surface">
-      <div className="w-12 shrink-0 border-r border-border bg-surface-secondary flex flex-col items-center pt-3">
-        <button
-          onClick={() => router.push("/chat")}
-          className="p-2 text-text-secondary hover:text-text-primary transition rounded-lg hover:bg-surface-tertiary"
-          title="Back to chat"
-        >
-          <ArrowLeftIcon className="h-5 w-5" />
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-hidden pr-3">
+    <div className="flex h-full min-h-0 bg-surface">
+      <div className="flex-1 min-w-0 overflow-hidden">
         <input
           ref={fileInputRef}
           type="file"
@@ -562,33 +532,58 @@ function FilesContent() {
             onDrop={handleDrop}
             onDragOver={(e) => e.preventDefault()}
           >
-            <div className="absolute bottom-6 right-6 z-10">
-              {showUploadMenu && (
+            <div className="absolute top-2 right-4 z-10">
+              {showMenu && (
                 <>
-                  <div className="fixed inset-0" onClick={() => setShowUploadMenu(false)} />
-                  <div className="absolute bottom-14 right-0 bg-surface-secondary border border-border rounded-lg shadow-lg py-1 min-w-[140px]">
+                  <div className="fixed inset-0" onClick={() => setShowMenu(false)} />
+                  <div className="absolute top-10 right-0 bg-surface-secondary border border-border rounded-lg shadow-lg py-1 min-w-[160px]">
+                    <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">View</div>
                     <button
-                      onClick={() => { fileInputRef.current?.click(); setShowUploadMenu(false); }}
-                      className="w-full px-4 py-2 text-sm text-text-primary hover:bg-surface-tertiary text-left"
+                      onClick={() => { fmApiRef.current?.exec("set-mode", { mode: "table" }); setShowMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-primary hover:bg-surface-tertiary text-left"
                     >
+                      <ListBulletIcon className="h-4 w-4 text-text-secondary" />
+                      List
+                    </button>
+                    <button
+                      onClick={() => { fmApiRef.current?.exec("set-mode", { mode: "cards" }); setShowMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-primary hover:bg-surface-tertiary text-left"
+                    >
+                      <Squares2X2Icon className="h-4 w-4 text-text-secondary" />
+                      Grid
+                    </button>
+                    <button
+                      onClick={() => { fmApiRef.current?.exec("set-mode", { mode: "panels" }); setShowMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-primary hover:bg-surface-tertiary text-left"
+                    >
+                      <ViewColumnsIcon className="h-4 w-4 text-text-secondary" />
+                      Columns
+                    </button>
+                    <div className="border-t border-border my-1" />
+                    <button
+                      onClick={() => { fileInputRef.current?.click(); setShowMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-primary hover:bg-surface-tertiary text-left"
+                    >
+                      <ArrowUpTrayIcon className="h-4 w-4 text-text-secondary" />
                       Upload Files
                     </button>
                     <button
-                      onClick={() => { folderInputRef.current?.click(); setShowUploadMenu(false); }}
-                      className="w-full px-4 py-2 text-sm text-text-primary hover:bg-surface-tertiary text-left"
+                      onClick={() => { folderInputRef.current?.click(); setShowMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-primary hover:bg-surface-tertiary text-left"
                     >
+                      <FolderArrowDownIcon className="h-4 w-4 text-text-secondary" />
                       Upload Folder
                     </button>
                   </div>
                 </>
               )}
               <button
-                onClick={() => setShowUploadMenu((v) => !v)}
-                className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-surface bg-accent hover:bg-accent-hover rounded-full shadow-lg transition"
-                title="Upload"
+                onClick={() => setShowMenu((v) => !v)}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-accent text-surface hover:bg-accent-hover transition shadow"
+                title="Options"
               >
-                <ArrowUpTrayIcon className="h-5 w-5" />
-                Upload
+                <EllipsisVerticalIcon className="h-5 w-5" />
+                Options
               </button>
             </div>
             <ThemeWrapper>
@@ -599,6 +594,17 @@ function FilesContent() {
                 mode="table"
                 menuOptions={(mode, item) => {
                   const opts = getMenuOptions(mode) as IFileMenuOption[];
+                  if (mode === "add") {
+                    for (const opt of opts) {
+                      if (opt.id === "add-file") opt.icon = "wxi-content-paste";
+                      if (opt.id === "add-folder") opt.icon = "wxi-folder";
+                      if (opt.id === "upload") opt.icon = "wxi-arrow-up";
+                    }
+                    opts.push({
+                      icon: "wxi-arrow-up", text: "Upload Folder", hotkey: "", id: "upload-folder",
+                      handler: () => { folderInputRef.current?.click(); },
+                    });
+                  }
                   if (mode === "file" && item) {
                     const downloadIdx = opts.findIndex((o) => o.id === "download");
                     const fileId = item.id;

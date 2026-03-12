@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { AuthGuard } from "@/components/auth/auth-guard";
 import { RestartBanner } from "@/components/settings/restart-banner";
 import { SettingsProvider } from "@/components/settings/settings-context";
 import type { SectionHandlers } from "@/components/settings/settings-context";
@@ -20,7 +18,6 @@ import { VaultSection } from "@/components/settings/sections/vault-section";
 import { AdvancedSection } from "@/components/settings/sections/advanced-section";
 import { getConfig, updateConfig } from "@/lib/config-types";
 import type { Config } from "@/lib/config-types";
-import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 
 const TABS = [
   { id: "profile", label: "Profile", group: "user" },
@@ -40,15 +37,6 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 export default function SettingsPage() {
-  return (
-    <AuthGuard>
-      <SettingsContent />
-    </AuthGuard>
-  );
-}
-
-function SettingsContent() {
-  const router = useRouter();
   const [config, setConfig] = useState<Config | null>(null);
   const [patch, setPatch] = useState<Record<string, unknown>>({});
   const [activeTab, setActiveTabState] = useState<TabId>(() => {
@@ -138,16 +126,9 @@ function SettingsContent() {
       onModifiedChange={setSectionModified}
       onHandlersChange={setSectionHandlers}
     >
-      <div className="flex h-screen bg-surface">
-        {/* Sidebar */}
-        <div className="w-56 shrink-0 border-r border-border bg-surface-secondary p-4 flex flex-col">
-          <button
-            onClick={() => router.push("/chat")}
-            className="flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary mb-6 transition"
-          >
-            <ArrowLeftIcon className="h-4 w-4" />
-            Back
-          </button>
+      <div className="flex h-full bg-surface">
+        {/* Sidebar — matches nav panel style */}
+        <div className="border-r border-border bg-surface-nav p-4 flex flex-col" style={{ width: 289 }}>
           <h2 className="text-lg font-semibold text-text-primary mb-4">Settings</h2>
           <nav className="space-y-1 flex-1">
             {userTabs.map((t) => (

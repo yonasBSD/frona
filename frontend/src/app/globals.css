@@ -205,35 +205,80 @@
   display: none;
 }
 
-/* Make filemanager fill available height */
-.filemanager-container [class*="wx-filemanager"][class*="wx-flex"] {
-  display: flex;
-  height: 100vh !important;
+/* Make filemanager and all its layout children fill available height */
+.filemanager-container,
+.filemanager-container .wx-theme,
+.filemanager-container .wx-filemanager {
+  height: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+.filemanager-container .wx-filemanager > * {
+  margin-top: 0 !important;
 }
 
-/* Tree sidebar uses secondary background to separate from details */
-.filemanager-container [class*="wx-sidebar"] [class*="wx-wrapper"] {
-  background-color: var(--surface-secondary) !important;
+/* Content wrapper */
+.filemanager-container .wx-content-wrapper {
+  flex: 1 !important;
+  min-height: 0 !important;
+  height: 100% !important;
 }
 
-/* Toolbar text and icon overrides for hardcoded colors */
+/* Let file list auto-size rather than fitting to viewport */
+.filemanager-container .wx-grid {
+  height: auto !important;
+}
+.filemanager-container .wx-body {
+  height: auto !important;
+  overflow: visible !important;
+}
+.filemanager-container .wx-table-box {
+  height: auto !important;
+}
+
+/* Padding on the file details/content panel */
+.filemanager-container .wx-content {
+  padding: 8px 12px !important;
+}
+
+
+/* Tree sidebar: match nav panel look + width (w-72 = 288px) */
+.filemanager-container .wx-sidebar {
+  background-color: var(--surface-nav) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+  align-self: stretch !important;
+  width: 289px !important;
+  min-width: 289px !important;
+}
+.filemanager-container .wx-sidebar .wx-wrapper {
+  background-color: var(--surface-nav) !important;
+  flex: 1 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+/* Hide SVAR toolbar — TopBar handles navigation */
 .filemanager-container [class*="wx-toolbar"] {
-  color: var(--text-primary);
-  background: var(--surface-secondary);
-  border-color: var(--border);
+  display: none !important;
 }
 
-/* Breadcrumb bar background */
+/* Breadcrumb bar — transparent background */
 .filemanager-container [class*="wx-breadcrumbs"] {
-  background-color: var(--surface-secondary) !important;
+  background-color: transparent !important;
 }
 
-/* Reduce gap between tree sidebar and details */
+/* Remove gaps between sidebar and details */
 .filemanager-container [class*="wx-sidebar"] {
-  padding-right: 5px !important;
+  padding: 0 !important;
 }
 .filemanager-container [class*="wx-content-item"] {
-  padding-left: 5px !important;
+  padding-left: 0 !important;
+}
+.filemanager-container [class*="wx-content-wrapper"] {
+  padding-top: 0 !important;
+  margin-top: 0 !important;
 }
 
 
