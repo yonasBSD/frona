@@ -82,6 +82,212 @@
   --info-text: #8bb8d4;
 }
 
+.filemanager-container [class*="wx-willow"],
+.filemanager-container [class*="wx-material"] {
+  --fm-folder-color: #8b7355;
+  --fm-icon-color: var(--text-secondary);
+  --wx-background: var(--surface);
+  --wx-background-alt: var(--surface-tertiary);
+  --wx-background-hover: var(--surface-tertiary);
+  --wx-color-font: var(--text-primary);
+  --wx-color-font-alt: var(--text-secondary);
+  --wx-color-font-disabled: var(--text-tertiary);
+  --wx-color-primary: var(--accent);
+  --wx-color-primary-font: var(--surface);
+  --wx-color-primary-selected: color-mix(in srgb, var(--accent) 15%, transparent);
+  --wx-color-secondary: transparent;
+  --wx-color-secondary-hover: color-mix(in srgb, var(--accent) 12%, transparent);
+  --wx-color-secondary-font: var(--accent);
+  --wx-color-secondary-font-hover: var(--accent);
+  --wx-color-secondary-border: var(--accent);
+  --wx-color-secondary-border-disabled: var(--text-tertiary);
+  --wx-color-danger: var(--danger);
+  --wx-color-success: var(--success);
+  --wx-color-warning: var(--warning);
+  --wx-color-link: var(--accent);
+  --wx-color-disabled: var(--surface-tertiary);
+  --wx-color-disabled-alt: var(--surface-tertiary);
+  --wx-border: 1px solid var(--border);
+  --wx-border-light: 1px solid var(--border);
+  --wx-border-medium: 1px solid var(--border);
+  --wx-icon-color: var(--fm-icon-color);
+  --wx-fm-background: var(--surface);
+  --wx-fm-select-background: color-mix(in srgb, var(--accent) 10%, transparent);
+  --wx-fm-grid-border: 1px solid var(--border);
+  --wx-fm-grid-header-color: var(--surface-secondary);
+  --wx-fm-button-font-color: var(--text-secondary);
+  --wx-fm-box-shadow: none;
+  --wx-fm-toolbar-height: 56px;
+  --wx-fm-progress-bar-color: var(--accent);
+  --wx-input-background: var(--surface-secondary);
+  --wx-input-background-disabled: var(--surface-tertiary);
+  --wx-input-font-color: var(--text-primary);
+  --wx-input-border: 1px solid var(--border);
+  --wx-input-border-focus: 1px solid var(--accent);
+  --wx-input-border-disabled: 1px solid var(--border);
+  --wx-input-placeholder-color: var(--text-tertiary);
+  --wx-input-icon-color: var(--fm-icon-color);
+  --wx-button-background: var(--surface-tertiary);
+  --wx-button-font-color: var(--text-primary);
+  --wx-button-danger-font-color: var(--surface);
+  --wx-button-pressed: var(--surface-tertiary);
+  --wx-button-box-shadow: none;
+  --wx-popup-background: var(--surface-secondary);
+  --wx-popup-border: 1px solid var(--border);
+  --wx-popup-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --wx-modal-background: var(--surface-secondary);
+  --wx-modal-border: 1px solid var(--border);
+  --wx-modal-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+  --wx-modal-backdrop: rgba(0, 0, 0, 0.3);
+  --wx-modal-header-font-color: var(--text-primary);
+  --wx-label-font-color: var(--text-primary);
+  --wx-checkbox-border-color: var(--text-secondary);
+  --wx-checkbox-font-color: var(--text-primary);
+  --wx-table-header-background: var(--surface-secondary);
+  --wx-table-border: 1px solid var(--border);
+  --wx-table-cell-border: 1px solid var(--border);
+  --wx-table-header-border: 1px solid var(--border);
+  --wx-table-header-cell-border: 1px solid var(--border);
+  --wx-table-select-background: color-mix(in srgb, var(--accent) 10%, transparent);
+  --wx-table-select-border: var(--accent);
+  --wx-table-select-color: var(--accent);
+  --wx-tabs-background: var(--surface);
+  --wx-tabs-background-hover: transparent;
+  --wx-tabs-active-background: transparent;
+  --wx-tabs-active-color: var(--accent);
+  --wx-tabs-active-border: var(--accent);
+  --wx-tabs-hover-border: var(--text-tertiary);
+  --wx-tabs-divider-color: transparent;
+  --wx-segmented-background: var(--surface-tertiary);
+  --wx-segmented-background-hover: var(--surface-tertiary);
+  --wx-segmented-border: none;
+  --wx-notice-background: var(--surface-tertiary);
+  --wx-notice-font-color: var(--text-primary);
+  --wx-notice-icon-color: var(--fm-icon-color);
+  --wx-notice-border: none;
+  --wx-notice-shadow: none;
+  --wx-uploader-background: var(--surface-secondary);
+  --wx-shadow-light: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --wx-shadow-medium: none;
+  --wx-box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+  --wx-box-shadow-strong: 0 4px 24px rgba(0, 0, 0, 0.16);
+  --wx-font-family: inherit;
+}
+
+/* Folder icons: warm brown instead of accent color */
+.filemanager-container [class*="wxi-folder"] {
+  color: var(--fm-folder-color) !important;
+}
+
+/* All other wxi icons: use theme-appropriate icon color */
+.filemanager-container [class*="wxi-"]:not([class*="wxi-folder"]) {
+  color: var(--fm-icon-color) !important;
+}
+
+/* Restore contrasting color for icons inside primary/selected elements */
+.filemanager-container [class*="wx-primary"] [class*="wxi-"],
+.filemanager-container [class*="wx-selected"] [class*="wxi-"]:not([class*="wxi-folder"]) {
+  color: var(--wx-color-primary-font) !important;
+}
+
+/* Hide root "/" folder — My Files and Workspaces appear as top-level */
+.filemanager-container li[data-id="/"] {
+  display: none;
+}
+/* Shift tree left to compensate for hidden root's indentation level */
+.filemanager-container [class*="wx-tree"] {
+  margin-left: -20px;
+  padding-left: 10px;
+}
+/* Hide root breadcrumb + its separator arrow */
+.filemanager-container [class*="wx-breadcrumbs"] > [data-id="/"],
+.filemanager-container [class*="wx-breadcrumbs"] > [data-id="/"] + [class*="wxi-"] {
+  display: none;
+}
+
+/* Make filemanager fill available height */
+.filemanager-container [class*="wx-filemanager"][class*="wx-flex"] {
+  display: flex;
+  height: 100vh !important;
+}
+
+/* Tree sidebar uses secondary background to separate from details */
+.filemanager-container [class*="wx-sidebar"] [class*="wx-wrapper"] {
+  background-color: var(--surface-secondary) !important;
+}
+
+/* Toolbar text and icon overrides for hardcoded colors */
+.filemanager-container [class*="wx-toolbar"] {
+  color: var(--text-primary);
+  background: var(--surface-secondary);
+  border-color: var(--border);
+}
+
+/* Breadcrumb bar background */
+.filemanager-container [class*="wx-breadcrumbs"] {
+  background-color: var(--surface-secondary) !important;
+}
+
+/* Reduce gap between tree sidebar and details */
+.filemanager-container [class*="wx-sidebar"] {
+  padding-right: 5px !important;
+}
+.filemanager-container [class*="wx-content-item"] {
+  padding-left: 5px !important;
+}
+
+
+/* Align card icons to the left */
+.filemanager-container [class*="wx-preview"] {
+  justify-content: flex-start !important;
+  align-items: flex-end !important;
+  flex-grow: 0 !important;
+}
+
+/* Menu / context menu overrides */
+[class*="wx-menu"] {
+  background: var(--surface-nav) !important;
+  border-color: var(--border) !important;
+  color: var(--text-primary) !important;
+}
+[class*="wx-option"] {
+  background-color: var(--surface-nav) !important;
+}
+[class*="wx-option"]:hover {
+  background-color: var(--surface-secondary) !important;
+}
+
+
+/* Breadcrumbs / path bar text */
+.filemanager-container [class*="wx-crumb"] {
+  color: var(--text-secondary);
+}
+.filemanager-container [class*="wx-crumb"]:last-child {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .filemanager-container {
+  --fm-folder-color: #c4a97d;
+  --wx-popup-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+  --wx-modal-shadow: 0 4px 24px rgba(0, 0, 0, 0.32);
+  --wx-modal-backdrop: rgba(0, 0, 0, 0.5);
+  --wx-shadow-light: 0 4px 12px rgba(0, 0, 0, 0.24);
+  --wx-box-shadow: 0 4px 24px rgba(0, 0, 0, 0.32);
+  --wx-box-shadow-strong: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .filemanager-container {
+    --fm-folder-color: #c4a97d;
+    --wx-popup-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+    --wx-modal-shadow: 0 4px 24px rgba(0, 0, 0, 0.32);
+    --wx-modal-backdrop: rgba(0, 0, 0, 0.5);
+    --wx-shadow-light: 0 4px 12px rgba(0, 0, 0, 0.24);
+    --wx-box-shadow: 0 4px 24px rgba(0, 0, 0, 0.32);
+    --wx-box-shadow-strong: 0 4px 24px rgba(0, 0, 0, 0.4);
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --surface: #222831;

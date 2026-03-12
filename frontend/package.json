@@ -12,6 +12,7 @@
     "@heroicons/react": "^2.2.0",
     "@icons-pack/react-simple-icons": "^13.11.1",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@svar-ui/react-filemanager": "^2.4.4",
     "@tailwindcss/typography": "^0.5.19",
     "downshift": "^9.3.2",
     "next": "^16.1.6",

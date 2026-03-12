@@ -1,0 +1,679 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { AuthGuard } from "@/components/auth/auth-guard";
+import { useAuth } from "@/lib/auth";
+import { useTheme } from "@/lib/theme";
+import { ArrowLeftIcon, ArrowUpTrayIcon } from "@heroicons/react/24/outline";
+import {
+  api as apiClient,
+  listUserFiles,
+  listAgentFiles,
+  renameFile,
+  copyFiles,
+  moveFiles,
+  createFolder,
+  deleteFile,
+  uploadFile,
+  searchFiles,
+  presignFile,
+} from "@/lib/api-client";
+import type { Agent, FileEntry } from "@/lib/types";
+import type { IEntity, IApi, IFileMenuOption } from "@svar-ui/react-filemanager";
+import { Filemanager, Willow, WillowDark, getMenuOptions } from "@svar-ui/react-filemanager";
+import { Locale } from "@svar-ui/react-core";
+import "@svar-ui/react-filemanager/all.css";
+
+const MYFILES_ROOT = "/My Files";
+const WORKSPACES_ROOT = "/Workspaces";
+
+
+function toSvarEntries(
+  entries: FileEntry[],
+  parentPrefix: string,
+): IEntity[] {
+  return entries.map((e) => ({
+    id: `${parentPrefix}${e.id}`,
+    size: e.size,
+    date: e.date,
+    type: e.type,
+    ...(e.type === "folder" ? { lazy: true } : {}),
+  }));
+}
+
+export default function FilesPage() {
+  return (
+    <AuthGuard>
+      <FilesContent />
+    </AuthGuard>
+  );
+}
+
+function FilesContent() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const { resolved } = useTheme();
+
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [data, setData] = useState<IEntity[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const agentsRef = useRef<Agent[]>([]);
+  agentsRef.current = agents;
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const fmApiRef = useRef<IApi | null>(null);
+
+  const [showUploadMenu, setShowUploadMenu] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+
+  function getCurrentUploadPath(): { currentPath: string; parentSub: string } {
+    const state = fmApiRef.current?.getState();
+    const panels = state?.panels;
+    const activePanel = state?.activePanel ?? 0;
+    let currentPath = panels?.[activePanel]?.path ?? MYFILES_ROOT;
+    if (!isMyFilesPath(currentPath)) currentPath = MYFILES_ROOT;
+    return { currentPath, parentSub: userSubpath(currentPath) };
+  }
+
+  async function uploadWithPath(file: File, relativePath: string, createdFolders: Set<string>) {
+    const parts = relativePath.split("/");
+    if (parts.length > 1) {
+      for (let i = 1; i < parts.length; i++) {
+        const folderPath = "/" + parts.slice(0, i).join("/");
+        if (!createdFolders.has(folderPath)) {
+          try {
+            await createFolder(folderPath);
+          } catch {
+            // folder may already exist
+          }
+          createdFolders.add(folderPath);
+        }
+      }
+    }
+    await uploadFile(file, relativePath);
+  }
+
+  async function refreshCurrentFolder() {
+    const { currentPath } = getCurrentUploadPath();
+    if (!fmApiRef.current) return;
+    fmApiRef.current.exec("provide-data", { id: currentPath, data: [] as IEntity[] });
+    const sub = userSubpath(currentPath);
+    const entries = await listUserFiles(sub || undefined);
+    fmApiRef.current.exec("provide-data", { id: currentPath, data: toSvarEntries(entries, MYFILES_ROOT) });
+  }
+
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const { parentSub } = getCurrentUploadPath();
+    const createdFolders = new Set<string>();
+    for (const file of Array.from(files)) {
+      const filePath = file.webkitRelativePath || file.name;
+      const relativePath = parentSub ? `${parentSub}/${filePath}` : filePath;
+      try {
+        await uploadWithPath(file, relativePath, createdFolders);
+      } catch {
+        // ignore
+      }
+    }
+    await refreshCurrentFolder();
+    e.target.value = "";
+  };
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const items = e.dataTransfer.items;
+    if (!items || items.length === 0) return;
+
+    // Check if any item is a directory
+    const entries: FileSystemEntry[] = [];
+    let hasDirectory = false;
+    for (const item of Array.from(items)) {
+      const entry = item.webkitGetAsEntry?.();
+      if (entry) {
+        entries.push(entry);
+        if (entry.isDirectory) hasDirectory = true;
+      }
+    }
+
+    if (!hasDirectory) return; // Let SVAR handle plain file drops
+
+    // Recursively read all files from directory entries
+    async function readEntry(entry: FileSystemEntry, path: string): Promise<{ file: File; path: string }[]> {
+      if (entry.isFile) {
+        const file = await new Promise<File>((resolve) =>
+          (entry as FileSystemFileEntry).file(resolve),
+        );
+        return [{ file, path: path + entry.name }];
+      }
+      if (entry.isDirectory) {
+        const dirReader = (entry as FileSystemDirectoryEntry).createReader();
+        const children = await new Promise<FileSystemEntry[]>((resolve) =>
+          dirReader.readEntries(resolve),
+        );
+        const results: { file: File; path: string }[] = [];
+        for (const child of children) {
+          results.push(...await readEntry(child, path + entry.name + "/"));
+        }
+        return results;
+      }
+      return [];
+    }
+
+    const { parentSub } = getCurrentUploadPath();
+    const createdFolders = new Set<string>();
+    const allFiles: { file: File; path: string }[] = [];
+
+    for (const entry of entries) {
+      allFiles.push(...await readEntry(entry, ""));
+    }
+
+    for (const { file, path } of allFiles) {
+      const relativePath = parentSub ? `${parentSub}/${path}` : path;
+      try {
+        await uploadWithPath(file, relativePath, createdFolders);
+      } catch {
+        // ignore
+      }
+    }
+
+    await refreshCurrentFolder();
+  }, []);
+
+  useEffect(() => {
+    apiClient.get<Agent[]>("/api/agents").then(setAgents).catch(() => {});
+  }, []);
+
+
+  const buildRootData = useCallback(
+    async (agentList: Agent[]) => {
+      setLoading(true);
+      try {
+        const userFiles = await listUserFiles();
+        const rootEntries: IEntity[] = [
+          {
+            id: MYFILES_ROOT,
+            type: "folder",
+            size: 0,
+            date: new Date(),
+            lazy: false,
+          },
+          {
+            id: WORKSPACES_ROOT,
+            type: "folder",
+            size: 0,
+            date: new Date(),
+            lazy: false,
+          },
+          ...toSvarEntries(userFiles, MYFILES_ROOT),
+          ...agentList.map((a) => ({
+            id: `${WORKSPACES_ROOT}/${a.name}`,
+            type: "folder" as const,
+            size: 0,
+            date: new Date(),
+            lazy: true,
+            _agentId: a.id,
+          })),
+        ];
+        setData(rootEntries);
+      } catch {
+        setData([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (agents.length > 0) {
+      buildRootData(agents);
+    } else {
+      buildRootData([]);
+    }
+  }, [agents, buildRootData]);
+
+  function resolveAgentId(path: string): string | null {
+    if (!path.startsWith(WORKSPACES_ROOT + "/")) return null;
+    const rest = path.slice(WORKSPACES_ROOT.length + 1);
+    const agentName = rest.split("/")[0];
+    const agent = agentsRef.current.find((a) => a.name === agentName);
+    return agent?.id ?? null;
+  }
+
+  function agentSubpath(path: string): string {
+    const rest = path.slice(WORKSPACES_ROOT.length + 1);
+    const parts = rest.split("/");
+    return parts.slice(1).join("/");
+  }
+
+  function isWorkspacePath(path: string): boolean {
+    return path.startsWith(WORKSPACES_ROOT + "/");
+  }
+
+  function isMyFilesPath(path: string): boolean {
+    return path === MYFILES_ROOT || path.startsWith(MYFILES_ROOT + "/");
+  }
+
+  function userSubpath(path: string): string {
+    if (path === MYFILES_ROOT) return "";
+    return path.slice(MYFILES_ROOT.length + 1);
+  }
+
+  function getFileOwnerPath(fileId: string): { owner: string; path: string } | null {
+    if (!user) return null;
+    if (isWorkspacePath(fileId)) {
+      const agentId = resolveAgentId(fileId);
+      if (!agentId) return null;
+      return { owner: `agent:${agentId}`, path: agentSubpath(fileId) };
+    }
+    return { owner: `user:${user.id}`, path: userSubpath(fileId) };
+  }
+
+  const handleInit = useCallback(
+    (fmApi: IApi) => {
+      fmApiRef.current = fmApi;
+
+      // Default to My Files on load
+      fmApi.exec("set-path", { id: MYFILES_ROOT });
+
+      // Server-side search: fetch results and provide-data into parent folders
+      fmApi.on("filter-files", (ev) => {
+        if (!ev.text) return;
+
+        searchFiles(ev.text).then((results) => {
+          // Group results by parent folder and provide-data for each
+          const byParent = new Map<string, IEntity[]>();
+
+          for (const result of results) {
+            let treeId: string;
+            const relPath = result.path.replace(/^\//, "");
+            if (result.source === "user") {
+              treeId = relPath ? `${MYFILES_ROOT}/${relPath}` : MYFILES_ROOT;
+            } else {
+              const agent = agentsRef.current.find((a) => a.id === result.source);
+              if (!agent) continue;
+              treeId = relPath
+                ? `${WORKSPACES_ROOT}/${agent.name}/${relPath}`
+                : `${WORKSPACES_ROOT}/${agent.name}`;
+            }
+
+            // Skip if already in tree
+            if (fmApi.getFile(treeId)) continue;
+
+            const lastSlash = treeId.lastIndexOf("/");
+            const parentId = lastSlash <= 0 ? "/" : treeId.substring(0, lastSlash);
+
+            // Ensure parent folders exist up the chain
+            const parts = treeId.split("/").filter(Boolean);
+            for (let i = 1; i < parts.length - 1; i++) {
+              const folderPath = "/" + parts.slice(0, i + 1).join("/");
+              if (!fmApi.getFile(folderPath)) {
+                const folderParent = i === 0 ? "/" : "/" + parts.slice(0, i).join("/");
+                const group = byParent.get(folderParent) || [];
+                group.push({
+                  id: folderPath,
+                  type: "folder",
+                  size: 0,
+                  date: new Date(),
+                  lazy: true,
+                });
+                byParent.set(folderParent, group);
+              }
+            }
+
+            const group = byParent.get(parentId) || [];
+            group.push({
+              id: treeId,
+              type: result.type,
+              size: result.size,
+              date: result.date,
+            });
+            byParent.set(parentId, group);
+          }
+
+          // Provide data to each parent — SVAR merges into tree properly
+          for (const [parentId, entries] of byParent) {
+            fmApi.exec("provide-data", { id: parentId, data: entries });
+          }
+        }).catch(() => {
+          // ignore — client-side search already ran
+        });
+      });
+
+      // On double-click (open-file) in search: navigate to file's parent folder and select it
+      fmApi.intercept("open-file", (ev) => {
+        const id = ev.id as string;
+        const file = fmApi.getFile(id);
+        if (!file || file.type === "folder") return;
+
+        // Exit search mode, navigate to parent, select the file
+        const parentId = file.parent as string;
+        fmApi.exec("set-mode", { mode: "table" });
+        fmApi.exec("set-path", { id: parentId, selected: [id] });
+        return false;
+      });
+
+      fmApi.on("set-path", (ev) => {
+        const id = ev.id as string;
+        const parts = id.split("/").filter(Boolean);
+        let path = "";
+        for (const part of parts) {
+          path += "/" + part;
+          const node = fmApi.getFile(path);
+          if (node && node.type === "folder" && !node.open) {
+            fmApi.exec("open-tree-folder", { id: path, mode: true });
+          }
+        }
+      });
+
+
+      fmApi.on("rename-file", async (ev) => {
+        if (!isMyFilesPath(ev.id)) return;
+        const filePath = userSubpath(ev.id);
+        try {
+          await renameFile(filePath, ev.name);
+        } catch {
+          // ignore
+        }
+      });
+
+      fmApi.on("delete-files", async (ev) => {
+        if (!user) return;
+        for (const id of ev.ids) {
+          if (!isMyFilesPath(id)) continue;
+          const filePath = userSubpath(id);
+          try {
+            await deleteFile(user.username, filePath);
+          } catch {
+            // ignore
+          }
+        }
+      });
+
+      fmApi.on("copy-files", async (ev) => {
+        if (!user || !isMyFilesPath(ev.target)) return;
+        const sources = ev.ids.map((id: string) => {
+          if (isWorkspacePath(id)) {
+            const agentId = resolveAgentId(id);
+            const sub = agentSubpath(id);
+            return `agent://${agentId}/${sub}`;
+          }
+          return `user://${user.username}/${userSubpath(id)}`;
+        });
+        const dest = `user://${user.username}/${userSubpath(ev.target)}`;
+        try {
+          await copyFiles(sources, dest);
+        } catch {
+          // ignore
+        }
+      });
+
+      fmApi.on("move-files", async (ev) => {
+        if (!user || !isMyFilesPath(ev.target)) return;
+        for (const id of ev.ids) {
+          if (!isMyFilesPath(id)) return;
+        }
+        const sources = ev.ids.map(
+          (id: string) => `user://${user.username}/${userSubpath(id)}`,
+        );
+        const dest = `user://${user.username}/${userSubpath(ev.target)}`;
+        try {
+          await moveFiles(sources, dest);
+        } catch {
+          // ignore
+        }
+      });
+
+      fmApi.on("create-file", async (ev) => {
+        if (!isMyFilesPath(ev.parent)) return;
+        const parentSub = userSubpath(ev.parent);
+        if (ev.file.type === "folder") {
+          const path = parentSub
+            ? `/${parentSub}/${ev.file.name}`
+            : `/${ev.file.name}`;
+          try {
+            await createFolder(path);
+          } catch {
+            // ignore
+          }
+        } else {
+          const file = ev.file.file
+            ? (ev.file.file as File)
+            : new File([], ev.file.name);
+          const relativePath = parentSub
+            ? `${parentSub}/${ev.file.name}`
+            : ev.file.name;
+          try {
+            await uploadFile(file, relativePath);
+          } catch {
+            // ignore
+          }
+        }
+      });
+
+      // Download: fetch as blob and save
+      fmApi.on("download-file", async (ev) => {
+        const info = getFileOwnerPath(ev.id);
+        if (!info) return;
+        try {
+          const url = await presignFile(info.owner, info.path);
+          const res = await fetch(url);
+          if (!res.ok) return;
+          const blob = await res.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = ev.id.split("/").pop() || "download";
+          a.style.display = "none";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+        } catch {
+          // ignore
+        }
+      });
+
+      fmApi.on("request-data", async (ev) => {
+        try {
+          let svarEntries: IEntity[];
+
+          if (ev.id === WORKSPACES_ROOT) {
+            svarEntries = agentsRef.current.map((a) => ({
+              id: `${WORKSPACES_ROOT}/${a.name}`,
+              type: "folder" as const,
+              size: 0,
+              date: new Date(),
+              lazy: true,
+            }));
+          } else if (isWorkspacePath(ev.id)) {
+            const agentId = resolveAgentId(ev.id);
+            if (!agentId) {
+              fmApi.exec("provide-data", { id: ev.id, data: [] });
+              return;
+            }
+            const agentName = ev.id.slice(WORKSPACES_ROOT.length + 1).split("/")[0];
+            const agentRoot = `${WORKSPACES_ROOT}/${agentName}`;
+            const sub = agentSubpath(ev.id);
+            const entries = await listAgentFiles(agentId, sub || undefined);
+            svarEntries = toSvarEntries(entries, agentRoot);
+          } else if (isMyFilesPath(ev.id)) {
+            const sub = userSubpath(ev.id);
+            const entries = await listUserFiles(sub || undefined);
+            svarEntries = toSvarEntries(entries, MYFILES_ROOT);
+          } else {
+            svarEntries = [];
+          }
+
+          fmApi.exec("provide-data", {
+            id: ev.id,
+            data: svarEntries,
+          });
+        } catch {
+          fmApi.exec("provide-data", { id: ev.id, data: [] });
+        }
+      });
+    },
+    [user],
+  );
+
+  const ThemeWrapper = resolved === "dark" ? WillowDark : Willow;
+
+  return (
+    <div className="flex h-screen bg-surface">
+      <div className="w-12 shrink-0 border-r border-border bg-surface-secondary flex flex-col items-center pt-3">
+        <button
+          onClick={() => router.push("/chat")}
+          className="p-2 text-text-secondary hover:text-text-primary transition rounded-lg hover:bg-surface-tertiary"
+          title="Back to chat"
+        >
+          <ArrowLeftIcon className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-hidden pr-3">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={handleFileInputChange}
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          className="hidden"
+          onChange={handleFileInputChange}
+          {...{ webkitdirectory: "", directory: "" } as React.InputHTMLAttributes<HTMLInputElement>}
+        />
+        {loading && data.length === 0 ? (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-sm text-text-tertiary">Loading files...</p>
+          </div>
+        ) : (
+          <div
+            className="h-full filemanager-container relative"
+            onDrop={handleDrop}
+            onDragOver={(e) => e.preventDefault()}
+          >
+            <div className="absolute bottom-6 right-6 z-10">
+              {showUploadMenu && (
+                <>
+                  <div className="fixed inset-0" onClick={() => setShowUploadMenu(false)} />
+                  <div className="absolute bottom-14 right-0 bg-surface-secondary border border-border rounded-lg shadow-lg py-1 min-w-[140px]">
+                    <button
+                      onClick={() => { fileInputRef.current?.click(); setShowUploadMenu(false); }}
+                      className="w-full px-4 py-2 text-sm text-text-primary hover:bg-surface-tertiary text-left"
+                    >
+                      Upload Files
+                    </button>
+                    <button
+                      onClick={() => { folderInputRef.current?.click(); setShowUploadMenu(false); }}
+                      className="w-full px-4 py-2 text-sm text-text-primary hover:bg-surface-tertiary text-left"
+                    >
+                      Upload Folder
+                    </button>
+                  </div>
+                </>
+              )}
+              <button
+                onClick={() => setShowUploadMenu((v) => !v)}
+                className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-surface bg-accent hover:bg-accent-hover rounded-full shadow-lg transition"
+                title="Upload"
+              >
+                <ArrowUpTrayIcon className="h-5 w-5" />
+                Upload
+              </button>
+            </div>
+            <ThemeWrapper>
+              <Locale words={{ filemanager: { "My files": " " } }}>
+              <Filemanager
+                data={data}
+                init={handleInit}
+                mode="table"
+                menuOptions={(mode, item) => {
+                  const opts = getMenuOptions(mode) as IFileMenuOption[];
+                  if (mode === "file" && item) {
+                    const downloadIdx = opts.findIndex((o) => o.id === "download");
+                    const fileId = item.id;
+                    const extra = [
+                      {
+                        icon: "wxi-eye", text: "Open", hotkey: "", id: "open-file-url",
+                        handler: () => {
+                          const info = getFileOwnerPath(fileId);
+                          if (info) presignFile(info.owner, info.path).then((url) => window.open(url, "_blank"));
+                        },
+                      },
+                      {
+                        icon: "wxi-content-copy", text: "Share", hotkey: "", id: "share-file-url",
+                        handler: () => {
+                          const info = getFileOwnerPath(fileId);
+                          if (info) presignFile(info.owner, info.path).then((url) => setShareUrl(url));
+                        },
+                      },
+                    ] as IFileMenuOption[];
+                    opts.splice(downloadIdx >= 0 ? downloadIdx + 1 : 0, 0, ...extra);
+                  }
+                  return opts;
+                }}
+                {...{
+                  uploadURL: async (fileInfo: { id: string; file: File; name: string }) => {
+                    const { parentSub } = getCurrentUploadPath();
+                    const relativePath = parentSub
+                      ? `${parentSub}/${fileInfo.name}`
+                      : fileInfo.name;
+                    try {
+                      const result = await uploadFile(fileInfo.file, relativePath);
+                      return { id: fileInfo.id, status: "server", ...result };
+                    } catch {
+                      return { id: fileInfo.id, status: "error" };
+                    }
+                  },
+                }}
+              />
+              </Locale>
+            </ThemeWrapper>
+          </div>
+        )}
+      </div>
+      {shareUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShareUrl(null)}>
+          <div className="bg-surface border border-border rounded-lg p-6 shadow-lg w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-medium text-text-primary mb-3">Share Link</h3>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                readOnly
+                value={shareUrl}
+                className="flex-1 rounded-md border border-border bg-surface-secondary px-3 py-2 text-sm text-text-primary"
+                onFocus={(e) => e.target.select()}
+              />
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(shareUrl);
+                }}
+                className="px-3 py-2 text-sm font-medium rounded-md bg-accent text-surface hover:bg-accent-hover transition"
+              >
+                Copy
+              </button>
+            </div>
+            <div className="mt-4 flex justify-center">
+              <button
+                onClick={() => setShareUrl(null)}
+                className="px-4 py-2 text-sm font-medium rounded-md border border-border text-text-primary hover:bg-surface-tertiary transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
