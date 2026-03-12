@@ -1,6 +1,7 @@
 use crate::agent::config::parse_frontmatter;
 use crate::agent::service::AgentService;
-use crate::agent::workspace::{AgentPromptLoader, AgentWorkspaceManager};
+use crate::agent::workspace::AgentPromptLoader;
+use crate::storage::StorageService;
 use crate::db::repo::chats::SurrealChatRepo;
 use crate::db::repo::messages::SurrealMessageRepo;
 use crate::core::error::AppError;
@@ -36,7 +37,7 @@ pub struct ChatService {
     message_repo: SurrealMessageRepo,
     agent_service: AgentService,
     provider_registry: ModelProviderRegistry,
-    workspaces: AgentWorkspaceManager,
+    storage: StorageService,
     memory_service: MemoryService,
     prompts: PromptLoader,
 }
@@ -47,7 +48,7 @@ impl ChatService {
         message_repo: SurrealMessageRepo,
         agent_service: AgentService,
         provider_registry: ModelProviderRegistry,
-        workspaces: AgentWorkspaceManager,
+        storage: StorageService,
         memory_service: MemoryService,
         prompts: PromptLoader,
     ) -> Self {
@@ -56,7 +57,7 @@ impl ChatService {
             message_repo,
             agent_service,
             provider_registry,
-            workspaces,
+            storage,
             memory_service,
             prompts,
         }
@@ -246,7 +247,7 @@ impl ChatService {
         user_id: &str,
         chat_id: &str,
         content: &str,
-        attachments: Vec<crate::api::files::Attachment>,
+        attachments: Vec<crate::storage::Attachment>,
     ) -> Result<MessageResponse, AppError> {
         self.get_chat(user_id, chat_id).await?;
 
@@ -306,7 +307,7 @@ impl ChatService {
         chat_id: &str,
         content: String,
         tool_calls: Option<serde_json::Value>,
-        attachments: Vec<crate::api::files::Attachment>,
+        attachments: Vec<crate::storage::Attachment>,
     ) -> Result<MessageResponse, AppError> {
         let chat = self.chat_repo.find_by_id(chat_id).await?.ok_or_else(|| {
             AppError::NotFound("Chat not found".into())
@@ -429,7 +430,7 @@ impl ChatService {
         agent_id: &str,
         content: String,
         tool: MessageTool,
-        attachments: Vec<crate::api::files::Attachment>,
+        attachments: Vec<crate::storage::Attachment>,
     ) -> Result<MessageResponse, AppError> {
         let msg = Message::builder(chat_id, MessageRole::TaskCompletion, content)
             .agent_id(agent_id.to_string())
@@ -483,7 +484,7 @@ impl ChatService {
     }
 
     pub async fn resolve_agent_config(&self, agent_id: &str) -> Result<AgentConfig, AppError> {
-        let ws = self.workspaces.get(agent_id);
+        let ws = self.storage.agent_workspace(agent_id);
 
         if let Ok(Some(agent)) = self.agent_service.find_by_id(agent_id).await {
             tracing::info!(agent_id, ?agent.tools, user_id = ?agent.user_id, "Resolved agent from DB");
@@ -536,7 +537,7 @@ impl ChatService {
         agent_id: &str,
         user_content: &str,
     ) -> Result<String, AppError> {
-        let ws = self.workspaces.get(agent_id);
+        let ws = self.storage.agent_workspace(agent_id);
         let prompts = AgentPromptLoader::new(&ws, &self.prompts);
         let content = prompts.read("TITLE.md")
             .ok_or_else(|| AppError::Internal("No title generation prompt found".into()))?;
@@ -621,7 +622,7 @@ impl ChatService {
     pub async fn find_attachments_by_chat_id(
         &self,
         chat_id: &str,
-    ) -> Result<Vec<crate::api::files::Attachment>, AppError> {
+    ) -> Result<Vec<crate::storage::Attachment>, AppError> {
         self.message_repo.find_attachments_by_chat_id(chat_id).await
     }
 }

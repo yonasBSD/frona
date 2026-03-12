@@ -52,7 +52,7 @@ pub struct InferenceRequest {
 pub enum InferenceResponse {
     Completed {
         text: String,
-        attachments: Vec<crate::api::files::Attachment>,
+        attachments: Vec<crate::storage::Attachment>,
     },
     Cancelled(String),
     ExternalToolPending {

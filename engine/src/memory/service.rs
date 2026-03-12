@@ -3,7 +3,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use rig::completion::Message as RigMessage;
 
-use crate::agent::workspace::{AgentPromptLoader, AgentWorkspaceManager};
+use crate::agent::workspace::AgentPromptLoader;
+use crate::storage::StorageService;
 use crate::db::repo::insights::SurrealInsightRepo;
 use crate::db::repo::memories::SurrealMemoryRepo;
 use crate::db::repo::messages::SurrealMessageRepo;
@@ -32,7 +33,7 @@ pub struct MemoryService {
     message_repo: SurrealMessageRepo,
     provider_registry: Arc<ModelProviderRegistry>,
     prompts: PromptLoader,
-    workspaces: AgentWorkspaceManager,
+    storage: StorageService,
 }
 
 impl MemoryService {
@@ -42,7 +43,7 @@ impl MemoryService {
         message_repo: SurrealMessageRepo,
         provider_registry: Arc<ModelProviderRegistry>,
         prompts: PromptLoader,
-        workspaces: AgentWorkspaceManager,
+        storage: StorageService,
     ) -> Self {
         Self {
             memory_repo,
@@ -50,13 +51,13 @@ impl MemoryService {
             message_repo,
             provider_registry,
             prompts,
-            workspaces,
+            storage,
         }
     }
 
     fn load_prompt(&self, name: &str, agent_id: Option<&str>) -> Option<String> {
         if let Some(aid) = agent_id {
-            let ws = self.workspaces.get(aid);
+            let ws = self.storage.agent_workspace(aid);
             let loader = AgentPromptLoader::new(&ws, &self.prompts);
             return loader.read(name);
         }

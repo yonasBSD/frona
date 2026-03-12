@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
 use crate::agent::service::AgentService;
-use crate::agent::workspace::AgentWorkspaceManager;
+use crate::storage::StorageService;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
@@ -11,7 +11,7 @@ use super::{InferenceContext, ToolOutput};
 
 pub struct HeartbeatTool {
     agent_service: AgentService,
-    agent_workspaces: AgentWorkspaceManager,
+    storage: StorageService,
     agent_id: String,
     prompts: PromptLoader,
 }
@@ -19,13 +19,13 @@ pub struct HeartbeatTool {
 impl HeartbeatTool {
     pub fn new(
         agent_service: AgentService,
-        agent_workspaces: AgentWorkspaceManager,
+        storage: StorageService,
         agent_id: String,
         prompts: PromptLoader,
     ) -> Self {
         Self {
             agent_service,
-            agent_workspaces,
+            storage,
             agent_id,
             prompts,
         }
@@ -41,7 +41,7 @@ impl HeartbeatTool {
             .ok_or_else(|| AppError::Validation("interval_minutes is required".into()))?;
 
         if interval_minutes > 0 {
-            let ws = self.agent_workspaces.get(&self.agent_id);
+            let ws = self.storage.agent_workspace(&self.agent_id);
             match ws.read("HEARTBEAT.md") {
                 Some(content) if !content.trim().is_empty() => {}
                 _ => {

@@ -66,7 +66,7 @@ pub struct ImageData {
 pub struct ToolOutput {
     text: String,
     images: Vec<ImageData>,
-    attachments: Vec<crate::api::files::Attachment>,
+    attachments: Vec<crate::storage::Attachment>,
     tool_data: Option<crate::chat::message::models::MessageTool>,
     system_prompt: Option<String>,
     pending_external: bool,
@@ -95,7 +95,7 @@ impl ToolOutput {
         }
     }
 
-    pub fn with_attachment(mut self, a: crate::api::files::Attachment) -> Self {
+    pub fn with_attachment(mut self, a: crate::storage::Attachment) -> Self {
         self.attachments.push(a);
         self
     }
@@ -118,7 +118,7 @@ impl ToolOutput {
         &self.images
     }
 
-    pub fn attachments(&self) -> &[crate::api::files::Attachment] {
+    pub fn attachments(&self) -> &[crate::storage::Attachment] {
         &self.attachments
     }
 

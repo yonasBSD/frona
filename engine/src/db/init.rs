@@ -4,7 +4,8 @@ use surrealdb::types::RecordId;
 use tracing::info;
 
 use crate::agent::config::parse_frontmatter;
-use crate::agent::workspace::AgentWorkspaceManager;
+use crate::agent::service::AgentService;
+use crate::storage::StorageService;
 
 pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
     db.use_ns("frona").use_db("frona").await?;
@@ -102,8 +103,8 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
     Ok(())
 }
 
-pub async fn seed_config_agents(db: &Surreal<Db>, workspaces: &AgentWorkspaceManager) -> Result<(), surrealdb::Error> {
-    let agent_ids = workspaces.builtin_agent_ids();
+pub async fn seed_config_agents(db: &Surreal<Db>, agent_service: &AgentService, storage: &StorageService) -> Result<(), surrealdb::Error> {
+    let agent_ids = agent_service.builtin_agent_ids();
     info!(agents = ?agent_ids, "Builtin agent IDs from config");
     for agent_id in agent_ids {
         let rid = RecordId::new("agent", agent_id.as_str());
@@ -118,7 +119,7 @@ pub async fn seed_config_agents(db: &Surreal<Db>, workspaces: &AgentWorkspaceMan
             continue;
         }
 
-        let ws = workspaces.get(&agent_id);
+        let ws = storage.agent_workspace(&agent_id);
         let (description, model_group, tools) = ws
             .read("AGENT.md")
             .map(|content| {

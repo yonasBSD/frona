@@ -134,7 +134,7 @@ pub async fn build_tool_registry(
     registry.register(Arc::new(NotifyHumanTool::new(credential_id, prompts.clone())));
 
     registry.register(Arc::new(ReadFileTool::new(
-        state.config.as_ref().clone(),
+        state.storage.clone(),
         prompts.clone(),
     )));
 
@@ -237,7 +237,7 @@ pub async fn build_tool_registry(
     if allowed_tools.iter().any(|t| t == "heartbeat") {
         registry.register(Arc::new(HeartbeatTool::new(
             state.agent_service.clone(),
-            state.agent_workspaces.clone(),
+            state.storage.clone(),
             agent_id.to_string(),
             prompts.clone(),
         )));

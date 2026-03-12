@@ -3,9 +3,8 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
-use crate::core::config::Config;
-use crate::api::files::{
-    detect_content_type, is_image_content_type, is_text_content_type, resolve_virtual_path,
+use crate::storage::{
+    StorageService, VirtualPath, detect_content_type, is_image_content_type, is_text_content_type,
 };
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
@@ -13,13 +12,13 @@ use frona_derive::agent_tool;
 use super::{ImageData, InferenceContext, ToolOutput};
 
 pub struct ReadFileTool {
-    config: Config,
+    storage: StorageService,
     prompts: PromptLoader,
 }
 
 impl ReadFileTool {
-    pub fn new(config: Config, prompts: PromptLoader) -> Self {
-        Self { config, prompts }
+    pub fn new(storage: StorageService, prompts: PromptLoader) -> Self {
+        Self { storage, prompts }
     }
 }
 
@@ -41,7 +40,8 @@ impl ReadFileTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(500) as usize;
 
-        let resolved = resolve_virtual_path(path, &self.config)?;
+        let vpath = VirtualPath::parse(path)?;
+        let resolved = self.storage.resolve(&vpath)?;
 
         if !resolved.exists() {
             return Err(AppError::NotFound(format!("File not found: {path}")));

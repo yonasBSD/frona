@@ -12,7 +12,8 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use frona::agent::workspace::AgentWorkspaceManager;
+use frona::agent::service::AgentService;
+use frona::storage::StorageService;
 use frona::db::init as db;
 use frona::api::middleware::metrics::track_http_metrics;
 use frona::api::routes;
@@ -47,8 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     verify_sandbox(&config.storage.workspaces_path, config.server.sandbox_disabled)
         .expect("Sandbox verification failed — filesystem may not support sandboxing. Set FRONA_SERVER_SANDBOX_DISABLED=true to bypass.");
 
-    let shared_config_dir = PathBuf::from(&config.storage.shared_config_dir);
-    let workspaces = AgentWorkspaceManager::new(&config.storage.workspaces_path, shared_config_dir.join("agents"));
+    let storage = StorageService::new(&config);
 
     let metrics_handle = setup_metrics_recorder();
 
@@ -60,8 +60,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rotation.run().await?;
     }
 
-    db::seed_config_agents(&surreal, &workspaces).await?;
-    let state = AppState::new(surreal.clone(), &config, loaded.models, workspaces, metrics_handle);
+    let shared_agents_dir = std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents");
+    let agent_service = AgentService::new(
+        frona::db::repo::generic::SurrealRepo::new(surreal.clone()),
+        &config.cache,
+        shared_agents_dir,
+    );
+    db::seed_config_agents(&surreal, &agent_service, &storage).await?;
+    let state = AppState::new(surreal.clone(), &config, loaded.models, agent_service, storage, metrics_handle);
     state.vault_service.sync_config_connections().await?;
     state.browser_session_manager.kill_all_sessions().await;
 

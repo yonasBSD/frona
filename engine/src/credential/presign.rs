@@ -4,8 +4,8 @@ use crate::chat::message::models::MessageResponse;
 use crate::core::error::AppError;
 use crate::credential::keypair::service::KeyPairService;
 
-use crate::api::files::PresignClaims;
-use crate::api::files::attachment_url_segment;
+use crate::storage::PresignClaims;
+use crate::storage::attachment_url_segment;
 
 #[derive(Clone)]
 pub struct PresignService {

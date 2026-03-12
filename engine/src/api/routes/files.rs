@@ -7,13 +7,13 @@ use axum::http::header;
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::fs;
 use tokio_util::io::ReaderStream;
 
-use crate::api::files::{
-    Attachment, dedup_filename, detect_content_type, resolve_virtual_path,
+use crate::storage::{
+    Attachment, FileEntry, SearchTarget, VirtualPath,
+    dedup_filename, detect_content_type, validate_relative_path,
 };
 
 use super::super::error::ApiError;
@@ -69,12 +69,10 @@ impl FromRequestParts<AppState> for FileAuth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        // Try Bearer auth first
         if let Ok(auth) = AuthUser::from_request_parts(parts, state).await {
             return Ok(FileAuth::User(auth));
         }
 
-        // Fall back to presign query param
         let query: Query<PresignQuery> =
             Query::try_from_uri(&parts.uri)
                 .map_err(|_| ApiError(AppError::Auth("Missing authorization".into())))?;
@@ -143,6 +141,9 @@ async fn upload_file(
         ))
     })?;
 
+    let user_ws = state.storage.user_workspace(&auth.username);
+    let base = user_ws.base_path().to_path_buf();
+
     let (dir, filename_for_dedup, virtual_relative) = if let Some(ref rel_path) = relative_path {
         validate_relative_path(rel_path)?;
         let parent = Path::new(rel_path)
@@ -154,13 +155,10 @@ async fn upload_file(
             .and_then(|n| n.to_str())
             .unwrap_or(&original_filename)
             .to_string();
-        let dir = Path::new(&state.config.storage.files_path)
-            .join(&auth.username)
-            .join(&parent);
+        let dir = base.join(&parent);
         (dir, leaf, Some(rel_path.clone()))
     } else {
-        let dir = Path::new(&state.config.storage.files_path).join(&auth.username);
-        (dir, original_filename.clone(), None)
+        (base, original_filename.clone(), None)
     };
 
     fs::create_dir_all(&dir)
@@ -220,8 +218,8 @@ async fn download_user_file(
         }
     }
 
-    let virtual_path = format!("user://{username}/{filename}");
-    serve_file(&virtual_path, &state).await
+    let vpath = VirtualPath::user(&username, &filename);
+    serve_file(&vpath, &state).await
 }
 
 async fn download_agent_file(
@@ -231,7 +229,6 @@ async fn download_agent_file(
 ) -> Result<Response, ApiError> {
     match &file_auth {
         FileAuth::User(auth) => {
-            // Verify agent ownership
             state
                 .agent_service
                 .get(&auth.user_id, &agent_id)
@@ -246,8 +243,8 @@ async fn download_agent_file(
         }
     }
 
-    let virtual_path = format!("agent://{agent_id}/{filepath}");
-    serve_file(&virtual_path, &state).await
+    let vpath = VirtualPath::agent(&agent_id, &filepath);
+    serve_file(&vpath, &state).await
 }
 
 async fn delete_user_file(
@@ -261,8 +258,8 @@ async fn delete_user_file(
         )));
     }
 
-    let virtual_path = format!("user://{username}/{filename}");
-    let resolved = resolve_virtual_path(&virtual_path, &state.config)?;
+    let vpath = VirtualPath::user(&username, &filename);
+    let resolved = state.storage.resolve(&vpath)?;
 
     if !resolved.exists() {
         return Err(ApiError(AppError::NotFound(
@@ -294,7 +291,6 @@ async fn presign_file(
     State(state): State<AppState>,
     Json(req): Json<PresignRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Validate ownership: user files must belong to the requesting user
     if let Some(user_id) = req.owner.strip_prefix("user:")
         && user_id != auth.user_id
     {
@@ -303,17 +299,16 @@ async fn presign_file(
         )));
     }
 
-    // Resolve the virtual path to verify the file exists
-    let virtual_path = if req.owner.starts_with("user:") {
-        format!("user://{}/{}", auth.username, req.path)
+    let vpath = if req.owner.starts_with("user:") {
+        VirtualPath::user(&auth.username, &req.path)
     } else if let Some(agent_id) = req.owner.strip_prefix("agent:") {
-        format!("agent://{}/{}", agent_id, req.path)
+        VirtualPath::agent(agent_id, &req.path)
     } else {
         return Err(ApiError(AppError::Validation(
             "Invalid owner prefix".into(),
         )));
     };
-    let _ = resolve_virtual_path(&virtual_path, &state.config)?;
+    let _ = state.storage.resolve(&vpath)?;
 
     let url = state
         .presign_service
@@ -329,8 +324,8 @@ async fn presign_file(
     Ok(Json(serde_json::json!({ "url": url })))
 }
 
-async fn serve_file(virtual_path: &str, state: &AppState) -> Result<Response, ApiError> {
-    let resolved = resolve_virtual_path(virtual_path, &state.config)?;
+async fn serve_file(vpath: &VirtualPath, state: &AppState) -> Result<Response, ApiError> {
+    let resolved = state.storage.resolve(vpath)?;
 
     if !resolved.exists() {
         return Err(ApiError(AppError::NotFound(
@@ -360,72 +355,6 @@ async fn serve_file(virtual_path: &str, state: &AppState) -> Result<Response, Ap
         .unwrap())
 }
 
-#[derive(Serialize)]
-struct FileEntry {
-    id: String,
-    size: u64,
-    date: String,
-    #[serde(rename = "type")]
-    entry_type: String,
-    parent: String,
-}
-
-async fn read_dir_entries(dir: &Path, parent_id: &str) -> Result<Vec<FileEntry>, ApiError> {
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-
-    let mut entries = Vec::new();
-    let mut read_dir = fs::read_dir(dir)
-        .await
-        .map_err(|e| ApiError(AppError::Internal(e.to_string())))?;
-
-    while let Some(entry) = read_dir
-        .next_entry()
-        .await
-        .map_err(|e| ApiError(AppError::Internal(e.to_string())))?
-    {
-        let metadata = entry
-            .metadata()
-            .await
-            .map_err(|e| ApiError(AppError::Internal(e.to_string())))?;
-
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let id = if parent_id.is_empty() || parent_id == "/" {
-            format!("/{name}")
-        } else {
-            format!("{parent_id}/{name}")
-        };
-
-        let modified: DateTime<Utc> = metadata
-            .modified()
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-            .into();
-
-        entries.push(FileEntry {
-            id,
-            size: if metadata.is_dir() {
-                0
-            } else {
-                metadata.len()
-            },
-            date: modified.to_rfc3339(),
-            entry_type: if metadata.is_dir() {
-                "folder".into()
-            } else {
-                "file".into()
-            },
-            parent: if parent_id.is_empty() {
-                "/".into()
-            } else {
-                parent_id.into()
-            },
-        });
-    }
-
-    Ok(entries)
-}
-
 async fn list_user_files(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -436,7 +365,8 @@ async fn list_user_files(
         validate_relative_path(&rel)?;
     }
 
-    let base = PathBuf::from(&state.config.storage.files_path).join(&auth.username);
+    let user_ws = state.storage.user_workspace(&auth.username);
+    let base = user_ws.base_path().to_path_buf();
     let dir = if rel.is_empty() {
         base
     } else {
@@ -449,7 +379,8 @@ async fn list_user_files(
         format!("/{rel}")
     };
 
-    Ok(Json(read_dir_entries(&dir, &parent_id).await?))
+    let entries = state.storage.list_dir(&dir, &parent_id).await?;
+    Ok(Json(entries))
 }
 
 async fn list_agent_dir(
@@ -458,19 +389,18 @@ async fn list_agent_dir(
     agent_id: &str,
     rel: &str,
 ) -> Result<Json<Vec<FileEntry>>, ApiError> {
-    // Verify agent ownership
     state.agent_service.get(&auth.user_id, agent_id).await?;
 
     if !rel.is_empty() {
         validate_relative_path(rel)?;
     }
 
+    let ws = state.storage.agent_workspace(agent_id);
+    let base = ws.base_path().to_path_buf();
     let dir = if rel.is_empty() {
-        PathBuf::from(&state.config.storage.workspaces_path).join(agent_id)
+        base
     } else {
-        PathBuf::from(&state.config.storage.workspaces_path)
-            .join(agent_id)
-            .join(rel)
+        base.join(rel)
     };
 
     let parent_id = if rel.is_empty() {
@@ -479,7 +409,8 @@ async fn list_agent_dir(
         format!("/{rel}")
     };
 
-    Ok(Json(read_dir_entries(&dir, &parent_id).await?))
+    let entries = state.storage.list_dir(&dir, &parent_id).await?;
+    Ok(Json(entries))
 }
 
 async fn list_agent_files_root(
@@ -501,7 +432,6 @@ async fn list_agent_files_subdir(
 #[derive(Deserialize)]
 struct SearchQuery {
     q: String,
-    /// Scope: "user", "user:/subdir", "agent:agent_id", or "agent:agent_id/subdir"
     scope: Option<String>,
 }
 
@@ -510,13 +440,11 @@ async fn search_files(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Vec<FileEntry>>, ApiError> {
-    let q = query.q.to_lowercase();
-    if q.is_empty() {
+    if query.q.is_empty() {
         return Ok(Json(vec![]));
     }
 
-    // Collect (dir, root, source) tuples to search
-    let mut search_targets: Vec<(PathBuf, PathBuf, String)> = Vec::new();
+    let mut targets: Vec<SearchTarget> = Vec::new();
 
     match query.scope.as_deref() {
         Some(scope) if scope.starts_with("agent:") => {
@@ -526,116 +454,43 @@ async fn search_files(
                 None => (rest, None),
             };
             state.agent_service.get(&auth.user_id, agent_id).await?;
-            let root =
-                PathBuf::from(&state.config.storage.workspaces_path).join(agent_id);
+            let ws = state.storage.agent_workspace(agent_id);
+            let root = ws.base_path().to_path_buf();
             let dir = match subpath {
                 Some(sub) => root.join(sub),
                 None => root.clone(),
             };
-            search_targets.push((dir, root, agent_id.to_string()));
+            targets.push(SearchTarget { dir, root, source: agent_id.to_string() });
         }
         Some(scope) if scope.starts_with("user") => {
             let subpath = scope.strip_prefix("user:").unwrap_or("");
-            let base =
-                PathBuf::from(&state.config.storage.files_path).join(&auth.username);
+            let ws = state.storage.user_workspace(&auth.username);
+            let base = ws.base_path().to_path_buf();
             let dir = if subpath.is_empty() {
                 base.clone()
             } else {
                 base.join(subpath)
             };
-            search_targets.push((dir, base, "user".to_string()));
+            targets.push(SearchTarget { dir, root: base, source: "user".to_string() });
         }
         _ => {
-            let user_dir =
-                PathBuf::from(&state.config.storage.files_path).join(&auth.username);
-            search_targets.push((user_dir.clone(), user_dir, "user".to_string()));
+            let user_ws = state.storage.user_workspace(&auth.username);
+            let user_dir = user_ws.base_path().to_path_buf();
+            targets.push(SearchTarget { dir: user_dir.clone(), root: user_dir, source: "user".to_string() });
 
             let user_agents = state.agent_service.list(&auth.user_id).await?;
             for agent in &user_agents {
-                let agent_dir =
-                    PathBuf::from(&state.config.storage.workspaces_path).join(&agent.id);
+                let ws = state.storage.agent_workspace(&agent.id);
+                let agent_dir = ws.base_path().to_path_buf();
                 if agent_dir.is_dir() {
-                    search_targets.push((agent_dir.clone(), agent_dir, agent.id.clone()));
+                    targets.push(SearchTarget { dir: agent_dir.clone(), root: agent_dir, source: agent.id.clone() });
                 }
             }
         }
     }
 
-    let results = tokio::task::spawn_blocking(move || {
-        let mut results = Vec::new();
-        for (dir, root, source) in &search_targets {
-            results.extend(search_dir(dir, root, &q, source));
-        }
-        results
-    })
-    .await
-    .map_err(|e| ApiError(AppError::Internal(e.to_string())))?;
-
+    let results = state.storage.search(targets, &query.q).await?;
     Ok(Json(results))
-}
-
-fn search_dir(dir: &Path, root: &Path, query: &str, source: &str) -> Vec<FileEntry> {
-    let mut results = Vec::new();
-
-    let walker = ignore::WalkBuilder::new(dir)
-        .hidden(true)
-        .git_ignore(true)
-        .git_global(false)
-        .git_exclude(false)
-        .build();
-
-    for entry in walker.flatten() {
-        // Skip the root directory itself
-        if entry.path() == dir {
-            continue;
-        }
-
-        let name = entry.file_name().to_string_lossy();
-        if !name.to_lowercase().contains(query) {
-            continue;
-        }
-
-        let path = entry.path();
-        let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
-        let rel = path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .into_owned();
-        let id = format!("/{rel}");
-        let parent_path = path.parent().unwrap_or(root);
-        let parent_rel = parent_path
-            .strip_prefix(root)
-            .unwrap_or(parent_path)
-            .to_string_lossy()
-            .into_owned();
-        let parent = if parent_rel.is_empty() {
-            "/".to_string()
-        } else {
-            format!("/{parent_rel}")
-        };
-
-        let metadata = entry.metadata().ok();
-        let modified: DateTime<Utc> = metadata
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-            .into();
-
-        results.push(FileEntry {
-            id: format!("{source}:{id}"),
-            size: if is_dir {
-                0
-            } else {
-                metadata.as_ref().map(|m| m.len()).unwrap_or(0)
-            },
-            date: modified.to_rfc3339(),
-            entry_type: if is_dir { "folder" } else { "file" }.into(),
-            parent: format!("{source}:{parent}"),
-        });
-    }
-
-    results
 }
 
 #[derive(Deserialize)]
@@ -649,8 +504,9 @@ async fn rename_user_file(
     State(state): State<AppState>,
     Json(req): Json<RenameRequest>,
 ) -> Result<(), ApiError> {
-    let virtual_path = format!("user://{}/{}", auth.username, req.path.trim_start_matches('/'));
-    let resolved = resolve_virtual_path(&virtual_path, &state.config)?;
+    let trimmed = req.path.trim_start_matches('/');
+    let vpath = VirtualPath::user(&auth.username, trimmed);
+    let resolved = state.storage.resolve(&vpath)?;
 
     if !resolved.exists() {
         return Err(ApiError(AppError::NotFound(
@@ -693,10 +549,9 @@ struct CopyMoveRequest {
 fn resolve_file_virtual_path(
     path: &str,
     auth: &AuthUser,
-    config: &crate::core::config::Config,
+    storage: &crate::storage::StorageService,
 ) -> Result<PathBuf, ApiError> {
     if let Some(rest) = path.strip_prefix("user://") {
-        // Ensure user can only access their own files
         let slash = rest.find('/').unwrap_or(rest.len());
         let path_username = &rest[..slash];
         if path_username != auth.username {
@@ -704,13 +559,15 @@ fn resolve_file_virtual_path(
                 "Cannot access another user's files".into(),
             )));
         }
-        resolve_virtual_path(path, config).map_err(ApiError)
+        let vpath = VirtualPath::parse(path)?;
+        storage.resolve(&vpath).map_err(ApiError)
     } else if path.starts_with("agent://") {
-        resolve_virtual_path(path, config).map_err(ApiError)
+        let vpath = VirtualPath::parse(path)?;
+        storage.resolve(&vpath).map_err(ApiError)
     } else {
         let trimmed = path.trim_start_matches('/');
-        let virtual_path = format!("user://{}/{trimmed}", auth.username);
-        resolve_virtual_path(&virtual_path, config).map_err(ApiError)
+        let vpath = VirtualPath::user(&auth.username, trimmed);
+        storage.resolve(&vpath).map_err(ApiError)
     }
 }
 
@@ -731,14 +588,14 @@ async fn copy_files(
     ensure_user_destination(&req.destination)?;
 
     let dest_dir =
-        resolve_file_virtual_path(&req.destination, &auth, &state.config)?;
+        resolve_file_virtual_path(&req.destination, &auth, &state.storage)?;
 
     fs::create_dir_all(&dest_dir)
         .await
         .map_err(|e| ApiError(AppError::Internal(e.to_string())))?;
 
     for source in &req.sources {
-        let src = resolve_file_virtual_path(source, &auth, &state.config)?;
+        let src = resolve_file_virtual_path(source, &auth, &state.storage)?;
         if !src.exists() {
             continue;
         }
@@ -802,7 +659,7 @@ async fn move_files(
     ensure_user_destination(&req.destination)?;
 
     let dest_dir =
-        resolve_file_virtual_path(&req.destination, &auth, &state.config)?;
+        resolve_file_virtual_path(&req.destination, &auth, &state.storage)?;
 
     fs::create_dir_all(&dest_dir)
         .await
@@ -814,7 +671,7 @@ async fn move_files(
                 "Cannot move from agent workspaces".into(),
             )));
         }
-        let src = resolve_file_virtual_path(source, &auth, &state.config)?;
+        let src = resolve_file_virtual_path(source, &auth, &state.storage)?;
         if !src.exists() {
             continue;
         }
@@ -847,31 +704,12 @@ async fn create_user_folder(
     let trimmed = req.path.trim_start_matches('/');
     validate_relative_path(trimmed)?;
 
-    let virtual_path = format!("user://{}/{trimmed}", auth.username);
-    let resolved = resolve_virtual_path(&virtual_path, &state.config)?;
+    let vpath = VirtualPath::user(&auth.username, trimmed);
+    let resolved = state.storage.resolve(&vpath)?;
 
     fs::create_dir_all(&resolved)
         .await
         .map_err(|e| ApiError(AppError::Internal(e.to_string())))?;
 
-    Ok(())
-}
-
-fn validate_relative_path(path: &str) -> Result<(), ApiError> {
-    if path.contains("..") {
-        return Err(ApiError(AppError::Validation(
-            "Path traversal not allowed".into(),
-        )));
-    }
-    if path.starts_with('/') {
-        return Err(ApiError(AppError::Validation(
-            "Path must be relative".into(),
-        )));
-    }
-    if path.contains('\0') {
-        return Err(ApiError(AppError::Validation(
-            "Path contains invalid characters".into(),
-        )));
-    }
     Ok(())
 }

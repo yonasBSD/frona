@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use frona::db::init as db;
-use frona::api::files::{Attachment, PresignClaims};
+use frona::storage::{Attachment, PresignClaims};
 use frona::db::repo::generic::SurrealRepo;
 use frona::auth::jwt::JwtService;
 use frona::auth::models::Claims;

@@ -7,7 +7,7 @@ use frona::db::repo::insights::SurrealInsightRepo;
 use frona::memory::insight::repository::InsightRepository;
 use frona::memory::models::{Memory, MemorySourceType};
 use frona::memory::repository::MemoryRepository;
-use frona::agent::workspace::AgentWorkspaceManager;
+use frona::storage::StorageService;
 use frona::memory::service::MemoryService;
 use frona::agent::prompt::PromptLoader;
 use frona::core::repository::Repository;
@@ -40,7 +40,14 @@ fn make_memory_service(db: Surreal<Db>) -> MemoryService {
                 .join("resources")
                 .join("prompts"),
         ),
-        AgentWorkspaceManager::new("/nonexistent", "/nonexistent"),
+        StorageService::new(&frona::core::config::Config {
+            storage: frona::core::config::StorageConfig {
+                workspaces_path: "/nonexistent".to_string(),
+                files_path: "/nonexistent".to_string(),
+                shared_config_dir: "/nonexistent".to_string(),
+            },
+            ..Default::default()
+        }),
     )
 }
 

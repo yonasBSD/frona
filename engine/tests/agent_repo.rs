@@ -129,13 +129,27 @@ async fn test_find_by_id_not_found() {
 
 #[tokio::test]
 async fn test_seed_config_agents_visible_in_find_by_user_id() {
-    use frona::agent::workspace::AgentWorkspaceManager;
+    use frona::storage::StorageService;
+    use frona::core::config::Config;
 
     let db = test_db().await;
     let shared_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("resources");
-    let workspaces = AgentWorkspaceManager::new("/tmp/frona_test_seed_visible", shared_dir.join("agents"));
+    let config = Config {
+        storage: frona::core::config::StorageConfig {
+            workspaces_path: "/tmp/frona_test_seed_visible".to_string(),
+            files_path: "/tmp/frona_test_seed_visible/files".to_string(),
+            shared_config_dir: shared_dir.to_string_lossy().to_string(),
+        },
+        ..Default::default()
+    };
+    let storage = StorageService::new(&config);
+    let agent_service = AgentService::new(
+        SurrealAgentRepo::new(db.clone()),
+        &CacheConfig::default(),
+        shared_dir.join("agents"),
+    );
 
-    db::seed_config_agents(&db, &workspaces).await.unwrap();
+    db::seed_config_agents(&db, &agent_service, &storage).await.unwrap();
 
     let repo = SurrealAgentRepo::new(db);
     let agents = repo.find_by_user_id("any-user").await.unwrap();
@@ -154,7 +168,7 @@ async fn test_seed_config_agents_visible_in_find_by_user_id() {
 #[tokio::test]
 async fn agent_service_find_by_id_caches() {
     let db = test_db().await;
-    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default());
+    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default(), "/nonexistent".into());
     let repo = SurrealAgentRepo::new(db);
     let agent = test_agent("user-1");
     repo.create(&agent).await.unwrap();
@@ -170,7 +184,7 @@ async fn agent_service_update_invalidates_cache() {
     use frona::agent::models::UpdateAgentRequest;
 
     let db = test_db().await;
-    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default());
+    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default(), "/nonexistent".into());
     let repo = SurrealAgentRepo::new(db);
     let agent = test_agent("user-1");
     repo.create(&agent).await.unwrap();
@@ -203,7 +217,7 @@ async fn agent_service_update_invalidates_cache() {
 #[tokio::test]
 async fn agent_service_delete_invalidates_cache() {
     let db = test_db().await;
-    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default());
+    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default(), "/nonexistent".into());
     let repo = SurrealAgentRepo::new(db);
     let agent = test_agent("user-1");
     repo.create(&agent).await.unwrap();
@@ -216,4 +230,17 @@ async fn agent_service_delete_invalidates_cache() {
 
     // Should be gone
     assert!(svc.find_by_id(&agent.id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn agent_service_builtin_agent_ids() {
+    let db = test_db().await;
+    let shared_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("resources")
+        .join("agents");
+    let svc = AgentService::new(SurrealAgentRepo::new(db), &CacheConfig::default(), shared_dir);
+    let ids = svc.builtin_agent_ids();
+    assert!(ids.contains(&"system".to_string()), "Should include 'system' agent");
+    assert!(ids.contains(&"researcher".to_string()), "Should include 'researcher' agent");
 }

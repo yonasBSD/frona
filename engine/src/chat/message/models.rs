@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use crate::Entity;
-use crate::api::files::Attachment;
+use crate::storage::Attachment;
 use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 

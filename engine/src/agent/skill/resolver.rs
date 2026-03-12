@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::agent::config::parse_frontmatter;
-use crate::agent::workspace::AgentWorkspaceManager;
+use crate::storage::StorageService;
 use crate::db::repo::skills::SurrealSkillRepo;
 
 use super::repository::SkillRepository;
@@ -25,15 +25,15 @@ pub struct ResolvedSkill {
 pub struct SkillResolver {
     skill_repo: SurrealSkillRepo,
     config_dir: PathBuf,
-    workspaces: AgentWorkspaceManager,
+    storage: StorageService,
 }
 
 impl SkillResolver {
-    pub fn new(skill_repo: SurrealSkillRepo, config_dir: impl Into<PathBuf>, workspaces: AgentWorkspaceManager) -> Self {
+    pub fn new(skill_repo: SurrealSkillRepo, config_dir: impl Into<PathBuf>, storage: StorageService) -> Self {
         Self {
             skill_repo,
             config_dir: config_dir.into(),
-            workspaces,
+            storage,
         }
     }
 
@@ -49,7 +49,7 @@ impl SkillResolver {
             }
         }
 
-        let ws = self.workspaces.get(agent_id);
+        let ws = self.storage.agent_workspace(agent_id);
         for name in ws.read_dir("skills") {
             if seen.contains_key(&name) {
                 continue;
@@ -95,7 +95,7 @@ impl SkillResolver {
             });
         }
 
-        let ws = self.workspaces.get(agent_id);
+        let ws = self.storage.agent_workspace(agent_id);
         let skill_path = format!("skills/{name}/SKILL.md");
         if let Some(content) = ws.read(&skill_path) {
             let parsed = parse_frontmatter(&content);
@@ -136,7 +136,7 @@ impl SkillResolver {
     }
 
     pub fn skill_dir_path(&self, agent_id: &str, name: &str) -> Option<PathBuf> {
-        let ws = self.workspaces.get(agent_id);
+        let ws = self.storage.agent_workspace(agent_id);
         if let Some(path) = ws.resolve_path(&format!("skills/{name}/SKILL.md")) {
             return path.parent().map(|p| p.to_path_buf());
         }

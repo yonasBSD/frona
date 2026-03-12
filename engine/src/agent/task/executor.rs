@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::execution;
 use crate::agent::task::models::{Task, TaskKind, TaskStatus};
-use crate::api::files::Attachment;
+use crate::storage::Attachment;
 use crate::core::state::AppState;
 use crate::chat::models::CreateChatRequest;
 use crate::chat::message::models::MessageTool;

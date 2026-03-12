@@ -18,7 +18,9 @@ use axum::body::Body;
 use axum::extract::connect_info::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use frona::agent::workspace::AgentWorkspaceManager;
+use frona::agent::service::AgentService;
+use frona::db::repo::generic::SurrealRepo;
+use frona::storage::StorageService;
 use frona::db::init as db;
 use frona::api::routes;
 use frona::core::config::Config;
@@ -45,10 +47,14 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
         },
         ..Default::default()
     };
-    let workspaces =
-        AgentWorkspaceManager::new(&config.storage.workspaces_path, format!("{base}/agents"));
+    let storage = StorageService::new(&config);
+    let agent_service = AgentService::new(
+        SurrealRepo::new(db.clone()),
+        &config.cache,
+        std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+    );
     let metrics = setup_metrics_recorder();
-    let state = AppState::new(db, &config, None, workspaces, metrics);
+    let state = AppState::new(db, &config, None, agent_service, storage, metrics);
     (state, tmp)
 }
 

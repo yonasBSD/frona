@@ -5,7 +5,7 @@ use frona::agent::task::models::{Task, TaskKind, TaskStatus};
 use frona::db::init as db;
 use frona::db::repo::chats::SurrealChatRepo;
 use frona::db::repo::messages::SurrealMessageRepo;
-use frona::api::files::Attachment;
+use frona::storage::Attachment;
 use frona::chat::message::models::{Message, MessageRole};
 use frona::chat::message::repository::MessageRepository;
 use frona::chat::models::Chat;

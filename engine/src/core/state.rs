@@ -12,7 +12,7 @@ use crate::agent::service::AgentService;
 use crate::app::manager::AppManager;
 use crate::app::service::AppService;
 use crate::agent::skill::resolver::SkillResolver;
-use crate::agent::workspace::AgentWorkspaceManager;
+use crate::storage::StorageService;
 use crate::auth::AuthService;
 use crate::auth::jwt::JwtService;
 use crate::auth::oauth::service::OAuthService;
@@ -97,7 +97,7 @@ pub struct AppState {
     pub task_executor: Arc<OnceLock<Arc<TaskExecutor>>>,
     pub max_concurrent_tasks: usize,
     pub config: Arc<Config>,
-    pub agent_workspaces: AgentWorkspaceManager,
+    pub storage: StorageService,
     pub prompts: PromptLoader,
     pub vault_service: VaultService,
     pub keypair_service: KeyPairService,
@@ -112,7 +112,8 @@ impl AppState {
         db: Surreal<Db>,
         config: &Config,
         models_config: Option<ModelRegistryConfig>,
-        workspaces: AgentWorkspaceManager,
+        agent_service: AgentService,
+        storage: StorageService,
         metrics_handle: PrometheusHandle,
     ) -> Self {
         let broadcast_service = BroadcastService::new();
@@ -122,8 +123,6 @@ impl AppState {
 
         let chat_repo = SurrealRepo::new(db.clone());
         let message_repo = SurrealRepo::new(db.clone());
-
-        let agent_service = AgentService::new(SurrealRepo::new(db.clone()), &config.cache);
 
         let shared_config_dir = PathBuf::from(&config.storage.shared_config_dir);
         let shared_config_abs = std::fs::canonicalize(&shared_config_dir)
@@ -155,11 +154,11 @@ impl AppState {
             SurrealRepo::new(db.clone()),
             provider_registry_arc,
             prompt_loader.clone(),
-            workspaces.clone(),
+            storage.clone(),
         );
 
         let skill_repo = SurrealRepo::new(db.clone());
-        let skill_resolver = SkillResolver::new(skill_repo, &config.storage.shared_config_dir, workspaces.clone());
+        let skill_resolver = SkillResolver::new(skill_repo, &config.storage.shared_config_dir, storage.clone());
 
         let keypair_repo: SurrealRepo<crate::credential::keypair::models::KeyPair> =
             SurrealRepo::new(db.clone());
@@ -246,7 +245,7 @@ impl AppState {
                 message_repo,
                 agent_service.clone(),
                 provider_registry,
-                workspaces.clone(),
+                storage.clone(),
                 memory_service.clone(),
                 prompt_loader.clone(),
             ),
@@ -263,7 +262,7 @@ impl AppState {
             task_executor: Arc::new(OnceLock::new()),
             max_concurrent_tasks: config.server.max_concurrent_tasks,
             config: Arc::new(config.clone()),
-            agent_workspaces: workspaces,
+            storage,
             prompts: prompt_loader,
             vault_service,
             keypair_service,

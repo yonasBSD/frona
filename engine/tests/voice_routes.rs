@@ -1,6 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use frona::agent::workspace::AgentWorkspaceManager;
+use frona::storage::StorageService;
 use frona::db::init as db;
 use frona::api::routes::voice;
 use frona::core::config::Config;
@@ -32,9 +32,14 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
         },
         ..Default::default()
     };
-    let workspaces = AgentWorkspaceManager::new(&config.storage.workspaces_path, format!("{base}/agents"));
+    let storage = StorageService::new(&config);
+    let agent_service = frona::agent::service::AgentService::new(
+        frona::db::repo::generic::SurrealRepo::new(db.clone()),
+        &config.cache,
+        std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+    );
     let metrics = setup_metrics_recorder();
-    let state = AppState::new(db, &config, None, workspaces, metrics);
+    let state = AppState::new(db, &config, None, agent_service, storage, metrics);
     (state, tmp)
 }
 
@@ -125,9 +130,14 @@ async fn twilio_callback_valid_token_returns_xml() {
     };
     let token = jwt_svc.sign(&claims, &enc_key, &kid).unwrap();
 
-    let workspaces = AgentWorkspaceManager::new(&config.storage.workspaces_path, format!("{base}/agents"));
+    let storage = StorageService::new(&config);
+    let agent_service = frona::agent::service::AgentService::new(
+        frona::db::repo::generic::SurrealRepo::new(db.clone()),
+        &config.cache,
+        std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+    );
     let metrics = setup_metrics_recorder();
-    let state = AppState::new(db, &config, None, workspaces, metrics);
+    let state = AppState::new(db, &config, None, agent_service, storage, metrics);
 
     let app = voice::router().with_state(state);
 

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use chrono::{DateTime, Utc};
 
 use crate::core::config::CacheConfig;
@@ -14,15 +16,31 @@ use super::repository::AgentRepository;
 pub struct AgentService {
     repo: SurrealAgentRepo,
     cache: moka::future::Cache<String, Agent>,
+    shared_agents_dir: PathBuf,
 }
 
 impl AgentService {
-    pub fn new(repo: SurrealAgentRepo, cache_config: &CacheConfig) -> Self {
+    pub fn new(repo: SurrealAgentRepo, cache_config: &CacheConfig, shared_agents_dir: PathBuf) -> Self {
         let cache = moka::future::Cache::builder()
             .max_capacity(cache_config.entity_max_capacity)
             .time_to_live(std::time::Duration::from_secs(cache_config.entity_ttl_secs))
             .build();
-        Self { repo, cache }
+        Self { repo, cache, shared_agents_dir }
+    }
+
+    pub fn builtin_agent_ids(&self) -> Vec<String> {
+        let mut ids = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&self.shared_agents_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    && let Some(name) = entry.file_name().to_str()
+                {
+                    ids.push(name.to_string());
+                }
+            }
+        }
+        ids.sort();
+        ids
     }
 
     pub async fn create(

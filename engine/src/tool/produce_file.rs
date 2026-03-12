@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
-use crate::api::files::detect_content_type;
+use crate::storage::detect_content_type;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
@@ -59,7 +59,7 @@ impl ProduceFileTool {
 
         let content_type = detect_content_type(&filename).to_string();
 
-        let attachment = crate::api::files::Attachment {
+        let attachment = crate::storage::Attachment {
             filename: filename.clone(),
             content_type: content_type.clone(),
             size_bytes: metadata.len(),

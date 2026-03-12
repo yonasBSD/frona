@@ -59,7 +59,7 @@ pub struct ToolCallResult {
 pub enum ToolLoopOutcome {
     Completed {
         text: String,
-        attachments: Vec<crate::api::files::Attachment>,
+        attachments: Vec<crate::storage::Attachment>,
     },
     Cancelled(String),
     ExternalToolPending {
@@ -183,7 +183,7 @@ async fn execute_tool_calls(
     ctx: &InferenceContext,
     event_tx: &mpsc::Sender<InferenceEvent>,
     chat_history: &mut Vec<RigMessage>,
-    all_attachments: &mut Vec<crate::api::files::Attachment>,
+    all_attachments: &mut Vec<crate::storage::Attachment>,
     metrics_ctx: &InferenceMetricsContext,
 ) -> ToolExecutionResult {
     let mut result = ToolExecutionResult {
@@ -317,7 +317,7 @@ pub async fn run_tool_loop(
     let rig_tools = to_rig_tool_definitions(tool_defs);
 
     let mut accumulated_text = String::new();
-    let mut all_attachments: Vec<crate::api::files::Attachment> = Vec::new();
+    let mut all_attachments: Vec<crate::storage::Attachment> = Vec::new();
     let mut current_system_prompt = system_prompt.to_string();
 
     let max_tool_turns = model_group.inference.max_tool_turns;

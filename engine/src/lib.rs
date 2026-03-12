@@ -14,6 +14,7 @@ pub mod inference;
 pub mod memory;
 pub mod scheduler;
 pub mod space;
+pub mod storage;
 pub mod tool;
 
 pub use frona_derive::Entity;

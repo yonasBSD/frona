@@ -3,7 +3,7 @@ use rig::completion::{AssistantContent, Message as RigMessage};
 use crate::chat::message::models::Message;
 use crate::chat::message::models::MessageRole;
 
-pub fn format_content_with_attachments(content: &str, attachments: &[crate::api::files::Attachment]) -> String {
+pub fn format_content_with_attachments(content: &str, attachments: &[crate::storage::Attachment]) -> String {
     if attachments.is_empty() {
         return content.to_string();
     }
@@ -201,7 +201,7 @@ mod tests {
     fn user_message_with_attachments_appends_files_block() {
         let msg = Message {
             attachments: vec![
-                crate::api::files::Attachment {
+                crate::storage::Attachment {
                     filename: "report.pdf".to_string(),
                     content_type: "application/pdf".to_string(),
                     size_bytes: 1024,
@@ -249,7 +249,7 @@ mod tests {
                 status: TaskStatus::Completed,
             }),
             attachments: vec![
-                crate::api::files::Attachment {
+                crate::storage::Attachment {
                     filename: "output.csv".to_string(),
                     content_type: "text/csv".to_string(),
                     size_bytes: 512,

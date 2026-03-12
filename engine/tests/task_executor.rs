@@ -3,7 +3,8 @@ use std::sync::Arc;
 use chrono::Utc;
 use frona::agent::task::executor::TaskExecutor;
 use frona::agent::task::models::{Task, TaskKind, TaskStatus};
-use frona::agent::workspace::AgentWorkspaceManager;
+use frona::agent::service::AgentService;
+use frona::storage::StorageService;
 use frona::core::config::Config;
 use frona::db::init as db;
 use frona::db::repo::generic::SurrealRepo;
@@ -53,9 +54,14 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
     let db = test_db().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let workspaces = AgentWorkspaceManager::new(tmp.path().join("workspaces"), tmp.path().join("shared/agents"));
+    let storage = StorageService::new(&config);
+    let agent_service = AgentService::new(
+        SurrealRepo::new(db.clone()),
+        &config.cache,
+        std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+    );
     let metrics_handle = frona::core::metrics::setup_metrics_recorder();
-    let state = AppState::new(db, &config, None, workspaces, metrics_handle);
+    let state = AppState::new(db, &config, None, agent_service, storage, metrics_handle);
     (state, tmp)
 }
 

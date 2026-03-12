@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use crate::api::files::Attachment;
+use crate::storage::Attachment;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
 
