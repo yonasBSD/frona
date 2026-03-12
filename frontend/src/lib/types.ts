@@ -100,6 +100,15 @@ export interface Attachment {
   url?: string;
 }
 
+// File manager types
+export interface FileEntry {
+  id: string;
+  size: number;
+  date: Date;
+  type: "folder" | "file";
+  parent: string;
+}
+
 // Contact types
 export interface Contact {
   id: string;

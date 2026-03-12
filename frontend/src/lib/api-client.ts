@@ -94,7 +94,7 @@ async function request<T>(
   return JSON.parse(text);
 }
 
-import type { MessageResponse, Attachment } from "./types";
+import type { MessageResponse, Attachment, FileEntry } from "./types";
 
 export async function uploadFile(file: File, relativePath?: string): Promise<Attachment> {
   const formData = new FormData();
@@ -121,6 +121,93 @@ export async function uploadFile(file: File, relativePath?: string): Promise<Att
   }
 
   return res.json();
+}
+
+function parseFileEntries(raw: Array<{ id: string; size: number; date: string; type: string; parent: string }>): FileEntry[] {
+  return raw.map((e) => ({
+    id: e.id,
+    size: e.size,
+    date: new Date(e.date),
+    type: e.type as "folder" | "file",
+    parent: e.parent,
+  }));
+}
+
+export async function listUserFiles(path?: string): Promise<FileEntry[]> {
+  const url = path ? `/api/files/browse/user/${path}` : "/api/files/browse/user";
+  const raw = await request<Array<{ id: string; size: number; date: string; type: string; parent: string }>>(url);
+  return parseFileEntries(raw);
+}
+
+export async function listAgentFiles(agentId: string, path?: string): Promise<FileEntry[]> {
+  const url = path
+    ? `/api/files/browse/agent/${agentId}/${path}`
+    : `/api/files/browse/agent/${agentId}`;
+  const raw = await request<Array<{ id: string; size: number; date: string; type: string; parent: string }>>(url);
+  return parseFileEntries(raw);
+}
+
+export async function renameFile(path: string, newName: string): Promise<void> {
+  await request("/api/files/rename", {
+    method: "POST",
+    body: JSON.stringify({ path, new_name: newName }),
+  });
+}
+
+export async function copyFiles(sources: string[], destination: string): Promise<void> {
+  await request("/api/files/copy", {
+    method: "POST",
+    body: JSON.stringify({ sources, destination }),
+  });
+}
+
+export async function moveFiles(sources: string[], destination: string): Promise<void> {
+  await request("/api/files/move", {
+    method: "POST",
+    body: JSON.stringify({ sources, destination }),
+  });
+}
+
+export async function createFolder(path: string): Promise<void> {
+  await request("/api/files/mkdir", {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
+export interface SearchResult {
+  id: string;
+  size: number;
+  date: Date;
+  type: "folder" | "file";
+  source: string;
+  path: string;
+}
+
+export async function searchFiles(query: string, scope?: string): Promise<SearchResult[]> {
+  let url = `/api/files/search?q=${encodeURIComponent(query)}`;
+  if (scope) {
+    url += `&scope=${encodeURIComponent(scope)}`;
+  }
+  const raw = await request<Array<{ id: string; size: number; date: string; type: string; parent: string }>>(
+    url,
+  );
+  return raw.map((e) => {
+    const [source, ...rest] = e.id.split(":");
+    const path = rest.join(":");
+    return {
+      id: e.id,
+      size: e.size,
+      date: new Date(e.date),
+      type: e.type as "folder" | "file",
+      source,
+      path,
+    };
+  });
+}
+
+export async function deleteFile(username: string, path: string): Promise<void> {
+  await request(`/api/files/user/${username}/${path}`, { method: "DELETE" });
 }
 
 export async function presignFile(owner: string, path: string): Promise<string> {
