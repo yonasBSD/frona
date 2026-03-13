@@ -206,6 +206,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         ? { content, attachments }
         : { content };
 
+      let nextId = 0;
+      const scheduleFade = (tcId: number) => {
+        setTimeout(() => {
+          const arr = activeToolCallsRef.current;
+          const idx = arr.findIndex((tc) => tc.id === tcId);
+          if (idx === -1 || arr[idx].status === "fading") return;
+          const updated = [...arr];
+          updated[idx] = { ...updated[idx], status: "fading" as const };
+          activeToolCallsRef.current = updated;
+          setActiveToolCalls(updated);
+          setTimeout(() => {
+            activeToolCallsRef.current = activeToolCallsRef.current.filter(
+              (tc) => tc.id !== tcId,
+            );
+            setActiveToolCalls([...activeToolCallsRef.current]);
+          }, 300);
+        }, 3000);
+      };
+
       await streamMessage(activeChatId, body, {
         onUserMessage: (msg) => {
           setMessages((prev) => [...prev, msg]);
@@ -235,23 +254,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         },
         onToolCall: (name, _args, description) => {
           if (name === "ask_user_question" || name === "request_user_takeover") return;
+          const context = streamingContentRef.current.trim() || null;
+          streamingContentRef.current = "";
+          setStreamingContent("");
+          const hasDescription = description && description !== name;
           const entry: ToolCallStatus = {
+            id: nextId++,
             name,
-            description: description ?? null,
+            description: hasDescription ? description : context,
             status: "running",
           };
-          activeToolCallsRef.current = [...activeToolCallsRef.current, entry];
+          activeToolCallsRef.current = [entry, ...activeToolCallsRef.current];
           setActiveToolCalls(activeToolCallsRef.current);
         },
-        onToolResult: (name) => {
+        onToolResult: (name, _result, success) => {
           const idx = activeToolCallsRef.current.findIndex(
             (tc) => tc.name === name && tc.status === "running",
           );
           if (idx !== -1) {
             const updated = [...activeToolCallsRef.current];
-            updated[idx] = { ...updated[idx], status: "done" };
+            updated[idx] = { ...updated[idx], status: success ? "success" : "error" };
             activeToolCallsRef.current = updated;
-            setActiveToolCalls(activeToolCallsRef.current);
+            setActiveToolCalls(updated);
+            scheduleFade(updated[idx].id);
           }
         },
         onToolMessage: (msg) => {
@@ -266,10 +291,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             prev.map((m) => (m.id === msg.id ? msg : m)),
           );
         },
-        onRateLimit: (retryAfterSecs) => {
+        onRetry: (retryAfterSecs, reason) => {
+          const labels: Record<string, string> = {
+            rate_limited: "Rate limited",
+            server_error: "Server error",
+            network_error: "Network error",
+            empty_response: "Empty response",
+            timeout: "Timeout",
+            overloaded: "Server overloaded",
+          };
+          const label = labels[reason] ?? reason;
           const entry: ToolCallStatus = {
-            name: "rate_limit",
-            description: `Rate limited, retrying in ${retryAfterSecs}s...`,
+            id: nextId++,
+            name: label,
+            description: `Retrying in ${retryAfterSecs}s...`,
             status: "running",
           };
           activeToolCallsRef.current = [entry];

@@ -16,7 +16,7 @@ export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubb
   const hasToolCalls = toolCalls && toolCalls.length > 0;
 
   return (
-    <div className="flex justify-start">
+    <div className="flex justify-start min-h-[100px]">
       <div className="flex items-start gap-2.5 max-w-[85%]">
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium bg-surface-tertiary text-text-secondary">
           {agentName.charAt(0).toUpperCase()}
@@ -28,14 +28,14 @@ export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubb
           {hasToolCalls && (
             <div className="flex flex-col gap-1 mb-1.5">
               {toolCalls.map((tc, i) => (
-                <ToolCallIndicator key={`${tc.name}-${i}`} toolCall={tc} />
+                <ToolCallIndicator key={tc.id} toolCall={tc} />
               ))}
             </div>
           )}
           <div className="text-sm text-text-primary">
             {content ? (
               <MarkdownContent content={deferredContent} />
-            ) : !hasToolCalls ? (
+            ) : !toolCalls?.length ? (
               <p className="animate-pulse text-text-tertiary">...</p>
             ) : null}
           </div>

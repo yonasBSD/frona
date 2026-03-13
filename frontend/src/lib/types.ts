@@ -230,9 +230,10 @@ export function agentDisplayName(
 
 // Tool call types
 export interface ToolCallStatus {
+  id: number;
   name: string;
   description: string | null;
-  status: "running" | "done";
+  status: "running" | "success" | "error" | "fading";
 }
 
 // Credential types

@@ -238,11 +238,11 @@ export async function streamMessage(
     onError: (error: Error) => void;
     onTitle?: (title: string) => void;
     onToolCall?: (name: string, args: unknown, description?: string) => void;
-    onToolResult?: (name: string, result: string) => void;
+    onToolResult?: (name: string, result: string, success: boolean) => void;
     onEntityUpdated?: (table: string, recordId: string, fields: Record<string, unknown>) => void;
     onToolMessage?: (msg: MessageResponse) => void;
     onToolResolved?: (msg: MessageResponse) => void;
-    onRateLimit?: (retryAfterSecs: number) => void;
+    onRetry?: (retryAfterSecs: number, reason: string) => void;
     onCancelled?: () => void;
     onStreamEnd?: () => void;
   },
@@ -330,6 +330,7 @@ export async function streamMessage(
                 callbacks.onToolResult?.(
                   parsed.name as string,
                   parsed.result as string,
+                  parsed.success as boolean,
                 );
                 break;
               case "entity_updated":
@@ -345,8 +346,8 @@ export async function streamMessage(
               case "tool_resolved":
                 callbacks.onToolResolved?.(parsed as MessageResponse);
                 break;
-              case "rate_limit":
-                callbacks.onRateLimit?.(parsed.retry_after_secs as number);
+              case "retry":
+                callbacks.onRetry?.(parsed.retry_after_secs as number, parsed.reason as string);
                 break;
               case "cancelled":
                 callbacks.onCancelled?.();

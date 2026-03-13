@@ -51,7 +51,7 @@ export function MessageList() {
     } else {
       scrollToBottom();
     }
-  }, [messages, streamingContent, activeToolCalls, activeChat?.id, scrollToBottom]);
+  }, [messages, streamingContent, activeChat?.id, scrollToBottom]);
 
   // Re-scroll when images load (they cause layout shifts)
   const containerRef = useRef<HTMLDivElement>(null);
@@ -91,8 +91,8 @@ export function MessageList() {
         }
         return <MessageBubble key={msg.id} message={msg} agentName={agentName} />;
       })}
-      {streamingContent !== null && (
-        <StreamingBubble content={streamingContent} toolCalls={activeToolCalls} agentName={agentName} />
+      {(streamingContent !== null || activeToolCalls.length > 0) && (
+        <StreamingBubble content={streamingContent ?? ""} toolCalls={activeToolCalls} agentName={agentName} />
       )}
       <div ref={bottomRef} />
     </div>
