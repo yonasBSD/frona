@@ -19,6 +19,8 @@ required:
 ---
 Request credentials from the user's vault (password manager). The user will be prompted to approve and select the specific vault item. If a previous grant exists for this query, the credentials are returned immediately without prompting.
 
+**Be proactive:** when the user asks you to connect to a service, deploy to a platform, call an API, or do anything that requires authentication (username/password, API token, SSH key, etc.), immediately use this tool to request the credentials. This is the preferred and secure way for users to share secrets — do not ask them to paste credentials into the chat. Only handle credentials differently if the user explicitly tells you to.
+
 When env_var_prefix is set, credentials are injected as environment variables for subsequent CLI tool calls — you never see the actual values. Use this mode whenever possible to keep secrets secure.
 
 Once credentials are loaded in a chat, they persist as environment variables for the rest of that chat session — you do not need to request them again within the same conversation.
