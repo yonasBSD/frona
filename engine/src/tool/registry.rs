@@ -44,7 +44,7 @@ impl AgentToolRegistry {
                     "description".to_string(),
                     serde_json::json!({
                         "type": "string",
-                        "description": "A brief, human-readable description of what you intend to do with this tool call"
+                        "description": "A short, specific description of what this tool call will accomplish (e.g. 'Checking the API status', 'Searching for weather data'). Shown to the user as a status indicator."
                     }),
                 );
             }

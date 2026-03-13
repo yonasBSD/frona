@@ -124,9 +124,10 @@ async fn test_tool_loop_single_tool_call() {
                 assert_eq!(name, "search");
                 saw_tool_call = true;
             }
-            InferenceEventKind::ToolResult { name, result } => {
+            InferenceEventKind::ToolResult { name, result, success } => {
                 assert_eq!(name, "search");
                 assert_eq!(result, "search results here");
+                assert!(success);
                 saw_tool_result = true;
             }
             _ => {}
@@ -365,12 +366,12 @@ async fn test_tool_loop_rate_limit_retry() {
     while let Ok(event) = event_rx.try_recv() {
         if matches!(
             event.kind,
-            InferenceEventKind::RateLimitRetry { retry_after_ms: 1 }
+            InferenceEventKind::Retry { .. }
         ) {
             saw_retry = true;
         }
     }
-    assert!(saw_retry, "Should emit RateLimitRetry event");
+    assert!(saw_retry, "Should emit Retry event");
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -455,10 +456,11 @@ async fn test_tool_loop_tool_execution_failure() {
 
     let mut saw_error_result = false;
     while let Ok(event) = event_rx.try_recv() {
-        if let InferenceEventKind::ToolResult { name, result } = event.kind
+        if let InferenceEventKind::ToolResult { name, result, success } = event.kind
             && name == "bad_tool"
         {
             assert!(result.starts_with("Error:"), "Got: {result}");
+            assert!(!success);
             saw_error_result = true;
         }
     }

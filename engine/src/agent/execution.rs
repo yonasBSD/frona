@@ -51,7 +51,7 @@ pub async fn run_agent_loop(
                 accumulated.push_str(&text);
                 last_segment.push_str(&text);
             }
-            InferenceEventKind::ToolCall { .. } | InferenceEventKind::ToolResult { .. } => {
+            InferenceEventKind::ToolCall { .. } | InferenceEventKind::ToolResult { .. }  => {
                 last_segment.clear();
             }
             InferenceEventKind::Done(_) | InferenceEventKind::Cancelled(_) => {}

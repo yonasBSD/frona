@@ -252,13 +252,12 @@ pub async fn stream_with_retry_and_fallback(
     .when(|e| e.is_retryable())
     .notify(|e, dur| {
         tracing::warn!(model = %model_str, error = %e, delay = ?dur, "Retryable error, backing off");
-        if e.is_rate_limited() {
-            let _ = event_tx.send(InferenceEvent {
-                kind: InferenceEventKind::RateLimitRetry {
-                    retry_after_ms: dur.as_millis() as u64,
-                },
-            });
-        }
+        let _ = event_tx.send(InferenceEvent {
+            kind: InferenceEventKind::Retry {
+                retry_after_ms: dur.as_millis() as u64,
+                reason: e.retry_reason(),
+            },
+        });
     })
     .await;
 

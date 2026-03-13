@@ -137,10 +137,13 @@ impl MessageStreamSession {
         handle: tokio::task::JoinHandle<Result<InferenceResponse, crate::core::error::AppError>>,
     ) {
         let mut accumulated = String::new();
+        let mut last_segment = String::new();
+        let mut had_tool_calls = false;
         while let Some(event) = event_rx.recv().await {
             match event.kind {
                 InferenceEventKind::Text(text) => {
                     accumulated.push_str(&text);
+                    last_segment.push_str(&text);
                     if !self.send("token", serde_json::json!({ "content": text })) {
                         break;
                     }
@@ -148,19 +151,22 @@ impl MessageStreamSession {
                 InferenceEventKind::ToolCall { name, arguments, description } => {
                     let is_human_tool = name == "ask_user_question" || name == "request_user_takeover";
                     if !is_human_tool {
+                        had_tool_calls = true;
+                        last_segment.clear();
                         let _ = self
                             .send("tool_call", serde_json::json!({ "name": name, "arguments": arguments, "description": description }));
                     }
                 }
-                InferenceEventKind::ToolResult { name, result } => {
-                    let _ = self.send("tool_result", serde_json::json!({ "name": name, "result": result }));
+                InferenceEventKind::ToolResult { name, success, .. } => {
+                    last_segment.clear();
+                    let _ = self.send("tool_result", serde_json::json!({ "name": name, "success": success }));
                 }
                 InferenceEventKind::EntityUpdated { table, record_id, fields } => {
                     let _ = self
                         .send("entity_updated", serde_json::json!({ "table": table, "record_id": record_id, "fields": fields }));
                 }
-                InferenceEventKind::RateLimitRetry { retry_after_ms } => {
-                    let _ = self.send("rate_limit", serde_json::json!({ "retry_after_secs": retry_after_ms / 1000 }));
+                InferenceEventKind::Retry { retry_after_ms, reason } => {
+                    let _ = self.send("retry", serde_json::json!({ "retry_after_secs": retry_after_ms / 1000, "reason": reason }));
                 }
                 InferenceEventKind::Done(_) => {}
                 InferenceEventKind::Cancelled(_) => break,
@@ -170,11 +176,16 @@ impl MessageStreamSession {
             }
         }
 
+        let content = if had_tool_calls && !last_segment.is_empty() {
+            last_segment
+        } else {
+            accumulated
+        };
         let sink = ResponseSink::Sse {
             tx: self.tx.clone(),
             username: self.username.clone(),
         };
-        handle_inference_result(handle.await, accumulated, &self.chat_service, &self.chat_id, &self.presign_svc, &self.user_id, sink).await;
+        handle_inference_result(handle.await, content, &self.chat_service, &self.chat_id, &self.presign_svc, &self.user_id, sink).await;
     }
 
     async fn cleanup(&self) {
@@ -411,17 +422,38 @@ pub async fn resume_tool_loop(
     });
 
     let mut accumulated = String::new();
+    let mut last_segment = String::new();
+    let mut had_tool_calls = false;
     while let Some(event) = tool_event_rx.recv().await {
-        if let InferenceEventKind::Text(text) = event.kind {
-            accumulated.push_str(&text);
+        match event.kind {
+            InferenceEventKind::Text(text) => {
+                accumulated.push_str(&text);
+                last_segment.push_str(&text);
+            }
+            InferenceEventKind::ToolCall { name, .. } => {
+                let is_human_tool = name == "ask_user_question" || name == "request_user_takeover";
+                if !is_human_tool {
+                    had_tool_calls = true;
+                    last_segment.clear();
+                }
+            }
+            InferenceEventKind::ToolResult { .. } => {
+                last_segment.clear();
+            }
+            _ => {}
         }
     }
 
+    let content = if had_tool_calls && !last_segment.is_empty() {
+        last_segment
+    } else {
+        accumulated
+    };
     let sink = ResponseSink::Broadcast {
         service: state.broadcast_service.clone(),
     };
     handle_inference_result(
-        handle.await, accumulated, &state.chat_service,
+        handle.await, content, &state.chat_service,
         &chat_id_owned, &state.presign_service, &user_id_owned, sink,
     ).await;
 

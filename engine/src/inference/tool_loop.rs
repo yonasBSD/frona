@@ -34,13 +34,14 @@ pub enum InferenceEventKind {
     ToolResult {
         name: String,
         result: String,
+        success: bool,
     },
     EntityUpdated {
         table: String,
         record_id: String,
         fields: serde_json::Value,
     },
-    RateLimitRetry { retry_after_ms: u64 },
+    Retry { retry_after_ms: u64, reason: &'static str },
     Done(String),
     Cancelled(String),
     Error(String),
@@ -233,11 +234,13 @@ async fn execute_tool_calls(
             }
         };
 
+        let success = tool_output.as_ref().is_some_and(|o| o.is_success());
         let _ = event_tx
             .send(InferenceEvent {
                 kind: InferenceEventKind::ToolResult {
                     name: tool_name.clone(),
                     result: text.clone(),
+                    success,
                 },
             });
 

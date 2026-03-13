@@ -99,6 +99,22 @@ impl InferenceError {
             _ => false,
         }
     }
+
+    pub fn retry_reason(&self) -> &'static str {
+        if self.is_rate_limited() {
+            return "rate_limited";
+        }
+        match self {
+            InferenceError::EmptyResponse => "empty_response",
+            InferenceError::CompletionFailed(rig::completion::CompletionError::HttpError(
+                rig::http_client::Error::Instance(_),
+            )) => "network_error",
+            InferenceError::CompletionFailed(rig::completion::CompletionError::HttpError(_)) => "server_error",
+            InferenceError::StreamingFailed(msg) if msg.to_lowercase().contains("timeout") => "timeout",
+            InferenceError::InferenceFailed(msg) if msg.to_lowercase().contains("overloaded") => "overloaded",
+            _ => "server_error",
+        }
+    }
 }
 
 fn format_fallback_errors(errors: &[(String, String)]) -> String {
