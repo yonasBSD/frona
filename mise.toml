@@ -71,6 +71,10 @@ run = "cargo test --workspace"
 description = "Build production Docker image"
 run = "build/build.sh"
 
+[tasks.release]
+description = "Release: bump version, git tag, build and push Docker image"
+run = "build/release.sh"
+
 [tasks."docker:publish"]
 description = "Build production image and push to GHCR"
 run = "build/publish.sh"

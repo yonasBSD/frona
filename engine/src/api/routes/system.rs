@@ -1,12 +1,18 @@
 use axum::Router;
-use axum::routing::post;
+use axum::routing::{get, post};
 use serde_json::json;
 
 use super::super::middleware::auth::AuthUser;
 use crate::core::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/system/restart", post(restart_handler))
+    Router::new()
+        .route("/system/version", get(version_handler))
+        .route("/system/restart", post(restart_handler))
+}
+
+async fn version_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {
+    axum::Json(json!({"version": env!("CARGO_PKG_VERSION")}))
 }
 
 async fn restart_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {

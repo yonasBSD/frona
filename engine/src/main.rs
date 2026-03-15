@@ -180,7 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
-    info!("Server starting on {addr}");
+    info!("Frona v{} starting on {addr}", env!("CARGO_PKG_VERSION"));
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await?
