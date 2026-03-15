@@ -7,8 +7,8 @@ use crate::core::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/system/version", get(version_handler))
-        .route("/system/restart", post(restart_handler))
+        .route("/api/system/version", get(version_handler))
+        .route("/api/system/restart", post(restart_handler))
 }
 
 async fn version_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {

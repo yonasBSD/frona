@@ -16,22 +16,24 @@ import { SearchSection } from "@/components/settings/sections/search-section";
 import { VoiceSection } from "@/components/settings/sections/voice-section";
 import { VaultSection } from "@/components/settings/sections/vault-section";
 import { AdvancedSection } from "@/components/settings/sections/advanced-section";
+import { AboutSection } from "@/components/settings/sections/about-section";
 import { getConfig, updateConfig } from "@/lib/config-types";
 import type { Config } from "@/lib/config-types";
 
 const TABS = [
-  { id: "profile", label: "Profile", group: "user" },
-  { id: "theme", label: "Theme", group: "user" },
-  { id: "providers", label: "Providers", group: "config" },
-  { id: "models", label: "Models", group: "config" },
-  { id: "search", label: "Search", group: "config" },
-  { id: "voice", label: "Voice", group: "config" },
-  { id: "browser", label: "Browser", group: "config" },
-  { id: "vault", label: "Vault", group: "config" },
-  { id: "auth", label: "Authentication", group: "config" },
-  { id: "sso", label: "Single Sign-On", group: "config" },
-  { id: "server", label: "Server", group: "config" },
-  { id: "advanced", label: "Advanced", group: "config" },
+  { id: "profile", label: "Profile", group: "user", saveable: false },
+  { id: "theme", label: "Theme", group: "user", saveable: false },
+  { id: "providers", label: "Providers", group: "config", saveable: true },
+  { id: "models", label: "Models", group: "config", saveable: true },
+  { id: "search", label: "Search", group: "config", saveable: true },
+  { id: "voice", label: "Voice", group: "config", saveable: true },
+  { id: "browser", label: "Browser", group: "config", saveable: true },
+  { id: "vault", label: "Vault", group: "config", saveable: true },
+  { id: "auth", label: "Authentication", group: "config", saveable: true },
+  { id: "sso", label: "Single Sign-On", group: "config", saveable: true },
+  { id: "server", label: "Server", group: "config", saveable: true },
+  { id: "advanced", label: "Advanced", group: "config", saveable: true },
+  { id: "about", label: "About", group: "config", saveable: false },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -173,7 +175,6 @@ export default function SettingsPage() {
             <div className="min-h-[400px]">
               {activeTab === "profile" && <ProfileSection />}
               {activeTab === "theme" && <ThemeSection />}
-
               {isConfigTab && configLoading && (
                 <p className="text-sm text-text-tertiary">Loading configuration...</p>
               )}
@@ -240,6 +241,7 @@ export default function SettingsPage() {
                       onChange={(v) => updatePatch("vault", v)}
                     />
                   )}
+                  {activeTab === "about" && <AboutSection />}
                   {activeTab === "advanced" && (
                     <AdvancedSection
                       inference={config.inference}
@@ -257,7 +259,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Save bar — only for config tabs */}
-            {isConfigTab && config && (
+            {TABS.find((t) => t.id === activeTab)?.saveable && config && (
               <div className="pt-4 pb-2 border-t border-border flex items-center justify-end gap-2">
                 <button
                   onClick={handleDiscard}
