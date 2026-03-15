@@ -7,6 +7,7 @@ import { useSession } from "@/lib/session-context";
 import { uploadFile } from "@/lib/api-client";
 import { AutoResizeTextarea, type AutoResizeTextareaHandle } from "@/components/auto-resize-textarea";
 import { FileBrowserModal } from "@/components/chat/file-browser-modal";
+import { ToolStatusLine } from "@/components/chat/tool-status-line";
 import type { Attachment } from "@/lib/types";
 
 interface PendingFile {
@@ -21,7 +22,7 @@ function formatFileSize(bytes: number): string {
 }
 
 export function MessageInput() {
-  const { sendMessage, stopGeneration, sending, activeChatId, pendingAgentId } = useSession();
+  const { sendMessage, stopGeneration, sending, activeChatId, pendingAgentId, activeToolCalls } = useSession();
   const canSend = !!(activeChatId || pendingAgentId);
   const [text, setText] = useState("");
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
@@ -117,6 +118,7 @@ export function MessageInput() {
 
   return (
     <form onSubmit={handleSubmit} className="sticky bottom-0 bg-surface p-4">
+      <ToolStatusLine toolCalls={activeToolCalls} />
       {(pendingFiles.length > 0 || serverAttachments.length > 0) && (
         <div className="flex flex-wrap gap-1.5 mb-2 px-1">
           {pendingFiles.map((pf, i) => (

@@ -1,18 +1,14 @@
 "use client";
 
 import { MarkdownContent } from "./markdown-content";
-import { ToolCallIndicator } from "./tool-call-indicator";
-import type { ToolCallStatus } from "@/lib/types";
 
 interface StreamingBubbleProps {
   content: string;
-  toolCalls?: ToolCallStatus[];
+  toolCalls?: { id: number; name: string; description: string | null; status: string }[];
   agentName: string;
 }
 
 export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubbleProps) {
-  const hasToolCalls = toolCalls && toolCalls.length > 0;
-
   return (
     <div className="flex justify-start min-h-[100px]">
       <div className="flex items-start gap-2.5 max-w-[85%]">
@@ -23,13 +19,6 @@ export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubb
           <p className="text-xs font-medium text-text-tertiary mb-0.5">
             {agentName}
           </p>
-          {hasToolCalls && (
-            <div className="flex flex-col gap-1 mb-1.5">
-              {toolCalls.map((tc, i) => (
-                <ToolCallIndicator key={tc.id} toolCall={tc} />
-              ))}
-            </div>
-          )}
           <div className="text-base text-text-primary">
             {content ? (
               <MarkdownContent content={content} />
