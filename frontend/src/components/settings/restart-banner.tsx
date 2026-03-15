@@ -15,7 +15,7 @@ export function RestartBanner({ visible }: RestartBannerProps) {
   const handleRestart = async () => {
     setRestarting(true);
     try {
-      await api.post("/system/restart", {});
+      await api.post("/api/system/restart", {});
     } catch {
       // Server may drop connection during restart
     }
