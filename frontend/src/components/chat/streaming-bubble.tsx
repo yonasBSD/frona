@@ -1,6 +1,5 @@
 "use client";
 
-import { useDeferredValue } from "react";
 import { MarkdownContent } from "./markdown-content";
 import { ToolCallIndicator } from "./tool-call-indicator";
 import type { ToolCallStatus } from "@/lib/types";
@@ -12,7 +11,6 @@ interface StreamingBubbleProps {
 }
 
 export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubbleProps) {
-  const deferredContent = useDeferredValue(content);
   const hasToolCalls = toolCalls && toolCalls.length > 0;
 
   return (
@@ -34,7 +32,7 @@ export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubb
           )}
           <div className="text-sm text-text-primary">
             {content ? (
-              <MarkdownContent content={deferredContent} />
+              <MarkdownContent content={content} />
             ) : !toolCalls?.length ? (
               <p className="animate-pulse text-text-tertiary">...</p>
             ) : null}
