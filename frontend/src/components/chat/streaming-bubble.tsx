@@ -20,7 +20,7 @@ export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubb
           {agentName.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0 pt-0.5">
-          <p className="text-[11px] font-medium text-text-tertiary mb-0.5">
+          <p className="text-xs font-medium text-text-tertiary mb-0.5">
             {agentName}
           </p>
           {hasToolCalls && (
@@ -30,7 +30,7 @@ export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubb
               ))}
             </div>
           )}
-          <div className="text-sm text-text-primary">
+          <div className="text-base text-text-primary">
             {content ? (
               <MarkdownContent content={content} />
             ) : !toolCalls?.length ? (
