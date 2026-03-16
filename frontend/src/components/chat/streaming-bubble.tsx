@@ -4,11 +4,10 @@ import { MarkdownContent } from "./markdown-content";
 
 interface StreamingBubbleProps {
   content: string;
-  toolCalls?: { id: number; name: string; description: string | null; status: string }[];
   agentName: string;
 }
 
-export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubbleProps) {
+export function StreamingBubble({ content, agentName }: StreamingBubbleProps) {
   return (
     <div className="flex justify-start min-h-[100px]">
       <div className="flex items-start gap-2.5 max-w-[85%]">
@@ -22,9 +21,13 @@ export function StreamingBubble({ content, toolCalls, agentName }: StreamingBubb
           <div className="text-base text-text-primary">
             {content ? (
               <MarkdownContent content={content} />
-            ) : !toolCalls?.length ? (
-              <p className="animate-pulse text-text-tertiary">...</p>
-            ) : null}
+            ) : (
+              <span className="inline-flex items-center gap-1 py-1">
+                <span className="h-1 w-1 rounded-full bg-text-tertiary animate-[wave_1.4s_ease-in-out_infinite]" />
+                <span className="h-1 w-1 rounded-full bg-text-tertiary animate-[wave_1.4s_ease-in-out_0.2s_infinite]" />
+                <span className="h-1 w-1 rounded-full bg-text-tertiary animate-[wave_1.4s_ease-in-out_0.4s_infinite]" />
+              </span>
+            )}
           </div>
         </div>
       </div>

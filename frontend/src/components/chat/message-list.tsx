@@ -92,7 +92,7 @@ export function MessageList() {
         return <MessageBubble key={msg.id} message={msg} agentName={agentName} />;
       })}
       {(streamingContent !== null || activeToolCalls.length > 0) && (
-        <StreamingBubble content={streamingContent ?? ""} toolCalls={activeToolCalls} agentName={agentName} />
+        <StreamingBubble content={activeToolCalls.length > 0 ? "" : (streamingContent ?? "")} agentName={agentName} />
       )}
       <div ref={bottomRef} />
     </div>

@@ -97,7 +97,9 @@ export function ToolStatusLine({ toolCalls }: { toolCalls: ToolCallStatus[] }) {
     }
   }, [isDone, isActive, dismissed]);
 
-  if (dismissed || (!isActive && completedCount === 0)) return null;
+  const hidden = dismissed || (!isActive && completedCount === 0);
+
+  if (hidden) return <div className="h-8 mb-2" />;
 
   // Derive what to display
   let displayKey: string;
