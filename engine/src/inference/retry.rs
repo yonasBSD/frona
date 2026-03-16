@@ -4,6 +4,7 @@ use std::time::Instant;
 use backon::Retryable;
 use rig::completion::request::ToolDefinition as RigToolDefinition;
 use rig::completion::{AssistantContent, Message as RigMessage};
+use rig::completion::message::UserContent;
 use tokio::sync::mpsc;
 
 use crate::core::metrics::{self, InferenceMetricsContext};
@@ -223,10 +224,21 @@ pub async fn stream_with_retry_and_fallback(
         match contents_result {
             None => Err(InferenceError::Cancelled(turn_text)),
             Some(Ok(contents)) if contents.is_empty() => {
-                metrics::record_inference_request(
-                    metrics_ctx, model_id, provider_name, duration, None, "empty_response",
+                let last_is_tool_result = matches!(
+                    chat_history.last(),
+                    Some(RigMessage::User { content }) if content.iter().any(|c| matches!(c, UserContent::ToolResult(_)))
                 );
-                Err(InferenceError::EmptyResponse)
+                if last_is_tool_result {
+                    metrics::record_inference_request(
+                        metrics_ctx, model_id, provider_name, duration, None, "success",
+                    );
+                    Ok((contents, turn_text))
+                } else {
+                    metrics::record_inference_request(
+                        metrics_ctx, model_id, provider_name, duration, None, "empty_response",
+                    );
+                    Err(InferenceError::EmptyResponse)
+                }
             }
             Some(Ok(contents)) => {
                 metrics::record_inference_request(
