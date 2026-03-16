@@ -231,6 +231,12 @@ async fn serve_static(
     match service.oneshot(req).await {
         Ok(resp) => {
             let status = resp.status();
+            if status == StatusCode::NOT_FOUND
+                && path == "/"
+                && let Some(fallback) = find_html_fallback(&serve_path)
+            {
+                return fallback;
+            }
             if status == StatusCode::NOT_FOUND {
                 tracing::warn!(app_id = %app.id, serve_path = %serve_path.display(), sub_path = %path, "Proxy: static file not found");
             }
@@ -241,6 +247,31 @@ async fn serve_static(
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+fn find_html_fallback(serve_path: &std::path::Path) -> Option<Response> {
+    let entries = std::fs::read_dir(serve_path).ok()?;
+    let html_files: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("html"))
+        })
+        .collect();
+
+    if html_files.len() == 1 {
+        let content = std::fs::read(html_files[0].path()).ok()?;
+        return Some(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/html; charset=utf-8")
+                .body(Body::from(content))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        );
+    }
+
+    None
 }
 
 async fn handle_hibernated_app(
