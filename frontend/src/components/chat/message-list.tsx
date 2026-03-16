@@ -11,7 +11,7 @@ import { StreamingBubble } from "./streaming-bubble";
 import { ToolMessage } from "./tool-message";
 
 export function MessageList() {
-  const { messages, streamingContent, activeToolCalls, activeChat } = useSession();
+  const { messages, streamingContent, activeToolCalls, activeChat, activeTaskId } = useSession();
   const { agents, setActiveTab } = useNavigation();
   const router = useRouter();
 
@@ -69,6 +69,10 @@ export function MessageList() {
       {visibleMessages.map((msg) => {
         if (msg.tool && msg.tool.type === "TaskCompletion") {
           const { task_id } = msg.tool.data;
+          const isOwnTask = activeTaskId != null && task_id === activeTaskId;
+          if (isOwnTask) {
+            return <ToolMessage key={msg.id} message={msg} agentName={agentName} />;
+          }
           return (
             <div key={msg.id} className="space-y-1">
               <MessageBubble message={msg} agentName={agentName} />

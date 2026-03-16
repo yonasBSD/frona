@@ -41,7 +41,7 @@ function QuestionMessage({
           <p className="text-[11px] font-medium text-text-tertiary mb-0.5">
             {agentName}
           </p>
-          <p className="text-sm text-text-primary mb-2">
+          <p className="text-base text-text-primary mb-2">
             {message.tool.data.question}
           </p>
           <div className="flex flex-col gap-2">
@@ -52,7 +52,7 @@ function QuestionMessage({
                   key={option}
                   onClick={() => handleAnswer(option)}
                   disabled={loading || resolved || answered !== null}
-                  className={`rounded-lg border px-3 py-1.5 text-left text-sm font-medium transition ${
+                  className={`rounded-lg border px-3 py-1.5 text-left text-base font-medium transition ${
                     isSelected
                       ? "border-accent bg-accent/10 text-accent"
                       : resolved || answered !== null
@@ -104,7 +104,7 @@ function HumanInTheLoopMessage({
           <p className="text-[11px] font-medium text-text-tertiary mb-0.5">
             {agentName}
           </p>
-          <p className="text-sm text-text-primary mb-2">
+          <p className="text-base text-text-primary mb-2">
             {message.tool.data.reason}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -113,7 +113,7 @@ function HumanInTheLoopMessage({
                 href={message.tool.data.debugger_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-text-secondary hover:border-accent hover:text-accent transition"
+                className="rounded-lg border border-border px-3 py-1.5 text-base font-medium text-text-secondary hover:border-accent hover:text-accent transition"
               >
                 Open Browser Debugger
               </a>
@@ -121,7 +121,7 @@ function HumanInTheLoopMessage({
             <button
               onClick={handleResume}
               disabled={loading || resolved}
-              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+              className={`rounded-lg border px-3 py-1.5 text-base font-medium transition ${
                 resolved
                   ? "border-accent bg-accent/10 text-accent"
                   : "border-border text-text-secondary hover:border-accent hover:text-accent"
@@ -141,16 +141,19 @@ function TaskCompletionMessage({ message }: { message: MessageResponse }) {
 
   const { status } = message.tool.data;
   const isError = status === "failed";
+  const displayContent =
+    message.content ||
+    (isError ? "Task marked as failed." : "Task marked as complete.");
 
   return (
     <div
-      className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${
+      className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-base ${
         isError
           ? "border-danger/30 bg-danger-bg text-danger-text"
           : "border-success/30 bg-success-bg text-success-text"
       }`}
     >
-      <span className="flex-1">{message.content}</span>
+      <span className="flex-1">{displayContent}</span>
     </div>
   );
 }
@@ -265,7 +268,7 @@ function VaultApprovalMessage({
             <p className="text-[11px] font-medium text-text-tertiary mb-0.5">
               {agentName}
             </p>
-            <div className={`rounded-lg border px-3 py-2 text-sm ${colorClasses}`}>
+            <div className={`rounded-lg border px-3 py-2 text-base ${colorClasses}`}>
               {label}
             </div>
           </div>
@@ -285,10 +288,10 @@ function VaultApprovalMessage({
             {agentName}
           </p>
           <div className="rounded-lg border border-border p-3 space-y-3">
-            <p className="text-sm font-medium text-text-primary">
+            <p className="text-base font-medium text-text-primary">
               Credential Request
             </p>
-            <p className="text-sm text-text-secondary">{reason}</p>
+            <p className="text-base text-text-secondary">{reason}</p>
 
             <div className="space-y-2">
               <label className="block text-xs font-medium text-text-tertiary">
@@ -460,7 +463,7 @@ function ServiceApprovalMessage({
             <p className="text-[11px] font-medium text-text-tertiary mb-0.5">
               {agentName}
             </p>
-            <div className={`rounded-lg border px-3 py-2 text-sm ${colorClasses}`}>
+            <div className={`rounded-lg border px-3 py-2 text-base ${colorClasses}`}>
               {label}
             </div>
           </div>
@@ -480,10 +483,10 @@ function ServiceApprovalMessage({
             {agentName}
           </p>
           <div className="rounded-lg border border-border p-3 space-y-3">
-            <p className="text-sm font-medium text-text-primary">
+            <p className="text-base font-medium text-text-primary">
               Service {isUpdate ? "Update" : "Deployment"} Request
             </p>
-            <div className="space-y-1 text-sm text-text-secondary">
+            <div className="space-y-1 text-base text-text-secondary">
               <p>
                 <span className="text-text-tertiary">Name:</span> {name}
               </p>

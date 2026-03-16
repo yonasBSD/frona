@@ -80,12 +80,12 @@ export function TaskHeader() {
     <div className="flex items-center border-b border-border px-6 py-3">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-text-primary">{activeTask.title}</h2>
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${colorClass}`}>
+          <h2 className="text-base font-semibold text-text-primary">{activeTask.title}</h2>
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${colorClass}`}>
             {label}
           </span>
         </div>
-        <p className="text-xs text-text-tertiary">{agentName}</p>
+        <p className="text-sm text-text-tertiary">{agentName}</p>
       </div>
       {(canCancel || canDelete) && (
         <div ref={menuRef} className="relative ml-2">
