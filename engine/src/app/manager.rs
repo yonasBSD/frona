@@ -210,22 +210,30 @@ impl AppManager {
                 }
 
                 proc.restart_count += 1;
+                let restart_count = proc.restart_count;
                 Some((
                     proc.agent_id.clone(),
                     proc.manifest.command.clone(),
                     proc.manifest.clone(),
                     proc.credential_env_vars.clone(),
+                    restart_count,
                 ))
             } else {
                 None
             }
         };
 
-        if let Some((agent_id, command, manifest, creds)) = info {
+        if let Some((agent_id, command, manifest, creds, restart_count)) = info {
             self.stop_app(app_id).await?;
             if let Some(cmd) = command {
                 let (port, pid) =
                     self.start_app(app_id, &agent_id, &cmd, &manifest, creds).await?;
+                self.processes
+                    .lock()
+                    .await
+                    .get_mut(app_id)
+                    .expect("process just inserted by start_app")
+                    .restart_count = restart_count;
                 return Ok(Some((port, pid)));
             }
         }
@@ -483,6 +491,69 @@ mod tests {
         assert!(flushed.contains_key("app1"));
 
         assert!(manager.get_last_accessed("app1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_restart_count_preserved_after_crash_restart() {
+        let manager = AppManager::new(
+            PathBuf::from("/tmp/test_workspaces"),
+            true,
+            6000,
+            6010,
+        );
+
+        // Spawn a process that exits immediately (simulating a crash)
+        let child = tokio::process::Command::new("true")
+            .spawn()
+            .expect("failed to spawn dummy process");
+
+        let manifest = crate::app::models::AppManifest {
+            id: "test-app".to_string(),
+            name: "Test".to_string(),
+            description: None,
+            icon: None,
+            kind: None,
+            command: Some("true".to_string()),
+            restart_policy: Some("always".to_string()),
+            health_check: None,
+            resources: None,
+            static_dir: None,
+            expose: None,
+            network_destinations: None,
+            read_paths: None,
+            write_paths: None,
+            credentials: None,
+            hibernate: None,
+        };
+
+        let port = manager.allocate_port().await.unwrap();
+        manager
+            .processes
+            .lock()
+            .await
+            .insert(
+                "test-app".to_string(),
+                ManagedProcess {
+                    child,
+                    port,
+                    agent_id: "agent-1".to_string(),
+                    manifest,
+                    credential_env_vars: Vec::new(),
+                    restart_count: 0,
+                    consecutive_failures: 0,
+                    stderr_path: None,
+                },
+            );
+
+        // Wait for the dummy process to exit
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let result = manager.try_restart_crashed("test-app", 3).await.unwrap();
+        assert!(result.is_some(), "restart should succeed");
+
+        let processes = manager.processes.lock().await;
+        let proc = processes.get("test-app").expect("process should exist");
+        assert_eq!(proc.restart_count, 1, "restart_count should be preserved as 1");
     }
 
     #[test]
