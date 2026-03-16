@@ -10,6 +10,17 @@ use crate::tool::sandbox::driver::{SandboxConfig, SandboxDriver, create_driver};
 
 use super::models::{AppManifest, HealthCheck};
 
+pub struct ProcessExit {
+    pub status: Option<std::process::ExitStatus>,
+    pub stderr_tail: String,
+}
+
+pub enum ProcessStatus {
+    Alive,
+    Dead(ProcessExit),
+    NotManaged,
+}
+
 pub struct ManagedProcess {
     pub child: tokio::process::Child,
     pub port: u16,
@@ -18,6 +29,7 @@ pub struct ManagedProcess {
     pub credential_env_vars: Vec<(String, String)>,
     pub restart_count: u32,
     pub consecutive_failures: u32,
+    pub stderr_path: Option<PathBuf>,
 }
 
 pub struct AppManager {
@@ -59,7 +71,7 @@ impl AppManager {
 
         let sandbox = create_driver(self.sandbox_disabled);
 
-        let child = self.spawn_process(
+        let (child, stderr_path) = self.spawn_process(
             &*sandbox,
             &workspace_dir,
             command,
@@ -78,6 +90,7 @@ impl AppManager {
             credential_env_vars,
             restart_count: 0,
             consecutive_failures: 0,
+            stderr_path: Some(stderr_path),
         };
 
         self.processes
@@ -117,12 +130,28 @@ impl AppManager {
         client.get(&url).send().await.is_ok_and(|r| r.status().is_success())
     }
 
-    pub async fn is_process_alive(&self, app_id: &str) -> bool {
+    pub async fn check_process(&self, app_id: &str) -> ProcessStatus {
         let mut processes = self.processes.lock().await;
-        if let Some(proc) = processes.get_mut(app_id) {
-            matches!(proc.child.try_wait(), Ok(None))
-        } else {
-            false
+        let Some(proc) = processes.get_mut(app_id) else {
+            return ProcessStatus::NotManaged;
+        };
+        match proc.child.try_wait() {
+            Ok(None) => ProcessStatus::Alive,
+            Ok(Some(status)) => {
+                let stderr_tail = proc
+                    .stderr_path
+                    .as_ref()
+                    .map(|p| read_tail(p, 4096))
+                    .unwrap_or_default();
+                ProcessStatus::Dead(ProcessExit {
+                    status: Some(status),
+                    stderr_tail,
+                })
+            }
+            Err(_) => ProcessStatus::Dead(ProcessExit {
+                status: None,
+                stderr_tail: String::new(),
+            }),
         }
     }
 
@@ -204,6 +233,13 @@ impl AppManager {
         Ok(None)
     }
 
+    pub async fn remove_process(&self, app_id: &str) {
+        let mut processes = self.processes.lock().await;
+        if let Some(proc) = processes.remove(app_id) {
+            self.allocated_ports.lock().await.remove(&proc.port);
+        }
+    }
+
     pub async fn record_access(&self, app_id: &str) {
         self.last_accessed
             .lock()
@@ -260,7 +296,7 @@ impl AppManager {
         port: u16,
         manifest: &AppManifest,
         credential_env_vars: &[(String, String)],
-    ) -> Result<tokio::process::Child, AppError> {
+    ) -> Result<(tokio::process::Child, PathBuf), AppError> {
         let mut allowed_destinations: Vec<String> = Vec::new();
         allowed_destinations.push(format!("127.0.0.1:{port}"));
 
@@ -338,16 +374,38 @@ impl AppManager {
         let log_dir = PathBuf::from(workspace_dir).join(".app_logs");
         let _ = std::fs::create_dir_all(&log_dir);
 
+        let stderr_path = log_dir.join(format!("{}.stderr.log", manifest.id));
+        let stderr_file = std::fs::File::create(&stderr_path)
+            .map_err(|e| AppError::Tool(format!("Failed to create stderr log: {e}")))?;
+
         std_cmd.stdout(std::process::Stdio::null());
-        std_cmd.stderr(std::process::Stdio::null());
+        std_cmd.stderr(std::process::Stdio::from(stderr_file));
 
         let mut cmd = tokio::process::Command::from(std_cmd);
         let child = cmd
             .spawn()
             .map_err(|e| AppError::Tool(format!("Failed to spawn app process: {e}")))?;
 
-        Ok(child)
+        Ok((child, stderr_path))
     }
+}
+
+fn read_tail(path: &PathBuf, max_bytes: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let Ok(metadata) = file.metadata() else {
+        return String::new();
+    };
+    let len = metadata.len();
+    if len > max_bytes {
+        let _ = file.seek(SeekFrom::End(-(max_bytes as i64)));
+    }
+    let mut buf = String::new();
+    let _ = file.read_to_string(&mut buf);
+    buf
 }
 
 #[cfg(test)]

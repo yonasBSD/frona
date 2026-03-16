@@ -2,6 +2,7 @@ use tracing::info;
 
 use crate::core::state::AppState;
 
+use super::manager::{ProcessExit, ProcessStatus};
 use super::models::AppStatus;
 
 pub async fn restore_and_supervise_apps(
@@ -64,8 +65,24 @@ pub async fn restore_and_supervise_apps(
 
         let app_ids = state.app_service.manager().get_managed_app_ids().await;
         for app_id in &app_ids {
-            if !state.app_service.manager().is_process_alive(app_id).await {
-                tracing::warn!(app_id = %app_id, "App process died, attempting restart");
+            if let ProcessStatus::Dead(ProcessExit { status, stderr_tail }) =
+                state.app_service.manager().check_process(app_id).await
+            {
+                let exit_display = status
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let stderr_summary = if stderr_tail.is_empty() {
+                    String::new()
+                } else {
+                    let last_lines: Vec<&str> = stderr_tail.lines().rev().take(10).collect();
+                    last_lines.into_iter().rev().collect::<Vec<_>>().join("\n")
+                };
+                tracing::warn!(
+                    app_id = %app_id,
+                    exit_status = %exit_display,
+                    stderr = %stderr_summary,
+                    "App process died, attempting restart"
+                );
                 match state
                     .app_service
                     .manager()
@@ -84,7 +101,8 @@ pub async fn restore_and_supervise_apps(
                             .app_service
                             .update_status(app_id, AppStatus::Failed, None, None)
                             .await;
-                        tracing::warn!(app_id = %app_id, "App exceeded max restarts");
+                        state.app_service.manager().remove_process(app_id).await;
+                        tracing::warn!(app_id = %app_id, "App exceeded max restarts, removed from supervision");
                     }
                     Err(e) => {
                         tracing::error!(app_id = %app_id, error = %e, "Failed to restart app");
