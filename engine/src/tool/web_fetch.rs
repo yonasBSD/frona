@@ -11,15 +11,13 @@ use super::browser::session::BrowserSessionManager;
 
 pub struct WebFetchTool {
     session_manager: Arc<BrowserSessionManager>,
-    user_id: String,
     prompts: PromptLoader,
 }
 
 impl WebFetchTool {
-    pub fn new(session_manager: Arc<BrowserSessionManager>, user_id: String, prompts: PromptLoader) -> Self {
+    pub fn new(session_manager: Arc<BrowserSessionManager>, prompts: PromptLoader) -> Self {
         Self {
             session_manager,
-            user_id,
             prompts,
         }
     }
@@ -31,11 +29,13 @@ impl WebFetchTool {
 
 #[agent_tool]
 impl WebFetchTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let url = arguments
             .get("url")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Validation("Missing required parameter: url".into()))?;
+
+        let session_key = &ctx.user.username;
 
         let navigate_params = serde_json::json!({
             "url": url,
@@ -43,20 +43,18 @@ impl WebFetchTool {
         });
 
         self.session_manager
-            .execute_tool(&self.user_id, self.provider(), "navigate", navigate_params)
+            .execute_tool(session_key, self.provider(), "navigate", navigate_params)
             .await?;
 
         let markdown = self
             .session_manager
-            .execute_tool(&self.user_id, self.provider(), "get_markdown", serde_json::json!({}))
+            .execute_tool(session_key, self.provider(), "get_markdown", serde_json::json!({}))
             .await?;
 
         Ok(ToolOutput::text(markdown))
     }
 
     async fn cleanup(&self) -> Result<(), AppError> {
-        self.session_manager
-            .close_session(&self.user_id, self.provider())
-            .await
+        Ok(())
     }
 }

@@ -1,5 +1,4 @@
 mod stream;
-mod tool_registry;
 
 use std::convert::Infallible;
 
@@ -18,9 +17,6 @@ use crate::credential::presign::presign_response;
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
 use crate::core::state::AppState;
-
-pub use stream::resume_tool_loop;
-pub use tool_registry::{build_agent_summaries_from_state, build_tool_registry};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -110,27 +106,10 @@ async fn resolve_tool_message(
     let state = state.clone();
 
     tokio::spawn(async move {
-        if let Err(e) = resume_tool_loop(
-            &state,
-            &user_id,
-            &chat_id,
-        ).await {
-            tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume tool loop");
-        }
+        crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id).await;
     });
 
     Ok(Json(updated))
-}
-
-pub(super) fn get_compaction_model_group(state: &AppState) -> Option<crate::inference::config::ModelGroup> {
-    let registry = state.chat_service.provider_registry();
-    if let Ok(group) = registry.get_model_group("compaction") {
-        return Some(group.clone());
-    }
-    if let Ok(group) = registry.get_model_group("primary") {
-        return Some(group.clone());
-    }
-    None
 }
 
 pub(super) fn sse_event(name: &str, data: impl serde::Serialize) -> Event {

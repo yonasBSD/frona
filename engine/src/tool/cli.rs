@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::agent::prompt::PromptLoader;
+use crate::agent::skill::resolver::SkillResolver;
 use crate::core::error::AppError;
 
 use super::sandbox::SandboxManager;
@@ -28,33 +29,20 @@ pub struct CliToolConfig {
 pub struct CliTool {
     config: CliToolConfig,
     sandbox_manager: Arc<SandboxManager>,
-    agent_id: String,
-    network_access: bool,
-    allowed_network_destinations: Vec<String>,
-    skill_dirs: Vec<(String, String)>,
+    skill_resolver: SkillResolver,
 }
 
 impl CliTool {
     pub fn new(
         config: CliToolConfig,
         sandbox_manager: Arc<SandboxManager>,
-        agent_id: String,
-        network_access: bool,
-        allowed_network_destinations: Vec<String>,
+        skill_resolver: SkillResolver,
     ) -> Self {
         Self {
             config,
             sandbox_manager,
-            agent_id,
-            network_access,
-            allowed_network_destinations,
-            skill_dirs: Vec::new(),
+            skill_resolver,
         }
-    }
-
-    pub fn with_skill_dirs(mut self, skill_dirs: Vec<(String, String)>) -> Self {
-        self.skill_dirs = skill_dirs;
-        self
     }
 
     fn substitute(template: &str, arguments: &Map<String, Value>) -> String {
@@ -118,11 +106,31 @@ impl AgentTool for CliTool {
             .collect();
         let args_refs: Vec<&str> = substituted_args.iter().map(|s| s.as_str()).collect();
 
+        let agent_id = &ctx.agent.id;
+        let defaults = ctx.agent.sandbox_config.clone().unwrap_or_default();
+
+        let skill_dirs: Vec<(String, String)> = self
+            .skill_resolver
+            .list(agent_id)
+            .await
+            .into_iter()
+            .filter_map(|s| {
+                self.skill_resolver
+                    .skill_dir_path(agent_id, &s.name)
+                    .map(|p| {
+                        let abs = std::fs::canonicalize(&p)
+                            .map(|c| c.to_string_lossy().into_owned())
+                            .unwrap_or_else(|_| p.to_string_lossy().into_owned());
+                        (format!("skills/{}/", s.name), abs)
+                    })
+            })
+            .collect();
+
         let mut workspace = self.sandbox_manager.get_sandbox(
-            &self.agent_id,
-            self.network_access,
-            self.allowed_network_destinations.clone(),
-        ).with_skill_dirs(self.skill_dirs.clone());
+            agent_id,
+            defaults.network_access,
+            defaults.allowed_network_destinations,
+        ).with_skill_dirs(skill_dirs);
 
         {
             let vault_vars = ctx.vault_env_vars.read().await;
@@ -279,8 +287,22 @@ mod tests {
         assert!(configs.iter().any(|c| c.name == "python"));
     }
 
-    #[test]
-    fn test_cli_tool_definitions() {
+    async fn mock_skill_resolver() -> SkillResolver {
+        use surrealdb::Surreal;
+        use surrealdb::engine::local::Mem;
+        use crate::db::repo::generic::SurrealRepo;
+        use crate::core::config::Config;
+
+        let db = Surreal::new::<Mem>(()).await.unwrap();
+        db.use_ns("test").use_db("test").await.unwrap();
+        let skill_repo = SurrealRepo::new(db);
+        let config = Config::default();
+        let storage = crate::storage::StorageService::new(&config);
+        SkillResolver::new(skill_repo, "/tmp/frona_test_config", storage)
+    }
+
+    #[tokio::test]
+    async fn test_cli_tool_definitions() {
         let config = CliToolConfig {
             name: "shell".to_string(),
             description: "Execute a shell command".to_string(),
@@ -300,7 +322,8 @@ mod tests {
         };
 
         let wm = Arc::new(SandboxManager::new("/tmp/test", false));
-        let tool = CliTool::new(config, wm, "agent-1".to_string(), false, vec![]);
+        let resolver = mock_skill_resolver().await;
+        let tool = CliTool::new(config, wm, resolver);
         let defs = tool.definitions();
 
         assert_eq!(defs.len(), 1);
@@ -376,7 +399,8 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
 
         let wm = Arc::new(SandboxManager::new(&tmp, false));
-        let tool = CliTool::new(config, wm, "test-agent".to_string(), false, vec![]);
+        let resolver = mock_skill_resolver().await;
+        let tool = CliTool::new(config, wm, resolver);
         let ctx = mock_context();
 
         let result = tool

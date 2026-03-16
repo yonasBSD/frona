@@ -4,6 +4,7 @@ use chrono::Utc;
 use frona::agent::task::executor::TaskExecutor;
 use frona::agent::task::models::{Task, TaskKind, TaskStatus};
 use frona::agent::service::AgentService;
+use frona::chat::message::models::{MessageRole, MessageTool};
 use frona::storage::StorageService;
 use frona::core::config::Config;
 use frona::db::init as db;
@@ -241,9 +242,9 @@ async fn handle_error_marks_failed_and_delivers() {
 }
 
 #[tokio::test]
-async fn handle_completed_marks_done() {
+async fn lifecycle_complete_event_detected() {
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
+    let _executor = make_executor(&state);
 
     let source_chat = state
         .chat_service
@@ -251,85 +252,113 @@ async fn handle_completed_marks_done() {
             "user-1",
             frona::chat::models::CreateChatRequest {
                 space_id: None,
-                task_id: None,
+                task_id: Some("task-1".to_string()),
                 agent_id: "agent-1".to_string(),
-                title: Some("Source chat".to_string()),
+                title: Some("Task chat".to_string()),
             },
         )
         .await
         .unwrap();
 
-    let mut task = make_task(TaskKind::Delegation {
-        source_agent_id: "agent-1".to_string(),
-        source_chat_id: source_chat.id.clone(),
-        deliver_directly: true,
-    });
-    let chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
-
-    let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
-    repo.create(&task).await.unwrap();
-
-    executor
-        .handle_completed(
-            &task,
-            &chat_id,
-            "Full text".to_string(),
-            "Summary segment".to_string(),
-            vec![],
+    // Save a System lifecycle event (simulating what TaskControlTool does)
+    state
+        .chat_service
+        .save_system_event(
+            &source_chat.id,
+            MessageTool::TaskCompletion {
+                task_id: "task-1".to_string(),
+                chat_id: Some(source_chat.id.clone()),
+                status: TaskStatus::Completed,
+                summary: Some("Research findings here".to_string()),
+            },
         )
         .await
         .unwrap();
 
-    let updated = repo.find_by_id(&task.id).await.unwrap().unwrap();
-    assert_eq!(updated.status, TaskStatus::Completed);
-    assert_eq!(updated.result_summary.as_deref(), Some("Summary segment"));
-
-    let source_messages = state
-        .chat_service
-        .get_stored_messages(&source_chat.id)
-        .await;
-    assert_eq!(source_messages.len(), 1);
+    // Verify the System message was saved
+    let messages = state.chat_service.get_stored_messages(&source_chat.id).await;
+    let system_msgs: Vec<_> = messages
+        .iter()
+        .filter(|m| m.role == MessageRole::System)
+        .collect();
+    assert_eq!(system_msgs.len(), 1);
+    assert!(matches!(
+        &system_msgs[0].tool,
+        Some(MessageTool::TaskCompletion {
+            status: TaskStatus::Completed,
+            summary: Some(s),
+            ..
+        }) if s == "Research findings here"
+    ));
 }
 
 #[tokio::test]
-async fn handle_completed_waits_for_children() {
+async fn lifecycle_defer_event_detected() {
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
-    let mut task = make_task(TaskKind::Direct);
-    let chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
+    let _executor = make_executor(&state);
 
-    let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
-    repo.create(&task).await.unwrap();
-
-    let child = Task {
-        id: uuid::Uuid::new_v4().to_string(),
-        user_id: "user-1".to_string(),
-        agent_id: "agent-2".to_string(),
-        space_id: None,
-        chat_id: None,
-        title: "Child task".to_string(),
-        description: "Child work".to_string(),
-        status: TaskStatus::InProgress,
-        kind: TaskKind::Delegation {
-            source_agent_id: "agent-1".to_string(),
-            source_chat_id: chat_id.clone(),
-            deliver_directly: false,
-        },
-        run_at: None,
-        result_summary: None,
-        error_message: None,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-    };
-    repo.create(&child).await.unwrap();
-
-    executor
-        .handle_completed(&task, &chat_id, "Done".to_string(), String::new(), vec![])
+    let task_chat = state
+        .chat_service
+        .create_chat(
+            "user-1",
+            frona::chat::models::CreateChatRequest {
+                space_id: None,
+                task_id: Some("task-2".to_string()),
+                agent_id: "agent-1".to_string(),
+                title: Some("Task chat".to_string()),
+            },
+        )
         .await
         .unwrap();
 
-    let parent = repo.find_by_id(&task.id).await.unwrap().unwrap();
-    assert_eq!(parent.status, TaskStatus::Pending, "Parent should stay unchanged when children are incomplete");
+    state
+        .chat_service
+        .save_system_event(
+            &task_chat.id,
+            MessageTool::TaskDeferred {
+                task_id: "task-2".to_string(),
+                delay_minutes: 30,
+                reason: "Waiting for external API".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let messages = state.chat_service.get_stored_messages(&task_chat.id).await;
+    let system_msgs: Vec<_> = messages
+        .iter()
+        .filter(|m| m.role == MessageRole::System)
+        .collect();
+    assert_eq!(system_msgs.len(), 1);
+    assert!(matches!(
+        &system_msgs[0].tool,
+        Some(MessageTool::TaskDeferred {
+            delay_minutes: 30,
+            reason,
+            ..
+        }) if reason == "Waiting for external API"
+    ));
+}
+
+#[tokio::test]
+async fn mark_deferred_sets_pending_with_run_at() {
+    let (state, _tmp) = test_app_state().await;
+
+    let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
+    let mut task = make_task(TaskKind::Direct);
+    task.status = TaskStatus::InProgress;
+    repo.create(&task).await.unwrap();
+
+    let run_at = Utc::now() + chrono::Duration::minutes(30);
+    state
+        .task_service
+        .mark_deferred(&task.id, run_at, "waiting")
+        .await
+        .unwrap();
+
+    let updated = repo.find_by_id(&task.id).await.unwrap().unwrap();
+    assert_eq!(updated.status, TaskStatus::Pending);
+    assert!(updated.run_at.is_some());
 }
 
 #[tokio::test]
@@ -438,4 +467,167 @@ async fn concurrency_global_limit() {
 
     let t2 = repo.find_by_id("task-2").await.unwrap().unwrap();
     assert_eq!(t2.status, TaskStatus::Pending, "Second task should stay pending when limit reached");
+}
+
+#[tokio::test]
+async fn find_lifecycle_event_uses_last_assistant_message_as_summary() {
+    let (state, _tmp) = test_app_state().await;
+
+    let chat = state
+        .chat_service
+        .create_chat(
+            "user-1",
+            frona::chat::models::CreateChatRequest {
+                space_id: None,
+                task_id: Some("task-lf".to_string()),
+                agent_id: "agent-1".to_string(),
+                title: Some("Task chat".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+    // Save an assistant message (the actual answer)
+    state
+        .chat_service
+        .save_assistant_message(&chat.id, "The answer is 42.".to_string())
+        .await
+        .unwrap();
+
+    // Save lifecycle event AFTER the assistant message (no summary)
+    state
+        .chat_service
+        .save_system_event(
+            &chat.id,
+            MessageTool::TaskCompletion {
+                task_id: "task-lf".to_string(),
+                chat_id: Some(chat.id.clone()),
+                status: TaskStatus::Completed,
+                summary: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    // Create a task and ensure it exists in DB
+    let mut task = make_task(TaskKind::Delegation {
+        source_agent_id: "agent-1".to_string(),
+        source_chat_id: "source-chat".to_string(),
+        deliver_directly: true,
+    });
+    task.id = "task-lf".to_string();
+    task.chat_id = Some(chat.id.clone());
+    task.status = TaskStatus::InProgress;
+    let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
+    repo.create(&task).await.unwrap();
+
+    // Verify: the lifecycle event should resolve its summary from the assistant message
+    let messages = state.chat_service.get_stored_messages(&chat.id).await;
+    let agent_msg = messages.iter().find(|m| m.role == MessageRole::Agent);
+    assert!(agent_msg.is_some());
+    assert_eq!(agent_msg.unwrap().content, "The answer is 42.");
+
+    let system_msg = messages.iter().find(|m| m.role == MessageRole::System);
+    assert!(system_msg.is_some());
+    assert!(matches!(
+        &system_msg.unwrap().tool,
+        Some(MessageTool::TaskCompletion { summary: None, .. })
+    ));
+}
+
+#[tokio::test]
+async fn deliver_to_source_saves_message_to_user_chat() {
+    let (state, _tmp) = test_app_state().await;
+    let executor = make_executor(&state);
+
+    // Create a user chat (no task_id) — deliver_directly=false so
+    // check_and_resume_parent runs, but it should bail out because
+    // the source chat is not a task chat.
+    let user_chat = state
+        .chat_service
+        .create_chat(
+            "user-1",
+            frona::chat::models::CreateChatRequest {
+                space_id: None,
+                task_id: None,
+                agent_id: "agent-1".to_string(),
+                title: Some("User chat".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut task = make_task(TaskKind::Delegation {
+        source_agent_id: "agent-1".to_string(),
+        source_chat_id: user_chat.id.clone(),
+        deliver_directly: false,
+    });
+    task.chat_id = Some("task-chat".to_string());
+
+    let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
+    repo.create(&task).await.unwrap();
+
+    executor
+        .deliver_to_source(&task, TaskStatus::Completed, "Done".to_string())
+        .await;
+
+    // Message should be delivered
+    let messages = state
+        .chat_service
+        .get_stored_messages(&user_chat.id)
+        .await;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].content, "Done");
+}
+
+#[tokio::test]
+async fn lifecycle_event_saved_after_assistant_message() {
+    let (state, _tmp) = test_app_state().await;
+
+    let chat = state
+        .chat_service
+        .create_chat(
+            "user-1",
+            frona::chat::models::CreateChatRequest {
+                space_id: None,
+                task_id: Some("task-order".to_string()),
+                agent_id: "agent-1".to_string(),
+                title: Some("Task chat".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+    // Simulate the executor flow: save assistant message first
+    state
+        .chat_service
+        .save_assistant_message(&chat.id, "Here is my answer.".to_string())
+        .await
+        .unwrap();
+
+    // Then save lifecycle event
+    state
+        .chat_service
+        .save_system_event(
+            &chat.id,
+            MessageTool::TaskCompletion {
+                task_id: "task-order".to_string(),
+                chat_id: Some(chat.id.clone()),
+                status: TaskStatus::Completed,
+                summary: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    // Verify ordering: assistant message comes before system event
+    let messages = state.chat_service.get_stored_messages(&chat.id).await;
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].role, MessageRole::Agent);
+    assert_eq!(messages[0].content, "Here is my answer.");
+    assert_eq!(messages[1].role, MessageRole::System);
+    assert!(matches!(
+        &messages[1].tool,
+        Some(MessageTool::TaskCompletion { status: TaskStatus::Completed, .. })
+    ));
 }

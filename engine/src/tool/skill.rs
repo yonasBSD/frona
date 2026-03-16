@@ -9,15 +9,13 @@ use super::{InferenceContext, ToolOutput};
 
 pub struct SkillTool {
     skill_resolver: SkillResolver,
-    agent_id: String,
     prompts: PromptLoader,
 }
 
 impl SkillTool {
-    pub fn new(skill_resolver: SkillResolver, agent_id: String, prompts: PromptLoader) -> Self {
+    pub fn new(skill_resolver: SkillResolver, prompts: PromptLoader) -> Self {
         Self {
             skill_resolver,
-            agent_id,
             prompts,
         }
     }
@@ -25,13 +23,13 @@ impl SkillTool {
 
 #[agent_tool(files("read_skill"))]
 impl SkillTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let name = arguments
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Validation("Missing 'name' parameter".into()))?;
 
-        match self.skill_resolver.resolve(&self.agent_id, name).await {
+        match self.skill_resolver.resolve(&ctx.agent.id, name).await {
             Some(skill) => Ok(ToolOutput::text(skill.content)),
             None => Ok(ToolOutput::text(format!(
                 "Skill '{name}' not found. Check the available skills in your system prompt."

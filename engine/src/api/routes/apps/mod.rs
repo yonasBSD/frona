@@ -169,11 +169,7 @@ async fn approve_service(
     let chat_id = req.chat_id.clone();
     let state_clone = state.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            crate::api::routes::messages::resume_tool_loop(&state_clone, &user_id, &chat_id).await
-        {
-            tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume after service approval");
-        }
+        crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
     });
 
     Ok(Json(serde_json::json!({ "approved": true })))
@@ -221,11 +217,7 @@ async fn deny_service(
     let chat_id = req.chat_id.clone();
     let state_clone = state.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            crate::api::routes::messages::resume_tool_loop(&state_clone, &user_id, &chat_id).await
-        {
-            tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume after service denial");
-        }
+        crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
     });
 
     Ok(Json(serde_json::json!({ "denied": true })))

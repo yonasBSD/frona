@@ -5,18 +5,22 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::models::Agent;
+use crate::agent::task::models::Task;
 use crate::chat::models::Chat;
 use crate::auth::User;
 use crate::tool::registry::AgentToolRegistry;
 
 use super::config::ModelGroup;
 use super::registry::ModelProviderRegistry;
+use crate::chat::message::models::MessageTool;
+
 use super::tool_loop::{InferenceEvent, ToolCallResult};
 
 pub struct InferenceContext {
     pub user: User,
     pub agent: Agent,
     pub chat: Chat,
+    pub task: Option<Task>,
     pub event_tx: mpsc::UnboundedSender<InferenceEvent>,
     pub vault_env_vars: Arc<RwLock<Vec<(String, String)>>>,
 }
@@ -32,9 +36,15 @@ impl InferenceContext {
             user,
             agent,
             chat,
+            task: None,
             event_tx,
             vault_env_vars: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    pub fn with_task(mut self, task: Task) -> Self {
+        self.task = Some(task);
+        self
     }
 }
 
@@ -53,6 +63,7 @@ pub enum InferenceResponse {
     Completed {
         text: String,
         attachments: Vec<crate::storage::Attachment>,
+        lifecycle_event: Option<MessageTool>,
     },
     Cancelled(String),
     ExternalToolPending {

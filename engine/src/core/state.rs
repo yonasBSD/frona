@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use metrics_exporter_prometheus::PrometheusHandle;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::task::executor::TaskExecutor;
@@ -105,6 +105,7 @@ pub struct AppState {
     pub token_service: TokenService,
     pub oauth_service: Option<OAuthService>,
     pub metrics_handle: PrometheusHandle,
+    pub task_resolution_notifiers: Arc<Mutex<HashMap<String, Arc<Notify>>>>,
 }
 
 impl AppState {
@@ -271,6 +272,7 @@ impl AppState {
             token_service,
             oauth_service,
             metrics_handle,
+            task_resolution_notifiers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -314,6 +316,17 @@ impl AppState {
 
     pub fn task_executor(&self) -> Option<Arc<TaskExecutor>> {
         self.task_executor.get().cloned()
+    }
+
+    pub fn compaction_model_group(&self) -> Option<crate::inference::config::ModelGroup> {
+        let registry = self.chat_service.provider_registry();
+        if let Ok(group) = registry.get_model_group("compaction") {
+            return Some(group.clone());
+        }
+        if let Ok(group) = registry.get_model_group("primary") {
+            return Some(group.clone());
+        }
+        None
     }
 }
 

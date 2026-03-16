@@ -255,11 +255,7 @@ async fn approve_request(
     let chat_id = req.chat_id.clone();
     let state_clone = state.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            crate::api::routes::messages::resume_tool_loop(&state_clone, &user_id, &chat_id).await
-        {
-            tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume after vault approval");
-        }
+        crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
     });
 
     Ok(Json(serde_json::json!({ "approved": true })))
@@ -306,11 +302,7 @@ async fn deny_request(
     let chat_id = req.chat_id.clone();
     let state_clone = state.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            crate::api::routes::messages::resume_tool_loop(&state_clone, &user_id, &chat_id).await
-        {
-            tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume after vault denial");
-        }
+        crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
     });
 
     Ok(Json(serde_json::json!({ "denied": true })))

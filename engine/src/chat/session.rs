@@ -6,7 +6,7 @@ use crate::chat::service::AgentConfig;
 use crate::core::error::AppError;
 use crate::core::state::AppState;
 use crate::inference::config::ModelGroup;
-use crate::inference::conversation::{ConversationBuilder, ConversationContext, DefaultConversationBuilder};
+use crate::inference::conversation::{ConversationBuilder, ConversationContext, DefaultConversationBuilder, TaskConversationBuilder};
 use crate::inference::tool_loop::InferenceEvent;
 use crate::inference::ModelProviderRegistry;
 use crate::tool::registry::AgentToolRegistry;
@@ -32,6 +32,16 @@ impl ChatSessionContext {
         chat: Chat,
         cancel_token: CancellationToken,
     ) -> Result<Self, AppError> {
+        Self::build_with_task(state, user_id, chat, cancel_token, false).await
+    }
+
+    pub async fn build_with_task(
+        state: &AppState,
+        user_id: &str,
+        chat: Chat,
+        cancel_token: CancellationToken,
+        is_task: bool,
+    ) -> Result<Self, AppError> {
         let (tool_event_tx, tool_event_rx) =
             tokio::sync::mpsc::unbounded_channel::<InferenceEvent>();
         let agent_config = state
@@ -48,7 +58,7 @@ impl ChatSessionContext {
             .collect();
 
         let agent_summaries =
-            crate::api::routes::messages::build_agent_summaries_from_state(
+            crate::tool::registry::build_agent_summaries(
                 state,
                 user_id,
                 &chat.agent_id,
@@ -83,6 +93,13 @@ impl ChatSessionContext {
 
         let stored_messages = state.chat_service.get_stored_messages(&chat.id).await;
 
+        if is_task
+            && let Some(task_prompt) = state.prompts.read("TASK.md")
+        {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&task_prompt);
+        }
+
         // Append any per-turn context injected by tools (e.g. active_call block),
         // in the order they appear in the conversation.
         for msg in &stored_messages {
@@ -98,11 +115,30 @@ impl ChatSessionContext {
             model_ref,
             user_id: user_id.to_string(),
         };
-        let conv_builder = DefaultConversationBuilder {
-            user_service: state.user_service.clone(),
-            storage_service: state.storage_service.clone(),
+        let task = if let Some(ref task_id) = chat.task_id {
+            state.task_service.find_by_id(task_id).await.ok().flatten()
+        } else {
+            None
         };
-        let rig_history = conv_builder.build(&stored_messages, &conv_ctx).await;
+
+        let task_in_progress = task.as_ref().is_some_and(|t| matches!(t.status,
+            crate::agent::task::models::TaskStatus::Pending
+            | crate::agent::task::models::TaskStatus::InProgress
+        ));
+
+        let rig_history = if task_in_progress {
+            let builder = TaskConversationBuilder {
+                user_service: state.user_service.clone(),
+                storage_service: state.storage_service.clone(),
+            };
+            builder.build(&stored_messages, &conv_ctx).await
+        } else {
+            let builder = DefaultConversationBuilder {
+                user_service: state.user_service.clone(),
+                storage_service: state.storage_service.clone(),
+            };
+            builder.build(&stored_messages, &conv_ctx).await
+        };
 
         let registry = state.chat_service.provider_registry().clone();
 
@@ -112,22 +148,18 @@ impl ChatSessionContext {
             .await?
             .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
-        let tool_registry = crate::api::routes::messages::build_tool_registry(
+        let tool_registry = crate::tool::registry::build_tool_registry(
             state,
-            &chat.agent_id,
-            user_id,
-            &user.username,
-            &chat.id,
             &agent_config.tools,
-            agent_config.sandbox_config.as_ref(),
-        )
-        .await;
+            is_task,
+        );
         let agent = state
             .agent_service
             .find_by_id(&chat.agent_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
-        let tool_ctx = InferenceContext::new(user, agent, chat.clone(), tool_event_tx);
+        let mut tool_ctx = InferenceContext::new(user, agent, chat.clone(), tool_event_tx);
+        tool_ctx.task = task;
 
         let vault_env = state
             .vault_service

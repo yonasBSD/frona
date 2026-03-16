@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
 use crate::core::error::AppError;
+use crate::credential::vault::service::VaultService;
 
 use crate::chat::message::models::{MessageTool, ToolStatus};
 use frona_derive::agent_tool;
@@ -9,21 +10,19 @@ use frona_derive::agent_tool;
 use super::{InferenceContext, ToolOutput};
 
 pub struct NotifyHumanTool {
-    debugger_url: Option<String>,
+    vault_service: VaultService,
     prompts: PromptLoader,
 }
 
 impl NotifyHumanTool {
-    pub fn new(credential_id: Option<String>, prompts: PromptLoader) -> Self {
-        let debugger_url =
-            credential_id.map(|id| format!("/api/browser/debugger/{id}"));
-        Self { debugger_url, prompts }
+    pub fn new(vault_service: VaultService, prompts: PromptLoader) -> Self {
+        Self { vault_service, prompts }
     }
 }
 
 #[agent_tool(files("request_user_takeover", "ask_user_question"))]
 impl NotifyHumanTool {
-    async fn execute(&self, tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         match tool_name {
             "request_user_takeover" => {
                 let reason = arguments
@@ -31,7 +30,14 @@ impl NotifyHumanTool {
                     .and_then(|v| v.as_str())
                     .unwrap_or("User intervention needed")
                     .to_string();
-                let debugger_url = self.debugger_url.clone().unwrap_or_default();
+                let debugger_url = self
+                    .vault_service
+                    .list_credentials(&ctx.user.id)
+                    .await
+                    .ok()
+                    .and_then(|creds| creds.into_iter().next())
+                    .map(|c| format!("/api/browser/debugger/{}", c.id))
+                    .unwrap_or_default();
 
                 let json = serde_json::json!({
                     "tool_type": "HumanInTheLoop",

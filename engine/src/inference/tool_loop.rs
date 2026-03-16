@@ -61,6 +61,7 @@ pub enum ToolLoopOutcome {
     Completed {
         text: String,
         attachments: Vec<crate::storage::Attachment>,
+        lifecycle_event: Option<MessageTool>,
     },
     Cancelled(String),
     ExternalToolPending {
@@ -412,6 +413,27 @@ pub async fn run_tool_loop(
             });
         }
 
+        // Check for task lifecycle events (complete_task, fail_task, defer_task)
+        // and break immediately — no need for another inference turn.
+        let lifecycle_event = exec_result.internal_tool_results.iter().find_map(|r| {
+            match &r.tool_data {
+                Some(t @ (MessageTool::TaskCompletion { .. } | MessageTool::TaskDeferred { .. })) => {
+                    Some(t.clone())
+                }
+                _ => None,
+            }
+        });
+        if lifecycle_event.is_some() {
+            let _ = event_tx.send(InferenceEvent {
+                kind: InferenceEventKind::Done(accumulated_text.clone()),
+            });
+            return Ok(ToolLoopOutcome::Completed {
+                text: accumulated_text,
+                attachments: all_attachments,
+                lifecycle_event,
+            });
+        }
+
         for sp in exec_result.accumulated_system_prompts {
             current_system_prompt.push_str("\n\n");
             current_system_prompt.push_str(&sp);
@@ -430,5 +452,6 @@ pub async fn run_tool_loop(
     Ok(ToolLoopOutcome::Completed {
         text: accumulated_text,
         attachments: all_attachments,
+        lifecycle_event: None,
     })
 }

@@ -183,7 +183,7 @@ async fn handle_voice_turn(
         .await?;
 
     loop {
-        let outcome = run_agent_loop(state, user_id, chat_id, cancel_token.clone()).await?;
+        let outcome = run_agent_loop(state, user_id, chat_id, cancel_token.clone(), false, None).await?;
 
         match outcome.response {
             InferenceResponse::ExternalToolPending {

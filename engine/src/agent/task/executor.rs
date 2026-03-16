@@ -1,17 +1,20 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::Utc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::execution;
 use crate::agent::task::models::{Task, TaskKind, TaskStatus};
-use crate::storage::Attachment;
-use crate::core::state::AppState;
+use crate::chat::message::models::{MessageRole, MessageTool};
 use crate::chat::models::CreateChatRequest;
-use crate::chat::message::models::MessageTool;
 use crate::core::error::AppError;
+use crate::core::state::AppState;
 use crate::inference::InferenceResponse;
+use crate::storage::Attachment;
+
+const MAX_TASK_RETRIES: usize = 10;
 
 pub struct TaskExecutor {
     app_state: AppState,
@@ -151,27 +154,68 @@ impl TaskExecutor {
         self.broadcast_task_status(&task, "inprogress", None);
         self.save_initial_message_if_needed(&task, &chat_id).await?;
 
-        let result = execution::run_agent_loop(
-            &self.app_state,
-            &task.user_id,
-            &chat_id,
-            cancel_token,
-        )
-        .await;
+        for turn in 0..MAX_TASK_RETRIES {
+            // Check for unprocessed lifecycle events (crash recovery)
+            if let Some(action) = self.find_lifecycle_event(&chat_id).await {
+                self.handle_lifecycle_action(&task, &chat_id, action)
+                    .await?;
+                return Ok(());
+            }
 
-        match result {
-            Ok(execution::AgentLoopOutcome {
-                response,
-                accumulated_text,
-                last_segment,
-            }) => {
-                match response {
-                    InferenceResponse::Completed { attachments, .. } => {
-                        self.handle_completed(&task, &chat_id, accumulated_text, last_segment, attachments)
-                            .await?;
-                    }
-                    InferenceResponse::Cancelled(_) => {
-                        self.handle_cancelled(&task, &chat_id, accumulated_text).await?;
+            let continuation_prompt = if turn > 0 {
+                self.app_state.prompts.read("TASK_CONTINUATION.md")
+            } else {
+                None
+            };
+
+            let result = execution::run_agent_loop(
+                &self.app_state,
+                &task.user_id,
+                &chat_id,
+                cancel_token.clone(),
+                true,
+                continuation_prompt.as_deref(),
+            )
+            .await;
+
+            match result {
+                Ok(execution::AgentLoopOutcome {
+                    response,
+                    accumulated_text,
+                    ..
+                }) => match response {
+                    InferenceResponse::Completed { attachments, lifecycle_event, .. } => {
+                        self.save_assistant_message_if_needed(
+                            &task,
+                            &chat_id,
+                            &accumulated_text,
+                            attachments,
+                        )
+                        .await;
+
+                        if let Some(event) = lifecycle_event {
+                            // Save lifecycle event after the assistant message
+                            // so it appears last in the chat history.
+                            let _ = self.app_state.chat_service
+                                .save_system_event(&chat_id, event.clone())
+                                .await;
+                            let action = self.lifecycle_action_from_event(
+                                event,
+                                &accumulated_text,
+                            );
+                            self.handle_lifecycle_action(&task, &chat_id, action)
+                                .await?;
+                            return Ok(());
+                        }
+
+                        // Check for lifecycle event in DB (crash recovery)
+                        if let Some(action) = self.find_lifecycle_event(&chat_id).await {
+                            self.handle_lifecycle_action(&task, &chat_id, action)
+                                .await?;
+                            return Ok(());
+                        }
+                        // No lifecycle event — agent didn't signal, continue outer loop
+                        continue;
                     }
                     InferenceResponse::ExternalToolPending {
                         accumulated_text: ext_text,
@@ -184,18 +228,218 @@ impl TaskExecutor {
                             .app_state
                             .chat_service
                             .save_external_tool_pending(
-                                &chat_id, ext_text, tool_calls_json, &tool_results, external_tool,
+                                &chat_id,
+                                ext_text,
+                                tool_calls_json,
+                                &tool_results,
+                                external_tool,
                             )
                             .await;
+
+                        self.wait_for_resolution(&task.id, &cancel_token).await?;
+                        continue;
                     }
+                    InferenceResponse::Cancelled(_) => {
+                        self.handle_cancelled(&task, &chat_id, accumulated_text)
+                            .await?;
+                        return Ok(());
+                    }
+                },
+                Err(e) => {
+                    self.handle_error(&task, &e).await?;
+                    return Ok(());
                 }
-            }
-            Err(e) => {
-                self.handle_error(&task, &e).await?;
             }
         }
 
+        // Max outer turns reached — auto-complete
+        tracing::warn!(
+            task_id = %task.id,
+            turns = MAX_TASK_RETRIES,
+            "Task reached max retries, auto-completing"
+        );
+        self.app_state
+            .task_service
+            .mark_completed(&task.id, Some("Task auto-completed after max retries".into()))
+            .await?;
+        self.deliver_to_source(
+            &task,
+            TaskStatus::Completed,
+            "Task auto-completed after max retries".into(),
+        )
+        .await;
+        self.broadcast_task_status(&task, "completed", Some("Task auto-completed after max retries"));
+
         Ok(())
+    }
+
+    // --- Lifecycle event scanning ---
+
+    async fn find_lifecycle_event(&self, chat_id: &str) -> Option<LifecycleAction> {
+        let messages = self.app_state.chat_service.get_stored_messages(chat_id).await;
+
+        // Find the last assistant message to use as fallback summary
+        let last_assistant_content = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == MessageRole::Agent && !m.content.is_empty())
+            .map(|m| m.content.clone());
+
+        for msg in messages.iter().rev() {
+            if msg.role != MessageRole::System {
+                continue;
+            }
+            match &msg.tool {
+                Some(MessageTool::TaskCompletion {
+                    status, summary, ..
+                }) => {
+                    let resolved_summary = summary
+                        .clone()
+                        .or(last_assistant_content)
+                        .unwrap_or_default();
+                    return Some(LifecycleAction::Complete {
+                        status: status.clone(),
+                        summary: resolved_summary,
+                    });
+                }
+                Some(MessageTool::TaskDeferred {
+                    delay_minutes,
+                    reason,
+                    ..
+                }) => {
+                    return Some(LifecycleAction::Defer {
+                        delay_minutes: *delay_minutes,
+                        reason: reason.clone(),
+                    });
+                }
+                _ => continue,
+            }
+        }
+        None
+    }
+
+    fn lifecycle_action_from_event(
+        &self,
+        event: MessageTool,
+        fallback_summary: &str,
+    ) -> LifecycleAction {
+        match event {
+            MessageTool::TaskCompletion { status, summary, .. } => {
+                let resolved_summary = summary
+                    .or_else(|| {
+                        if fallback_summary.is_empty() { None } else { Some(fallback_summary.to_string()) }
+                    })
+                    .unwrap_or_default();
+                LifecycleAction::Complete { status, summary: resolved_summary }
+            }
+            MessageTool::TaskDeferred { delay_minutes, reason, .. } => {
+                LifecycleAction::Defer { delay_minutes, reason }
+            }
+            _ => LifecycleAction::Complete {
+                status: TaskStatus::Completed,
+                summary: fallback_summary.to_string(),
+            },
+        }
+    }
+
+    async fn handle_lifecycle_action(
+        &self,
+        task: &Task,
+        _chat_id: &str,
+        action: LifecycleAction,
+    ) -> Result<(), AppError> {
+        match action {
+            LifecycleAction::Complete {
+                status: TaskStatus::Completed,
+                summary,
+            } => {
+                self.app_state
+                    .task_service
+                    .mark_completed(&task.id, Some(summary.clone()))
+                    .await?;
+                self.deliver_to_source(task, TaskStatus::Completed, summary.clone())
+                    .await;
+                self.broadcast_task_status(task, "completed", Some(&summary));
+            }
+            LifecycleAction::Complete {
+                status: TaskStatus::Failed,
+                summary,
+            } => {
+                self.app_state
+                    .task_service
+                    .mark_failed(&task.id, summary.clone())
+                    .await?;
+                self.deliver_to_source(task, TaskStatus::Failed, summary)
+                    .await;
+                self.broadcast_task_status(task, "failed", None);
+            }
+            LifecycleAction::Complete { .. } => {}
+            LifecycleAction::Defer {
+                delay_minutes,
+                reason,
+            } => {
+                let run_at = Utc::now() + chrono::Duration::minutes(delay_minutes as i64);
+                self.app_state
+                    .task_service
+                    .mark_deferred(&task.id, run_at, &reason)
+                    .await?;
+                self.broadcast_task_status(task, "deferred", Some(&reason));
+            }
+        }
+        Ok(())
+    }
+
+    // --- Resolution waiter ---
+
+    async fn wait_for_resolution(
+        &self,
+        task_id: &str,
+        cancel_token: &CancellationToken,
+    ) -> Result<(), AppError> {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        {
+            let mut notifiers = self.app_state.task_resolution_notifiers.lock().await;
+            notifiers.insert(task_id.to_string(), notify.clone());
+        }
+
+        tokio::select! {
+            () = notify.notified() => {}
+            () = cancel_token.cancelled() => {}
+        }
+
+        {
+            let mut notifiers = self.app_state.task_resolution_notifiers.lock().await;
+            notifiers.remove(task_id);
+        }
+
+        Ok(())
+    }
+
+    // --- Helpers ---
+
+    async fn save_assistant_message_if_needed(
+        &self,
+        task: &Task,
+        chat_id: &str,
+        accumulated_text: &str,
+        attachments: Vec<Attachment>,
+    ) {
+        if !accumulated_text.is_empty() {
+            match self
+                .app_state
+                .chat_service
+                .save_assistant_message_with_tool_calls(
+                    chat_id,
+                    accumulated_text.to_string(),
+                    None,
+                    attachments,
+                )
+                .await
+            {
+                Ok(_) => tracing::debug!(task_id = %task.id, "Saved assistant message"),
+                Err(e) => tracing::error!(task_id = %task.id, error = %e, "Failed to save assistant message"),
+            }
+        }
     }
 
     pub async fn ensure_task_chat(&self, task: &mut Task) -> Result<String, AppError> {
@@ -231,88 +475,15 @@ impl TaskExecutor {
         }
 
         let source_agent_id = match &task.kind {
-            TaskKind::Delegation { source_agent_id, .. } => source_agent_id.as_str(),
+            TaskKind::Delegation {
+                source_agent_id, ..
+            } => source_agent_id.as_str(),
             _ => &task.agent_id,
         };
         self.app_state
             .chat_service
             .save_agent_message(chat_id, source_agent_id, task.description.clone())
             .await?;
-        Ok(())
-    }
-
-    pub async fn handle_completed(
-        &self,
-        task: &Task,
-        chat_id: &str,
-        accumulated_text: String,
-        last_segment: String,
-        attachments: Vec<Attachment>,
-    ) -> Result<(), AppError> {
-        tracing::debug!(
-            task_id = %task.id,
-            chat_id = %chat_id,
-            accumulated_text_len = accumulated_text.len(),
-            last_segment_len = last_segment.len(),
-            attachments_count = attachments.len(),
-            "handle_completed: start"
-        );
-
-        if !accumulated_text.is_empty() {
-            match self
-                .app_state
-                .chat_service
-                .save_assistant_message_with_tool_calls(
-                    chat_id, accumulated_text.clone(), None, attachments,
-                )
-                .await
-            {
-                Ok(_) => tracing::debug!(task_id = %task.id, "handle_completed: saved assistant message"),
-                Err(e) => tracing::error!(task_id = %task.id, error = %e, "handle_completed: failed to save assistant message"),
-            }
-        } else {
-            tracing::warn!(task_id = %task.id, "handle_completed: accumulated_text is empty, skipping message save");
-        }
-
-        let children = self
-            .app_state
-            .task_service
-            .find_by_source_chat_id(chat_id)
-            .await
-            .unwrap_or_default();
-
-        let has_incomplete_children = children
-            .iter()
-            .any(|c| matches!(c.status, TaskStatus::Pending | TaskStatus::InProgress));
-
-        if has_incomplete_children {
-            tracing::info!(
-                task_id = %task.id,
-                incomplete_children = children.iter().filter(|c| matches!(c.status, TaskStatus::Pending | TaskStatus::InProgress)).count(),
-                "Task has incomplete children, staying InProgress"
-            );
-            return Ok(());
-        }
-
-        let result_text = if last_segment.is_empty() { &accumulated_text } else { &last_segment };
-        let summary = if result_text.is_empty() {
-            None
-        } else {
-            Some(result_text.to_string())
-        };
-
-        tracing::debug!(task_id = %task.id, has_summary = summary.is_some(), "handle_completed: marking task completed");
-
-        self.app_state
-            .task_service
-            .mark_completed(&task.id, summary.clone())
-            .await?;
-
-        self.deliver_to_source(task, TaskStatus::Completed, summary.clone().unwrap_or_default())
-            .await;
-
-        self.broadcast_task_status(task, "completed", summary.as_deref());
-        tracing::debug!(task_id = %task.id, "handle_completed: done");
         Ok(())
     }
 
@@ -330,7 +501,10 @@ impl TaskExecutor {
                 .await;
         }
 
-        self.app_state.task_service.mark_cancelled(&task.id).await?;
+        self.app_state
+            .task_service
+            .mark_cancelled(&task.id)
+            .await?;
         self.broadcast_task_status(task, "cancelled", None);
         Ok(())
     }
@@ -359,13 +533,11 @@ impl TaskExecutor {
         };
 
         let attachments = if status == TaskStatus::Completed {
-            task.chat_id
-                .as_ref()
-                .map(|cid| {
-                    self.app_state
-                        .chat_service
-                        .find_attachments_by_chat_id(cid)
-                })
+            task.chat_id.as_ref().map(|cid| {
+                self.app_state
+                    .chat_service
+                    .find_attachments_by_chat_id(cid)
+            })
         } else {
             None
         };
@@ -375,20 +547,17 @@ impl TaskExecutor {
             None => vec![],
         };
 
+        let tool = MessageTool::TaskCompletion {
+            task_id: task.id.clone(),
+            chat_id: task.chat_id.clone(),
+            status,
+            summary: Some(text.clone()),
+        };
+
         match self
             .app_state
             .chat_service
-            .save_task_completion_message(
-                source_chat_id,
-                &task.agent_id,
-                text,
-                MessageTool::TaskCompletion {
-                    task_id: task.id.clone(),
-                    chat_id: task.chat_id.clone(),
-                    status,
-                },
-                attachments,
-            )
+            .save_task_completion_message(source_chat_id, &task.agent_id, text, tool, attachments)
             .await
         {
             Ok(msg) => {
@@ -410,6 +579,16 @@ impl TaskExecutor {
     }
 
     async fn check_and_resume_parent(&self, source_chat_id: &str, user_id: &str) {
+        // Only resume the parent if the source chat belongs to a task.
+        // For user chats, just deliver the message — don't trigger the agent.
+        let is_task_chat = matches!(
+            self.app_state.chat_service.find_chat(source_chat_id).await,
+            Ok(Some(chat)) if chat.task_id.is_some()
+        );
+        if !is_task_chat {
+            return;
+        }
+
         let siblings = match self
             .app_state
             .task_service
@@ -441,19 +620,14 @@ impl TaskExecutor {
 
         tracing::info!(
             source_chat_id = %source_chat_id,
-            "All child tasks complete, resuming parent tool loop"
+            "All child tasks complete, resuming parent"
         );
 
         let state = self.app_state.clone();
         let user_id = user_id.to_string();
         let chat_id = source_chat_id.to_string();
         tokio::spawn(async move {
-            if let Err(e) =
-                crate::api::routes::messages::resume_tool_loop(&state, &user_id, &chat_id)
-                    .await
-            {
-                tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume parent tool loop");
-            }
+            resume_or_notify(&state, &user_id, &chat_id).await;
         });
     }
 
@@ -467,5 +641,36 @@ impl TaskExecutor {
             task.kind.source_chat_id(),
             summary,
         );
+    }
+}
+
+enum LifecycleAction {
+    Complete {
+        status: TaskStatus,
+        summary: String,
+    },
+    Defer {
+        delay_minutes: u32,
+        reason: String,
+    },
+}
+
+/// Check if a task executor is waiting for resolution on this chat's task.
+/// If so, notify it. Otherwise, fall back to `resume_agent_loop`.
+pub async fn resume_or_notify(state: &AppState, user_id: &str, chat_id: &str) {
+    // Check if this chat belongs to a task with a waiting executor
+    if let Ok(Some(chat)) = state.chat_service.find_chat(chat_id).await
+        && let Some(ref task_id) = chat.task_id
+    {
+        let notifiers = state.task_resolution_notifiers.lock().await;
+        if let Some(notify) = notifiers.get(task_id) {
+            notify.notify_one();
+            return;
+        }
+    }
+
+    // No waiting executor — use the interactive path
+    if let Err(e) = crate::agent::execution::resume_agent_loop(state, user_id, chat_id).await {
+        tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume chat");
     }
 }

@@ -99,6 +99,7 @@ impl MemoryService {
                     convert_agent_message(msg, chat_agent_id)
                 }
                 crate::chat::message::models::MessageRole::ToolResult => convert_tool_result(msg),
+                crate::chat::message::models::MessageRole::System => None,
             })
             .collect();
         let window = resolve_context_window(model_id, context_window);
@@ -155,6 +156,7 @@ impl MemoryService {
                 crate::chat::message::models::MessageRole::TaskCompletion => "System",
                 crate::chat::message::models::MessageRole::Contact => "Contact",
                 crate::chat::message::models::MessageRole::LiveCall => "Caller",
+                crate::chat::message::models::MessageRole::System => continue,
             };
             compaction_input.push_str(&format!("{role_str}: {}\n", msg.content));
         }

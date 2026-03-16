@@ -4,26 +4,24 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::core::error::AppError;
+use crate::credential::vault::service::VaultService;
 use crate::tool::{AgentTool, ImageData, InferenceContext, ToolDefinition, ToolOutput};
 
 use super::session::BrowserSessionManager;
 
 pub struct BrowserTool {
     session_manager: Arc<BrowserSessionManager>,
-    user_id: String,
-    provider: String,
+    vault_service: VaultService,
 }
 
 impl BrowserTool {
     pub fn new(
         session_manager: Arc<BrowserSessionManager>,
-        user_id: String,
-        provider: String,
+        vault_service: VaultService,
     ) -> Self {
         Self {
             session_manager,
-            user_id,
-            provider,
+            vault_service,
         }
     }
 }
@@ -365,7 +363,17 @@ impl AgentTool for BrowserTool {
         ]
     }
 
-    async fn execute(&self, tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+        let session_key = &ctx.user.username;
+        let provider = self
+            .vault_service
+            .list_credentials(&ctx.user.id)
+            .await
+            .ok()
+            .and_then(|creds| creds.into_iter().next())
+            .map(|c| c.provider)
+            .ok_or_else(|| AppError::Tool("No browser credential found. Add a browser credential first.".into()))?;
+
         let browser_tool_name = match tool_name {
             "browser_navigate" => "navigate",
             "browser_go_back" => "go_back",
@@ -397,7 +405,7 @@ impl AgentTool for BrowserTool {
 
         let result = self
             .session_manager
-            .execute_tool(&self.user_id, &self.provider, browser_tool_name, arguments)
+            .execute_tool(session_key, &provider, browser_tool_name, arguments)
             .await?;
 
         if tool_name == "browser_screenshot"
@@ -415,8 +423,6 @@ impl AgentTool for BrowserTool {
     }
 
     async fn cleanup(&self) -> Result<(), AppError> {
-        self.session_manager
-            .close_session(&self.user_id, &self.provider)
-            .await
+        Ok(())
     }
 }

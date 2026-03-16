@@ -184,6 +184,25 @@ impl TaskService {
         self.repo.update(&task).await
     }
 
+    pub async fn mark_deferred(
+        &self,
+        task_id: &str,
+        run_at: DateTime<Utc>,
+        _reason: &str,
+    ) -> Result<Task, AppError> {
+        let mut task = self
+            .repo
+            .find_by_id(task_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Task not found".into()))?;
+
+        task.status = TaskStatus::Pending;
+        task.run_at = Some(run_at);
+        task.updated_at = chrono::Utc::now();
+
+        self.repo.update(&task).await
+    }
+
     pub async fn mark_cancelled(&self, task_id: &str) -> Result<Task, AppError> {
         let mut task = self
             .repo

@@ -13,9 +13,7 @@ const PROTECTED_FIELDS: &[&str] = &["id", "user_id", "created_at"];
 
 pub struct UpdateEntityTool {
     db: Surreal<Db>,
-    user_id: String,
     table: String,
-    record_id: String,
     tool_name: String,
 }
 
@@ -23,15 +21,11 @@ impl UpdateEntityTool {
     pub fn new(
         db: Surreal<Db>,
         table: impl Into<String>,
-        record_id: impl Into<String>,
-        user_id: impl Into<String>,
         tool_name: impl Into<String>,
     ) -> Self {
         Self {
             db,
-            user_id: user_id.into(),
             table: table.into(),
-            record_id: record_id.into(),
             tool_name: tool_name.into(),
         }
     }
@@ -64,9 +58,12 @@ impl AgentTool for UpdateEntityTool {
     }
 
     async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+        let record_id = &ctx.agent.id;
+        let user_id = &ctx.user.id;
+
         tracing::debug!(
             table = %self.table,
-            record_id = %self.record_id,
+            record_id = %record_id,
             arguments = %arguments,
             "UpdateEntityTool executing"
         );
@@ -84,7 +81,7 @@ impl AgentTool for UpdateEntityTool {
             return Err(AppError::Tool("No updatable fields provided".into()));
         }
 
-        let rid = RecordId::new(&*self.table, &*self.record_id);
+        let rid = RecordId::new(&*self.table, &**record_id);
 
         let query = format!(
             "SELECT user_id FROM {} WHERE id = $id LIMIT 1",
@@ -107,7 +104,7 @@ impl AgentTool for UpdateEntityTool {
         let owner = record.get("user_id").and_then(|v| v.as_str());
 
         if let Some(uid) = owner
-            && uid != self.user_id
+            && uid != user_id
         {
             return Err(AppError::Forbidden("Not your record".into()));
         }
@@ -133,7 +130,7 @@ impl AgentTool for UpdateEntityTool {
             .send(InferenceEvent {
                 kind: InferenceEventKind::EntityUpdated {
                     table: self.table.clone(),
-                    record_id: self.record_id.clone(),
+                    record_id: record_id.clone(),
                     fields: merge_value,
                 },
             });

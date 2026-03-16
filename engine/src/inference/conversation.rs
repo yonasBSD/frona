@@ -57,6 +57,66 @@ impl ConversationBuilder for DefaultConversationBuilder {
                 }
                 MessageRole::Agent => convert_agent_message(msg, &ctx.agent_id),
                 MessageRole::ToolResult => convert_tool_result(msg),
+                MessageRole::System => None,
+            };
+            if let Some(m) = converted {
+                result.push(m);
+            }
+        }
+        result
+    }
+}
+
+pub struct TaskConversationBuilder {
+    pub user_service: UserService,
+    pub storage_service: StorageService,
+}
+
+#[async_trait]
+impl ConversationBuilder for TaskConversationBuilder {
+    async fn build(&self, messages: &[Message], ctx: &ConversationContext) -> Vec<RigMessage> {
+        let mut result = Vec::with_capacity(messages.len());
+        let mut instruction_wrapped = false;
+        for msg in messages {
+            let converted = match msg.role {
+                MessageRole::User | MessageRole::TaskCompletion | MessageRole::Contact => {
+                    Some(
+                        build_user_message(
+                            &msg.content,
+                            &msg.attachments,
+                            &self.user_service,
+                            &self.storage_service,
+                        )
+                        .await,
+                    )
+                }
+                MessageRole::LiveCall => {
+                    let content = format!("[LIVE_CALL] {}", msg.content);
+                    Some(
+                        build_user_message(
+                            &content,
+                            &msg.attachments,
+                            &self.user_service,
+                            &self.storage_service,
+                        )
+                        .await,
+                    )
+                }
+                MessageRole::Agent => {
+                    let is_other_agent = msg.agent_id.as_deref() != Some(&ctx.agent_id);
+                    if !instruction_wrapped && is_other_agent {
+                        instruction_wrapped = true;
+                        let content = format!(
+                            "<task>\n{}\n</task>",
+                            msg.content,
+                        );
+                        Some(RigMessage::user(&content))
+                    } else {
+                        convert_agent_message(msg, &ctx.agent_id)
+                    }
+                }
+                MessageRole::ToolResult => convert_tool_result(msg),
+                MessageRole::System => None,
             };
             if let Some(m) = converted {
                 result.push(m);
@@ -360,6 +420,7 @@ mod tests {
                 task_id: "t1".to_string(),
                 chat_id: Some("c2".to_string()),
                 status: TaskStatus::Completed,
+                summary: None,
             }),
             ..make_message(MessageRole::TaskCompletion, "Task 'research' completed.")
         };
@@ -375,6 +436,7 @@ mod tests {
                 task_id: "t1".to_string(),
                 chat_id: None,
                 status: TaskStatus::Completed,
+                summary: None,
             }),
             attachments: vec![Attachment {
                 filename: "output.csv".to_string(),

@@ -390,7 +390,7 @@ async fn execute_background_agent(
     let cancel_token = state.active_sessions.register(chat_id).await;
 
     let result = execution::run_agent_loop(
-        state, user_id, chat_id, cancel_token,
+        state, user_id, chat_id, cancel_token, false, None,
     )
     .await;
 

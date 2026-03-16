@@ -14,24 +14,12 @@ use super::{InferenceContext, ToolOutput};
 
 pub struct UpdateIdentityTool {
     db: Surreal<Db>,
-    agent_id: String,
-    user_id: String,
     prompts: PromptLoader,
 }
 
 impl UpdateIdentityTool {
-    pub fn new(
-        db: Surreal<Db>,
-        agent_id: impl Into<String>,
-        user_id: impl Into<String>,
-        prompts: PromptLoader,
-    ) -> Self {
-        Self {
-            db,
-            agent_id: agent_id.into(),
-            user_id: user_id.into(),
-            prompts,
-        }
+    pub fn new(db: Surreal<Db>, prompts: PromptLoader) -> Self {
+        Self { db, prompts }
     }
 }
 
@@ -47,7 +35,9 @@ impl UpdateIdentityTool {
             return Err(AppError::Tool("No attributes provided".into()));
         }
 
-        let rid = RecordId::new("agent", &*self.agent_id);
+        let agent_id = &ctx.agent.id;
+        let user_id = &ctx.user.id;
+        let rid = RecordId::new("agent", &**agent_id);
 
         let mut result = self
             .db
@@ -64,7 +54,7 @@ impl UpdateIdentityTool {
 
         let owner = record.get("user_id").and_then(|v| v.as_str());
         if let Some(uid) = owner
-            && uid != self.user_id
+            && uid != user_id
         {
             return Err(AppError::Forbidden("Not your agent".into()));
         }
@@ -119,7 +109,7 @@ impl UpdateIdentityTool {
             .send(InferenceEvent {
                 kind: InferenceEventKind::EntityUpdated {
                     table: "agent".to_string(),
-                    record_id: self.agent_id.clone(),
+                    record_id: agent_id.clone(),
                     fields: Value::Object(entity_fields),
                 },
             });

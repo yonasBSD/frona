@@ -12,7 +12,6 @@ use super::{InferenceContext, ToolOutput};
 pub struct HeartbeatTool {
     agent_service: AgentService,
     storage: StorageService,
-    agent_id: String,
     prompts: PromptLoader,
 }
 
@@ -20,13 +19,11 @@ impl HeartbeatTool {
     pub fn new(
         agent_service: AgentService,
         storage: StorageService,
-        agent_id: String,
         prompts: PromptLoader,
     ) -> Self {
         Self {
             agent_service,
             storage,
-            agent_id,
             prompts,
         }
     }
@@ -34,14 +31,16 @@ impl HeartbeatTool {
 
 #[agent_tool(files("set_heartbeat"))]
 impl HeartbeatTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let interval_minutes = arguments
             .get("interval_minutes")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| AppError::Validation("interval_minutes is required".into()))?;
 
+        let agent_id = &ctx.agent.id;
+
         if interval_minutes > 0 {
-            let ws = self.storage.agent_workspace(&self.agent_id);
+            let ws = self.storage.agent_workspace(agent_id);
             match ws.read("HEARTBEAT.md") {
                 Some(content) if !content.trim().is_empty() => {}
                 _ => {
@@ -54,7 +53,7 @@ impl HeartbeatTool {
 
         if interval_minutes == 0 {
             self.agent_service
-                .set_heartbeat(&self.agent_id, None)
+                .set_heartbeat(agent_id, None)
                 .await?;
 
             return Ok(ToolOutput::text(serde_json::json!({
@@ -66,7 +65,7 @@ impl HeartbeatTool {
 
         let next = Utc::now() + Duration::minutes(interval_minutes as i64);
         self.agent_service
-            .set_heartbeat(&self.agent_id, Some(interval_minutes))
+            .set_heartbeat(agent_id, Some(interval_minutes))
             .await?;
 
         Ok(ToolOutput::text(serde_json::json!({

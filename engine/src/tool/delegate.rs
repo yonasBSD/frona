@@ -18,24 +18,15 @@ pub struct DelegateTaskTool {
     agent_service: AgentService,
     task_executor: Arc<TaskExecutor>,
     broadcast_service: BroadcastService,
-    user_id: String,
-    agent_id: String,
-    chat_id: String,
-    space_id: Option<String>,
     prompts: PromptLoader,
 }
 
 impl DelegateTaskTool {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_service: TaskService,
         agent_service: AgentService,
         task_executor: Arc<TaskExecutor>,
         broadcast_service: BroadcastService,
-        user_id: String,
-        agent_id: String,
-        chat_id: String,
-        space_id: Option<String>,
         prompts: PromptLoader,
     ) -> Self {
         Self {
@@ -43,10 +34,6 @@ impl DelegateTaskTool {
             agent_service,
             task_executor,
             broadcast_service,
-            user_id,
-            agent_id,
-            chat_id,
-            space_id,
             prompts,
         }
     }
@@ -54,8 +41,13 @@ impl DelegateTaskTool {
 
 #[agent_tool(name = "delegate", files("delegate_task", "run_subtask"))]
 impl DelegateTaskTool {
-    async fn execute(&self, tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let deliver_directly = tool_name == "delegate_task";
+
+        let user_id = &ctx.user.id;
+        let agent_id = &ctx.agent.id;
+        let chat_id = &ctx.chat.id;
+        let space_id = ctx.chat.space_id.clone();
 
         let target_agent_name = arguments
             .get("target_agent")
@@ -74,7 +66,7 @@ impl DelegateTaskTool {
 
         let target_agent = self
             .agent_service
-            .find_by_name(&self.user_id, target_agent_name)
+            .find_by_name(user_id, target_agent_name)
             .await?
             .ok_or_else(|| {
                 AppError::Validation(format!(
@@ -99,26 +91,26 @@ impl DelegateTaskTool {
 
         let req = CreateTaskRequest {
             agent_id: target_agent.id.clone(),
-            space_id: self.space_id.clone(),
+            space_id,
             chat_id: None,
             title: title.to_string(),
             description: Some(instruction.to_string()),
-            source_agent_id: Some(self.agent_id.clone()),
-            source_chat_id: Some(self.chat_id.clone()),
+            source_agent_id: Some(agent_id.clone()),
+            source_chat_id: Some(chat_id.clone()),
             deliver_directly: Some(deliver_directly),
             run_at,
         };
 
-        let task_response = self.task_service.create(&self.user_id, req).await?;
+        let task_response = self.task_service.create(user_id, req).await?;
         let task_id = task_response.id.clone();
 
         self.broadcast_service.broadcast_task_update(
-            &self.user_id,
+            user_id,
             &task_id,
             "pending",
             &task_response.title,
             task_response.chat_id.as_deref(),
-            Some(&self.chat_id),
+            Some(chat_id),
             None,
         );
 

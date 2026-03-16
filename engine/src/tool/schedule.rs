@@ -28,9 +28,6 @@ pub fn next_cron_occurrence(expression: &str) -> Result<DateTime<Utc>, AppError>
 pub struct ScheduleTaskTool {
     task_service: TaskService,
     agent_service: AgentService,
-    user_id: String,
-    agent_id: String,
-    chat_id: String,
     prompts: PromptLoader,
 }
 
@@ -38,27 +35,21 @@ impl ScheduleTaskTool {
     pub fn new(
         task_service: TaskService,
         agent_service: AgentService,
-        user_id: String,
-        agent_id: String,
-        chat_id: String,
         prompts: PromptLoader,
     ) -> Self {
         Self {
             task_service,
             agent_service,
-            user_id,
-            agent_id,
-            chat_id,
             prompts,
         }
     }
 
-    async fn resolve_agent_id(&self, target_agent: Option<&str>) -> Result<String, AppError> {
+    async fn resolve_agent_id(&self, user_id: &str, agent_id: &str, target_agent: Option<&str>) -> Result<String, AppError> {
         match target_agent {
             Some(name) => {
                 let agent = self
                     .agent_service
-                    .find_by_name(&self.user_id, name)
+                    .find_by_name(user_id, name)
                     .await?
                     .ok_or_else(|| {
                         AppError::Validation(format!(
@@ -74,11 +65,11 @@ impl ScheduleTaskTool {
                 }
                 Ok(agent.id)
             }
-            None => Ok(self.agent_id.clone()),
+            None => Ok(agent_id.to_string()),
         }
     }
 
-    async fn handle_create(&self, arguments: &Value) -> Result<ToolOutput, AppError> {
+    async fn handle_create(&self, arguments: &Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let cron_expression = arguments
             .get("cron_expression")
             .and_then(|v| v.as_str())
@@ -94,8 +85,12 @@ impl ScheduleTaskTool {
             .and_then(|v| v.as_str())
             .unwrap_or(instruction);
 
+        let user_id = &ctx.user.id;
+        let agent_id_self = &ctx.agent.id;
+        let chat_id = &ctx.chat.id;
+
         let target_agent = arguments.get("target_agent").and_then(|v| v.as_str());
-        let agent_id = self.resolve_agent_id(target_agent).await?;
+        let agent_id = self.resolve_agent_id(user_id, agent_id_self, target_agent).await?;
 
         let run_at = arguments
             .get("run_at")
@@ -111,7 +106,7 @@ impl ScheduleTaskTool {
         };
 
         let (source_agent_id, source_chat_id) = if target_agent.is_some() {
-            (Some(self.agent_id.clone()), Some(self.chat_id.clone()))
+            (Some(agent_id_self.clone()), Some(chat_id.clone()))
         } else {
             (None, None)
         };
@@ -119,7 +114,7 @@ impl ScheduleTaskTool {
         let task = self
             .task_service
             .create_cron_template(
-                &self.user_id,
+                user_id,
                 &agent_id,
                 title,
                 instruction,
@@ -139,7 +134,7 @@ impl ScheduleTaskTool {
         }).to_string()))
     }
 
-    async fn handle_delete(&self, arguments: &Value) -> Result<ToolOutput, AppError> {
+    async fn handle_delete(&self, arguments: &Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let task_id = arguments
             .get("task_id")
             .and_then(|v| v.as_str())
@@ -151,7 +146,7 @@ impl ScheduleTaskTool {
             .await?
             .ok_or_else(|| AppError::NotFound("Cron job not found".into()))?;
 
-        if task.user_id != self.user_id {
+        if task.user_id != ctx.user.id {
             return Err(AppError::Forbidden("Not your task".into()));
         }
 
@@ -162,11 +157,11 @@ impl ScheduleTaskTool {
         }).to_string()))
     }
 
-    async fn handle_list(&self, arguments: &Value) -> Result<ToolOutput, AppError> {
+    async fn handle_list(&self, arguments: &Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let target_agent = arguments.get("target_agent").and_then(|v| v.as_str());
-        let _ = self.resolve_agent_id(target_agent).await?;
+        let _ = self.resolve_agent_id(&ctx.user.id, &ctx.agent.id, target_agent).await?;
 
-        let all_tasks = self.task_service.list_active(&self.user_id).await.unwrap_or_default();
+        let all_tasks = self.task_service.list_active(&ctx.user.id).await.unwrap_or_default();
 
         let cron_tasks: Vec<_> = all_tasks
             .into_iter()
@@ -192,16 +187,16 @@ impl ScheduleTaskTool {
 
 #[agent_tool(name = "schedule")]
 impl ScheduleTaskTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let action = arguments
             .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Validation("Missing 'action' parameter".into()))?;
 
         match action {
-            "create" => self.handle_create(&arguments).await,
-            "delete" => self.handle_delete(&arguments).await,
-            "list" => self.handle_list(&arguments).await,
+            "create" => self.handle_create(&arguments, ctx).await,
+            "delete" => self.handle_delete(&arguments, ctx).await,
+            "list" => self.handle_list(&arguments, ctx).await,
             _ => Err(AppError::Validation(format!("Unknown action: {}", action))),
         }
     }

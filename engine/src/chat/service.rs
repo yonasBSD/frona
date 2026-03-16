@@ -307,6 +307,17 @@ impl ChatService {
         Ok(saved.into())
     }
 
+    pub async fn save_system_event(
+        &self,
+        chat_id: &str,
+        tool: MessageTool,
+    ) -> Result<MessageResponse, AppError> {
+        let msg = Message::builder(chat_id, MessageRole::System, String::new())
+            .tool(tool)
+            .build();
+        self.save_message(msg).await
+    }
+
     pub async fn save_assistant_message(
         &self,
         chat_id: &str,

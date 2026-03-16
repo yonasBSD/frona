@@ -7,10 +7,9 @@ use futures::stream::Stream;
 use rig::completion::Message as RigMessage;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use crate::chat::broadcast::BroadcastService;
 use crate::chat::message::models::SendMessageRequest;
 use crate::chat::service::ChatService;
-use crate::credential::presign::{PresignService, presign_response, presign_response_by_user_id};
+use crate::credential::presign::{PresignService, presign_response};
 use crate::inference::conversation::{
     ConversationBuilder, ConversationContext, DefaultConversationBuilder, build_user_message,
 };
@@ -21,7 +20,7 @@ use super::super::super::error::ApiError;
 use super::super::super::middleware::auth::AuthUser;
 use crate::core::state::{ActiveSessions, AppState};
 
-use super::{get_compaction_model_group, sse_event};
+use super::sse_event;
 
 fn spawn_inference(
     req: InferenceRequest,
@@ -29,14 +28,9 @@ fn spawn_inference(
     tokio::spawn(async move { crate::inference::inference(req).await })
 }
 
-enum ResponseSink {
-    Sse {
-        tx: tokio::sync::mpsc::UnboundedSender<Result<Event, Infallible>>,
-        username: String,
-    },
-    Broadcast {
-        service: BroadcastService,
-    },
+struct SseSink {
+    tx: tokio::sync::mpsc::UnboundedSender<Result<Event, Infallible>>,
+    username: String,
 }
 
 async fn handle_inference_result(
@@ -46,37 +40,26 @@ async fn handle_inference_result(
     chat_id: &str,
     presign_svc: &PresignService,
     user_id: &str,
-    sink: ResponseSink,
+    sink: &SseSink,
 ) {
     match result {
         Ok(Ok(response)) => match response {
-            InferenceResponse::Completed { text: _, attachments } => {
+            InferenceResponse::Completed { text: _, attachments, .. } => {
                 if !accumulated.is_empty()
                     && let Ok(mut msg) = chat_service
                         .save_assistant_message_with_tool_calls(chat_id, accumulated, None, attachments)
                         .await
                 {
-                    match &sink {
-                        ResponseSink::Sse { tx, username } => {
-                            presign_response(presign_svc, &mut msg, user_id, username).await;
-                            let _ = tx.send(Ok(sse_event("done", serde_json::json!({ "message": msg }))));
-                        }
-                        ResponseSink::Broadcast { service } => {
-                            presign_response_by_user_id(presign_svc, &mut msg, user_id).await;
-                            service.broadcast_chat_message(user_id, chat_id, msg);
-                        }
-                    }
+                    presign_response(presign_svc, &mut msg, user_id, &sink.username).await;
+                    let _ = sink.tx.send(Ok(sse_event("done", serde_json::json!({ "message": msg }))));
                 }
             }
             InferenceResponse::Cancelled(_) => {
                 if !accumulated.is_empty() {
                     let _ = chat_service.save_assistant_message(chat_id, accumulated).await;
                 }
-                if let ResponseSink::Sse { tx, .. } = &sink {
-                    let _ = tx
-                        .send(Ok(sse_event("cancelled", serde_json::json!({ "reason": "User cancelled generation" }))));
-
-                }
+                let _ = sink.tx
+                    .send(Ok(sse_event("cancelled", serde_json::json!({ "reason": "User cancelled generation" }))));
             }
             InferenceResponse::ExternalToolPending {
                 accumulated_text,
@@ -90,16 +73,8 @@ async fn handle_inference_result(
                     .save_external_tool_pending(chat_id, text, tool_calls_json, &tool_results, external_tool)
                     .await
                 {
-                    match &sink {
-                        ResponseSink::Sse { tx, username } => {
-                            presign_response(presign_svc, &mut tool_msg, user_id, username).await;
-                            let _ = tx.send(Ok(sse_event("tool_message", &tool_msg)));
-                        }
-                        ResponseSink::Broadcast { service } => {
-                            presign_response_by_user_id(presign_svc, &mut tool_msg, user_id).await;
-                            service.broadcast_chat_message(user_id, chat_id, tool_msg);
-                        }
-                    }
+                    presign_response(presign_svc, &mut tool_msg, user_id, &sink.username).await;
+                    let _ = sink.tx.send(Ok(sse_event("tool_message", &tool_msg)));
                 }
             }
         },
@@ -181,11 +156,11 @@ impl MessageStreamSession {
         } else {
             accumulated
         };
-        let sink = ResponseSink::Sse {
+        let sink = SseSink {
             tx: self.tx.clone(),
             username: self.username.clone(),
         };
-        handle_inference_result(handle.await, content, &self.chat_service, &self.chat_id, &self.presign_svc, &self.user_id, sink).await;
+        handle_inference_result(handle.await, content, &self.chat_service, &self.chat_id, &self.presign_svc, &self.user_id, &sink).await;
     }
 
     async fn cleanup(&self) {
@@ -225,7 +200,7 @@ pub(crate) async fn stream_message(
     .await
     .map_err(ApiError::from)?;
 
-    if let Some(compaction_group) = get_compaction_model_group(&state) {
+    if let Some(compaction_group) = state.compaction_model_group() {
         let max_output = ctx.model_group.max_tokens.unwrap_or(8192) as usize;
         if let Err(e) = state.memory_service.compact_chat_if_needed(
             &chat_id,
@@ -396,67 +371,3 @@ pub(crate) async fn stream_message(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-pub async fn resume_tool_loop(
-    state: &AppState,
-    user_id: &str,
-    chat_id: &str,
-) -> Result<(), crate::core::error::AppError> {
-    let chat = state.chat_service.find_chat(chat_id).await?
-        .ok_or_else(|| crate::core::error::AppError::NotFound("Chat not found".into()))?;
-
-    let cancel_token = state.active_sessions.register(chat_id).await;
-    let crate::chat::session::ChatSessionContext {
-        system_prompt, model_group, rig_history, registry,
-        tool_registry, tool_ctx, cancel_token,
-        mut tool_event_rx, ..
-    } = crate::chat::session::ChatSessionContext::build(
-        state, user_id, chat, cancel_token,
-    ).await?;
-
-    let chat_id_owned = chat_id.to_string();
-    let user_id_owned = user_id.to_string();
-    let handle = spawn_inference(InferenceRequest {
-        registry, model_group, system_prompt,
-        history: rig_history, tool_registry,
-        ctx: tool_ctx, cancel_token,
-    });
-
-    let mut accumulated = String::new();
-    let mut last_segment = String::new();
-    let mut had_tool_calls = false;
-    while let Some(event) = tool_event_rx.recv().await {
-        match event.kind {
-            InferenceEventKind::Text(text) => {
-                accumulated.push_str(&text);
-                last_segment.push_str(&text);
-            }
-            InferenceEventKind::ToolCall { name, .. } => {
-                let is_human_tool = name == "ask_user_question" || name == "request_user_takeover";
-                if !is_human_tool {
-                    had_tool_calls = true;
-                    last_segment.clear();
-                }
-            }
-            InferenceEventKind::ToolResult { .. } => {
-                last_segment.clear();
-            }
-            _ => {}
-        }
-    }
-
-    let content = if had_tool_calls && !last_segment.is_empty() {
-        last_segment
-    } else {
-        accumulated
-    };
-    let sink = ResponseSink::Broadcast {
-        service: state.broadcast_service.clone(),
-    };
-    handle_inference_result(
-        handle.await, content, &state.chat_service,
-        &chat_id_owned, &state.presign_service, &user_id_owned, sink,
-    ).await;
-
-    state.active_sessions.remove(&chat_id_owned).await;
-    Ok(())
-}

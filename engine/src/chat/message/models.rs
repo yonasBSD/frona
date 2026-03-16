@@ -14,6 +14,7 @@ pub enum MessageRole {
     TaskCompletion,
     Contact,
     LiveCall,
+    System,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
@@ -45,6 +46,13 @@ pub enum MessageTool {
         task_id: String,
         chat_id: Option<String>,
         status: crate::agent::task::models::TaskStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
+    TaskDeferred {
+        task_id: String,
+        delay_minutes: u32,
+        reason: String,
     },
     VaultApproval {
         query: String,

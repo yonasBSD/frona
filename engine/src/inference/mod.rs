@@ -68,6 +68,7 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
                 Ok(InferenceResponse::Completed {
                     text: accumulated_text,
                     attachments: vec![],
+                    lifecycle_event: None,
                 })
             }
             retry::StreamResult::Cancelled => {
@@ -94,8 +95,8 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
         .await?;
 
         Ok(match outcome {
-            tool_loop::ToolLoopOutcome::Completed { text, attachments } => {
-                InferenceResponse::Completed { text, attachments }
+            tool_loop::ToolLoopOutcome::Completed { text, attachments, lifecycle_event } => {
+                InferenceResponse::Completed { text, attachments, lifecycle_event }
             }
             tool_loop::ToolLoopOutcome::Cancelled(text) => InferenceResponse::Cancelled(text),
             tool_loop::ToolLoopOutcome::ExternalToolPending {

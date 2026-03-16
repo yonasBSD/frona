@@ -10,16 +10,14 @@ use frona_derive::agent_tool;
 use super::{InferenceContext, ToolOutput};
 
 pub struct ProduceFileTool {
-    agent_id: String,
-    workspace_path: PathBuf,
+    workspaces_path: PathBuf,
     prompts: PromptLoader,
 }
 
 impl ProduceFileTool {
-    pub fn new(agent_id: String, workspace_path: PathBuf, prompts: PromptLoader) -> Self {
+    pub fn new(workspaces_path: PathBuf, prompts: PromptLoader) -> Self {
         Self {
-            agent_id,
-            workspace_path,
+            workspaces_path,
             prompts,
         }
     }
@@ -27,7 +25,7 @@ impl ProduceFileTool {
 
 #[agent_tool]
 impl ProduceFileTool {
-    async fn execute(&self, _tool_name: &str, arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         let relative_path = arguments
             .get("path")
             .and_then(|v| v.as_str())
@@ -39,7 +37,8 @@ impl ProduceFileTool {
             ));
         }
 
-        let resolved = self.workspace_path.join(relative_path);
+        let workspace_path = self.workspaces_path.join(&ctx.agent.id);
+        let resolved = workspace_path.join(relative_path);
 
         if !resolved.exists() {
             return Err(AppError::NotFound(format!(
@@ -63,7 +62,7 @@ impl ProduceFileTool {
             filename: filename.clone(),
             content_type: content_type.clone(),
             size_bytes: metadata.len(),
-            owner: format!("agent:{}", self.agent_id),
+            owner: format!("agent:{}", ctx.agent.id),
             path: relative_path.to_string(),
             url: None,
         };
