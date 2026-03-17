@@ -140,16 +140,8 @@ async fn approve_service(
         .await
         .map_err(ApiError::from)?;
 
-    let url_info = app
-        .url
-        .as_ref()
-        .map(|u| format!("\nURL: {base_url}{u}"))
-        .unwrap_or_default();
-
-    let result_text = format!(
-        "App '{}' deployed successfully. Status: {}{url_info}",
-        app.name, app.status
-    );
+    let app_url = app.url.as_ref().map(|u| format!("{base_url}{u}"));
+    let result_text = crate::tool::manage_service::format_app_result("deployed successfully", &app);
 
     let pending_msg_id = pending_msg.id.clone();
 
@@ -172,7 +164,7 @@ async fn approve_service(
         crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
     });
 
-    Ok(Json(serde_json::json!({ "approved": true })))
+    Ok(Json(serde_json::json!({ "approved": true, "url": app_url })))
 }
 
 async fn deny_service(

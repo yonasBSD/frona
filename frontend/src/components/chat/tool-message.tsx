@@ -410,6 +410,7 @@ function ServiceApprovalMessage({
 }) {
   const { activeChatId } = useSession();
   const [loading, setLoading] = useState(false);
+  const [appUrl, setAppUrl] = useState<string | null>(null);
 
   if (!message.tool || message.tool.type !== "ServiceApproval") return null;
 
@@ -429,7 +430,8 @@ function ServiceApprovalMessage({
     if (!activeChatId) return;
     setLoading(true);
     try {
-      await api.post("/api/apps/approve", { chat_id: activeChatId });
+      const res = await api.post<{ approved: boolean; url?: string }>("/api/apps/approve", { chat_id: activeChatId });
+      if (res?.url) setAppUrl(res.url);
     } finally {
       setLoading(false);
     }
@@ -463,8 +465,18 @@ function ServiceApprovalMessage({
             <p className="text-[11px] font-medium text-text-tertiary mb-0.5">
               {agentName}
             </p>
-            <div className={`rounded-lg border px-3 py-2 text-base ${colorClasses}`}>
+            <div className={`rounded-lg border px-3 py-2 text-base flex items-center gap-2 ${colorClasses}`}>
               {label}
+              {appUrl && (
+                <a
+                  href={appUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-sm font-medium text-accent hover:bg-accent/20 transition"
+                >
+                  Open
+                </a>
+              )}
             </div>
           </div>
         </div>

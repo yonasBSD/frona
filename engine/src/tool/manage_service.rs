@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
-use crate::app::models::{App, AppManifest};
+use crate::app::models::{App, AppManifest, AppResponse};
 use crate::app::service::AppService;
 use crate::chat::message::models::{MessageTool, ToolStatus};
 use crate::core::error::AppError;
@@ -123,16 +123,7 @@ impl ManageServiceTool {
             .deploy(&ctx.agent.id, &ctx.user.id, &manifest, Vec::new())
             .await?;
 
-        let url_info = app
-            .url
-            .as_ref()
-            .map(|u| format!("\nURL: {u}"))
-            .unwrap_or_default();
-
-        Ok(ToolOutput::text(format!(
-            "App '{}' deployed successfully. Status: {}{url_info}",
-            app.name, app.status
-        )))
+        Ok(ToolOutput::text(format_app_result("deployed successfully", &app)))
     }
 
     async fn handle_stop(
@@ -161,16 +152,7 @@ impl ManageServiceTool {
             .start(&ctx.agent.id, &app_id, Vec::new())
             .await?;
 
-        let url_info = app
-            .url
-            .as_ref()
-            .map(|u| format!("\nURL: {u}"))
-            .unwrap_or_default();
-
-        Ok(ToolOutput::text(format!(
-            "App '{}' started. Status: {}{url_info}",
-            app.name, app.status
-        )))
+        Ok(ToolOutput::text(format_app_result("started", &app)))
     }
 
     async fn handle_restart(
@@ -182,16 +164,7 @@ impl ManageServiceTool {
 
         let app = self.app_service.restart(&ctx.agent.id, &app_id).await?;
 
-        let url_info = app
-            .url
-            .as_ref()
-            .map(|u| format!("\nURL: {u}"))
-            .unwrap_or_default();
-
-        Ok(ToolOutput::text(format!(
-            "App '{}' restarted. Status: {}{url_info}",
-            app.name, app.status
-        )))
+        Ok(ToolOutput::text(format_app_result("restarted", &app)))
     }
 
     async fn handle_destroy(
@@ -233,6 +206,10 @@ impl ManageServiceTool {
                 AppError::NotFound(format!("No app found with manifest id '{manifest_id}'"))
             })
     }
+}
+
+pub fn format_app_result(action: &str, app: &AppResponse) -> String {
+    format!("App '{}' {action}. Status: {}", app.name, app.status)
 }
 
 fn check_needs_approval(existing: &Option<App>, manifest_value: &Value) -> bool {
