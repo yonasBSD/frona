@@ -13,6 +13,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { api, sendMessage as apiSendMessage, streamSession, cancelGeneration, getTask } from "./api-client";
 import type { StreamSessionCallbacks } from "./api-client";
 import { useNavigation } from "./navigation-context";
+import { useNotifications } from "./notification-context";
 import type { ChatResponse, MessageResponse, CreateChatRequest, ToolCallStatus, TaskResponse, Attachment } from "./types";
 
 interface ChatStreamState {
@@ -63,6 +64,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const activeChatIdRef = useRef<string | null>(null);
   const activeTaskIdRef = useRef<string | null>(null);
   const { updateChatTitle, updateAgent, addStandaloneChat, updateTaskInList, setActiveTab } = useNavigation();
+  const { addNotification } = useNotifications();
 
   // Per-chat streaming state, keyed by chatId.
   // Only the active chat's state is projected into React state for rendering.
@@ -292,6 +294,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       onInferenceCount: (count) => {
         setInferring(count > 0);
       },
+      onNotification: (notification) => {
+        addNotification(notification);
+      },
     };
 
     streamSession(callbacks, controller.signal);
@@ -299,7 +304,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => {
       controller.abort();
     };
-  }, [updateTaskInList, updateChatTitle, updateAgent, scheduleFade]);
+  }, [updateTaskInList, updateChatTitle, updateAgent, scheduleFade, addNotification]);
 
   useEffect(() => {
     if (!activeChatId) {

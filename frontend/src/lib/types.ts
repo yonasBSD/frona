@@ -251,6 +251,25 @@ export interface CredentialResponse {
   updated_at: string;
 }
 
+// Notification types
+export type NotificationData =
+  | { type: "App"; app_id: string; action: string }
+  | { type: "Task"; task_id: string }
+  | { type: "System" }
+  | { type: "Security" };
+
+export type NotificationLevel = "info" | "success" | "warning" | "error";
+
+export interface Notification {
+  id: string;
+  data: NotificationData;
+  level: NotificationLevel;
+  title: string;
+  body: string;
+  read: boolean;
+  created_at: string;
+}
+
 // Navigation types
 export interface NavigationResponse {
   spaces: SpaceWithChats[];

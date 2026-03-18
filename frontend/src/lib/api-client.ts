@@ -94,7 +94,7 @@ async function request<T>(
   return JSON.parse(text);
 }
 
-import type { MessageResponse, Attachment, FileEntry } from "./types";
+import type { MessageResponse, Attachment, FileEntry, Notification } from "./types";
 
 export async function uploadFile(file: File, relativePath?: string): Promise<Attachment> {
   const formData = new FormData();
@@ -253,6 +253,7 @@ export interface StreamSessionCallbacks {
   onChatMessage?: (chatId: string, message: MessageResponse) => void;
   onTaskUpdate?: (taskId: string, status: string, sourceChatId: string | null, title: string, chatId: string | null, resultSummary: string | null) => void;
   onInferenceCount?: (count: number) => void;
+  onNotification?: (notification: Notification) => void;
 }
 
 async function connectStream(
@@ -349,6 +350,9 @@ async function connectStream(
                 break;
               case "inference_count":
                 callbacks.onInferenceCount?.(parsed.count as number);
+                break;
+              case "notification":
+                callbacks.onNotification?.(parsed.notification as Notification);
                 break;
             }
           } catch {

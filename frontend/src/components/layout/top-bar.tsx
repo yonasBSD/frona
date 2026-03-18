@@ -6,6 +6,7 @@ import { Cog6ToothIcon, ArrowRightStartOnRectangleIcon } from "@heroicons/react/
 import { useAuth } from "@/lib/auth";
 import { useSession } from "@/lib/session-context";
 import { Logo } from "../logo";
+import { NotificationDropdown } from "./notification-dropdown";
 
 const topTabs = [
   { id: "chat", label: "Assistant", href: "/chat" },
@@ -79,11 +80,13 @@ export function TopBar() {
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Right: User profile circle with dropdown */}
+      {/* Right: Notifications + User profile */}
+      <div className="flex items-center gap-2">
+      <NotificationDropdown />
       <div ref={menuRef} className="relative flex items-center">
         <button
           onClick={() => setMenuOpen((v) => !v)}
-          className="flex items-center justify-center h-9 w-9 rounded-full bg-accent text-surface text-sm font-semibold cursor-pointer hover:bg-accent-hover transition"
+          className="flex items-center justify-center h-10 w-10 rounded-full bg-accent text-surface text-sm font-semibold cursor-pointer hover:bg-accent-hover transition"
           title={user?.email ?? "User"}
         >
           {initial}
@@ -112,6 +115,7 @@ export function TopBar() {
             </button>
           </div>
         )}
+      </div>
       </div>
     </div>
   );
