@@ -52,38 +52,24 @@ function getToolMeta(name: string): { icon: React.ComponentType<React.SVGProps<S
 }
 
 export function ToolStatusLine({ toolCalls }: { toolCalls: ToolCallStatus[] }) {
-  const completedIds = useRef(new Set<number>());
-  const lastToolName = useRef<string | null>(null);
-  const lastToolDesc = useRef<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset state when a new round of tools starts after dismissal
-  const wasDismissed = useRef(false);
-  if (dismissed) {
-    wasDismissed.current = true;
-  }
-  if (wasDismissed.current && toolCalls.length > 0 && toolCalls.some((tc) => tc.status === "running")) {
-    wasDismissed.current = false;
-    completedIds.current = new Set();
-    lastToolName.current = null;
-    lastToolDesc.current = null;
-  }
-
-  // Track completed tools and remember last tool name/description
-  for (const tc of toolCalls) {
-    lastToolName.current = tc.name;
-    lastToolDesc.current = tc.description;
-    if (tc.status === "success" || tc.status === "error" || tc.status === "fading") {
-      completedIds.current.add(tc.id);
-    }
-  }
-
+  // Derive values from current toolCalls
   const running = toolCalls.filter((tc) => tc.status === "running");
   const errors = toolCalls.filter((tc) => tc.status === "error");
-  const completedCount = completedIds.current.size;
+  const completedCount = toolCalls.filter(
+    (tc) => tc.status === "success" || tc.status === "error" || tc.status === "fading"
+  ).length;
+  const lastTool = toolCalls.length > 0 ? toolCalls[toolCalls.length - 1] : null;
+
   const isActive = running.length > 0 || errors.length > 0;
   const isDone = !isActive && completedCount > 0;
+
+  // Un-dismiss when new tools start running
+  if (dismissed && isActive) {
+    setDismissed(false);
+  }
 
   // Start 5s dismiss timer when we enter "done" state
   useEffect(() => {
@@ -91,9 +77,9 @@ export function ToolStatusLine({ toolCalls }: { toolCalls: ToolCallStatus[] }) {
       dismissTimer.current = setTimeout(() => setDismissed(true), 5000);
       return () => { if (dismissTimer.current) clearTimeout(dismissTimer.current); };
     }
-    if (isActive) {
-      setDismissed(false);
-      if (dismissTimer.current) { clearTimeout(dismissTimer.current); dismissTimer.current = null; }
+    if (isActive && dismissTimer.current) {
+      clearTimeout(dismissTimer.current);
+      dismissTimer.current = null;
     }
   }, [isDone, isActive, dismissed]);
 
@@ -131,11 +117,11 @@ export function ToolStatusLine({ toolCalls }: { toolCalls: ToolCallStatus[] }) {
     rightStyle = "bg-danger-bg text-danger-text border-danger-bg";
   } else {
     // Done summary — last tool's icon/label + description
-    const meta = lastToolName.current ? getToolMeta(lastToolName.current) : { icon: WrenchScrewdriverIcon, label: "Tools" };
+    const meta = lastTool ? getToolMeta(lastTool.name) : { icon: WrenchScrewdriverIcon, label: "Tools" };
     displayKey = "done";
     LeftIcon = meta.icon;
     leftLabel = meta.label;
-    rightText = lastToolDesc.current || (lastToolName.current ? lastToolName.current.replace(/_/g, " ") : "done");
+    rightText = lastTool?.description || lastTool?.name?.replace(/_/g, " ") || "done";
     statusIcon = <CheckCircleIcon className="h-3 w-3 shrink-0" />;
     rightStyle = "bg-success-bg text-success-text border-success-bg";
   }

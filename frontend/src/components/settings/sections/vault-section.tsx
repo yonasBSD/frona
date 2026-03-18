@@ -278,7 +278,7 @@ function LocalVaultPanel({ expanded, onToggle }: { expanded: boolean; onToggle: 
     } finally {
       setSubmitting(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [items, fetchItems]);
 
   const discard = useCallback(() => {
@@ -604,18 +604,15 @@ export function VaultSection({ vault, onChange }: VaultSectionProps) {
   const testable = buildTestable(vault);
 
   // Reset test status to idle when vault config changes
-  const prevVaultRef = useRef(vault);
-  useEffect(() => {
-    const prev = prevVaultRef.current;
-    prevVaultRef.current = vault;
-
+  const [prevVault, setPrevVault] = useState(vault);
+  if (vault !== prevVault) {
+    setPrevVault(vault);
     const changed: string[] = [];
-    if (vault.onepassword_service_account_token !== prev.onepassword_service_account_token || vault.onepassword_vault_id !== prev.onepassword_vault_id) changed.push("onepassword");
-    if (vault.bitwarden_client_id !== prev.bitwarden_client_id || vault.bitwarden_client_secret !== prev.bitwarden_client_secret || vault.bitwarden_master_password !== prev.bitwarden_master_password || vault.bitwarden_server_url !== prev.bitwarden_server_url) changed.push("bitwarden");
-    if (vault.hashicorp_address !== prev.hashicorp_address || vault.hashicorp_token !== prev.hashicorp_token || vault.hashicorp_mount !== prev.hashicorp_mount) changed.push("hashicorp");
-    if (vault.keepass_path !== prev.keepass_path || vault.keepass_password !== prev.keepass_password) changed.push("keepass");
-    if (vault.keeper_app_key !== prev.keeper_app_key) changed.push("keeper");
-
+    if (vault.onepassword_service_account_token !== prevVault.onepassword_service_account_token || vault.onepassword_vault_id !== prevVault.onepassword_vault_id) changed.push("onepassword");
+    if (vault.bitwarden_client_id !== prevVault.bitwarden_client_id || vault.bitwarden_client_secret !== prevVault.bitwarden_client_secret || vault.bitwarden_master_password !== prevVault.bitwarden_master_password || vault.bitwarden_server_url !== prevVault.bitwarden_server_url) changed.push("bitwarden");
+    if (vault.hashicorp_address !== prevVault.hashicorp_address || vault.hashicorp_token !== prevVault.hashicorp_token || vault.hashicorp_mount !== prevVault.hashicorp_mount) changed.push("hashicorp");
+    if (vault.keepass_path !== prevVault.keepass_path || vault.keepass_password !== prevVault.keepass_password) changed.push("keepass");
+    if (vault.keeper_app_key !== prevVault.keeper_app_key) changed.push("keeper");
     if (changed.length > 0) {
       setTestStatuses((prev) => {
         const next = { ...prev };
@@ -623,7 +620,7 @@ export function VaultSection({ vault, onChange }: VaultSectionProps) {
         return next;
       });
     }
-  }, [vault]);
+  }
 
   // Debounced auto-test
   useEffect(() => {
@@ -662,7 +659,7 @@ export function VaultSection({ vault, onChange }: VaultSectionProps) {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [vault, testStatuses]);
 
   return (

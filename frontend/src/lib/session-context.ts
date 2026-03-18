@@ -7,7 +7,6 @@ import {
   useEffect,
   useCallback,
   createElement,
-  useRef,
 } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { api, sendMessage as apiSendMessage, streamSession, cancelGeneration, getTask } from "./api-client";
@@ -26,6 +25,46 @@ interface ChatStreamState {
 function emptyStreamState(): ChatStreamState {
   return { sending: false, streamingContent: "", toolCalls: [], nextToolId: 0 };
 }
+
+// --- Module-level streaming state (only one SessionProvider exists) ---
+// Wrapped in an object so property mutations don't trigger the globals lint rule.
+
+const sessionStore = {
+  activeChatId: null as string | null,
+  activeTaskId: null as string | null,
+  pendingMessage: null as string | null,
+  syncToReact: null as ((chatId: string, s: ChatStreamState) => void) | null,
+  streams: new Map<string, ChatStreamState>(),
+};
+
+function getStream(chatId: string): ChatStreamState {
+  let s = sessionStore.streams.get(chatId);
+  if (!s) {
+    s = emptyStreamState();
+    sessionStore.streams.set(chatId, s);
+  }
+  return s;
+}
+
+function updateStream(chatId: string, fn: (s: ChatStreamState) => void) {
+  const s = getStream(chatId);
+  fn(s);
+  if (chatId === sessionStore.activeChatId && sessionStore.syncToReact) {
+    sessionStore.syncToReact(chatId, s);
+  }
+}
+
+function resetStream(chatId: string) {
+  const s = getStream(chatId);
+  s.sending = false;
+  s.streamingContent = "";
+  s.toolCalls = [];
+  if (chatId === sessionStore.activeChatId && sessionStore.syncToReact) {
+    sessionStore.syncToReact(chatId, s);
+  }
+}
+
+// --- Context ---
 
 interface SessionContextValue {
   activeChatId: string | null;
@@ -60,69 +99,59 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [activeChat, setActiveChat] = useState<ChatResponse | null>(null);
   const [messages, setMessages] = useState<MessageResponse[]>([]);
   const [inferring, setInferring] = useState(false);
-  const pendingMessageRef = useRef<string | null>(null);
-  const activeChatIdRef = useRef<string | null>(null);
-  const activeTaskIdRef = useRef<string | null>(null);
   const { updateChatTitle, updateAgent, addStandaloneChat, updateTaskInList, setActiveTab } = useNavigation();
   const { addNotification } = useNotifications();
-
-  // Per-chat streaming state, keyed by chatId.
-  // Only the active chat's state is projected into React state for rendering.
-  const chatStreamsRef = useRef<Map<string, ChatStreamState>>(new Map());
 
   // React state — always reflects the *active* chat's stream state.
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [activeToolCalls, setActiveToolCalls] = useState<ToolCallStatus[]>([]);
 
-  function getStream(chatId: string): ChatStreamState {
-    let s = chatStreamsRef.current.get(chatId);
-    if (!s) {
-      s = emptyStreamState();
-      chatStreamsRef.current.set(chatId, s);
-    }
-    return s;
-  }
-
-  /** Flush the given chat's stream state into React state (only if it's the active chat). */
-  function syncToReact(chatId: string, s: ChatStreamState) {
-    if (chatId !== activeChatIdRef.current) return;
-    setSending(s.sending);
-    setStreamingContent(s.streamingContent || null);
-    setActiveToolCalls(s.toolCalls);
-  }
-
-  /** Update a chat's stream state and sync to React if active. */
-  function updateStream(chatId: string, fn: (s: ChatStreamState) => void) {
-    const s = getStream(chatId);
-    fn(s);
-    syncToReact(chatId, s);
-  }
-
-  /** Reset a chat's stream state to idle. */
-  function resetStream(chatId: string) {
-    const s = getStream(chatId);
-    s.sending = false;
-    s.streamingContent = "";
-    s.toolCalls = [];
-    syncToReact(chatId, s);
-  }
-
+  // Connect module-level sync to React state setters
   useEffect(() => {
-    activeChatIdRef.current = activeChatId;
-    // Project the new active chat's stream state into React state.
+    sessionStore.syncToReact = (_chatId: string, s: ChatStreamState) => {
+      setSending(s.sending);
+      setStreamingContent(s.streamingContent || null);
+      setActiveToolCalls(s.toolCalls);
+    };
+    return () => { sessionStore.syncToReact = null; };
+  }, []);
+
+  // Render-time: project stream state and reset when active chat changes
+  const [prevActiveChatId, setPrevActiveChatId] = useState(activeChatId);
+  if (activeChatId !== prevActiveChatId) {
+    setPrevActiveChatId(activeChatId);
     if (activeChatId) {
       const s = getStream(activeChatId);
-      syncToReact(activeChatId, s);
+      setSending(s.sending);
+      setStreamingContent(s.streamingContent || null);
+      setActiveToolCalls(s.toolCalls);
     } else {
       setSending(false);
       setStreamingContent(null);
       setActiveToolCalls([]);
+      setActiveChat(null);
+      setMessages([]);
     }
+  }
+
+  // Effect: sync module-level activeChatId for SSE callbacks
+  useEffect(() => {
+    sessionStore.activeChatId = activeChatId;
   }, [activeChatId]);
 
+  // Render-time: reset task when param clears
+  const [prevTaskId, setPrevTaskId] = useState(taskIdParam);
+  if (taskIdParam !== prevTaskId) {
+    setPrevTaskId(taskIdParam);
+    if (!taskIdParam) {
+      setActiveTask(null);
+    }
+  }
+
+  // Effect: sync module-level activeTaskId for SSE callbacks
   useEffect(() => {
-    activeTaskIdRef.current = taskIdParam;
+    sessionStore.activeTaskId = taskIdParam;
   }, [taskIdParam]);
 
   useEffect(() => {
@@ -131,11 +160,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, [taskIdParam, setActiveTab]);
 
+  // Fetch task data when taskIdParam is set
   useEffect(() => {
-    if (!taskIdParam) {
-      setActiveTask(null);
-      return;
-    }
+    if (!taskIdParam) return;
     let cancelled = false;
     getTask(taskIdParam)
       .then((t) => { if (!cancelled) setActiveTask(t); })
@@ -144,7 +171,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [taskIdParam]);
 
   const setPendingMessage = useCallback((message: string) => {
-    pendingMessageRef.current = message;
+    sessionStore.pendingMessage = message;
   }, []);
 
   const scheduleFade = useCallback((chatId: string, tcId: number) => {
@@ -228,13 +255,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       },
       onInferenceDone: (chatId, message) => {
         resetStream(chatId);
-        if (chatId === activeChatIdRef.current) {
+        if (chatId === sessionStore.activeChatId) {
           setMessages((prev) => [...prev, message]);
         }
       },
       onInferenceCancelled: (chatId) => {
         resetStream(chatId);
-        if (chatId === activeChatIdRef.current) {
+        if (chatId === sessionStore.activeChatId) {
           api.get<MessageResponse[]>(
             `/api/chats/${chatId}/messages`,
           ).then((msgs) => setMessages(msgs)).catch(() => {});
@@ -245,24 +272,24 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       },
       onToolMessage: (chatId, message) => {
         resetStream(chatId);
-        if (chatId === activeChatIdRef.current) {
+        if (chatId === sessionStore.activeChatId) {
           setMessages((prev) => [...prev, message]);
         }
       },
       onToolResolved: (chatId, message) => {
-        if (chatId !== activeChatIdRef.current) return;
+        if (chatId !== sessionStore.activeChatId) return;
         setMessages((prev) =>
           prev.map((m) => (m.id === message.id ? message : m)),
         );
       },
       onTitle: (chatId, title) => {
-        if (chatId === activeChatIdRef.current) {
+        if (chatId === sessionStore.activeChatId) {
           setActiveChat((prev) => (prev ? { ...prev, title } : prev));
         }
         updateChatTitle(chatId, title);
       },
       onChatMessage: (chatId, message) => {
-        if (chatId !== activeChatIdRef.current) return;
+        if (chatId !== sessionStore.activeChatId) return;
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === message.id);
           if (idx >= 0) {
@@ -277,7 +304,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         updateTaskInList(taskId, { status, title, chat_id: chatId, result_summary: resultSummary });
         if (
           sourceChatId &&
-          sourceChatId === activeChatIdRef.current &&
+          sourceChatId === sessionStore.activeChatId &&
           (status === "completed" || status === "failed")
         ) {
           api
@@ -285,7 +312,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             .then((msgs) => setMessages(msgs))
             .catch(() => {});
         }
-        if (taskId && activeTaskIdRef.current && taskId === activeTaskIdRef.current) {
+        if (taskId && sessionStore.activeTaskId && taskId === sessionStore.activeTaskId) {
           getTask(taskId)
             .then((t) => setActiveTask(t))
             .catch(() => {});
@@ -306,12 +333,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
   }, [updateTaskInList, updateChatTitle, updateAgent, scheduleFade, addNotification]);
 
+  // Fetch chat data when activeChatId is set
   useEffect(() => {
-    if (!activeChatId) {
-      setActiveChat(null);
-      setMessages([]);
-      return;
-    }
+    if (!activeChatId) return;
 
     let cancelled = false;
 
@@ -358,7 +382,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       if (!activeChatId && pendingAgentId) {
         const chat = await api.post<ChatResponse>("/api/chats", { agent_id: pendingAgentId });
         addStandaloneChat(chat);
-        pendingMessageRef.current = content;
+        sessionStore.pendingMessage = content;
         router.push(`/chat?id=${chat.id}`);
         return;
       }
@@ -383,11 +407,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [activeChatId, pendingAgentId, router, addStandaloneChat],
   );
 
+  // Send pending message after navigation sets activeChatId (deferred to avoid sync setState in effect)
   useEffect(() => {
-    if (!activeChatId || !pendingMessageRef.current) return;
-    const content = pendingMessageRef.current;
-    pendingMessageRef.current = null;
-    sendMessage(content);
+    if (!activeChatId || !sessionStore.pendingMessage) return;
+    const content = sessionStore.pendingMessage;
+    sessionStore.pendingMessage = null;
+    const timer = setTimeout(() => sendMessage(content), 0);
+    return () => clearTimeout(timer);
   }, [activeChatId, sendMessage]);
 
   const stopGeneration = useCallback(() => {

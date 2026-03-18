@@ -237,9 +237,11 @@ export function ProvidersSection({ providers, onChange, onReadyChange }: Provide
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync provider states when providers prop changes (preserve test statuses)
-  useEffect(() => {
+  const [prevProviders, setPrevProviders] = useState(providers);
+  if (providers !== prevProviders) {
+    setPrevProviders(providers);
     setProviderStates((prev) => buildStates(providers, prev));
-  }, [providers]);
+  }
 
   // Notify parent of readiness whenever states change
   useEffect(() => {
@@ -269,7 +271,7 @@ export function ProvidersSection({ providers, onChange, onReadyChange }: Provide
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [providerStates]);
 
   const configuredIds = Object.keys(providers);

@@ -194,13 +194,12 @@ function VaultApprovalMessage({
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
 
-  if (!message.tool || message.tool.type !== "VaultApproval") return null;
-
-  const { status: toolStatus, query, reason, env_var_prefix } = message.tool.data;
-  const resolved = toolStatus === "resolved";
-  const denied = toolStatus === "denied";
+  const isVaultApproval = message.tool?.type === "VaultApproval";
+  const vaultData = isVaultApproval ? message.tool!.data as { query: string; reason: string; env_var_prefix: string; status: string; response: string | null } : null;
+  const query = vaultData?.query ?? "";
 
   useEffect(() => {
+    if (!isVaultApproval) return;
     api.get<VaultConnection[]>("/api/vaults").then((conns) => {
       setConnections(conns.filter((c) => c.enabled));
       if (conns.length > 0) {
@@ -208,10 +207,10 @@ function VaultApprovalMessage({
       }
     });
     setSearchQuery(query);
-  }, [query]);
+  }, [query, isVaultApproval]);
 
   useEffect(() => {
-    if (!selectedConnection || !searchQuery) return;
+    if (!isVaultApproval || !selectedConnection || !searchQuery) return;
     setSearching(true);
     api
       .get<VaultItem[]>(
@@ -224,7 +223,13 @@ function VaultApprovalMessage({
         }
       })
       .finally(() => setSearching(false));
-  }, [selectedConnection, searchQuery]);
+  }, [selectedConnection, searchQuery, isVaultApproval]);
+
+  if (!isVaultApproval || !vaultData) return null;
+
+  const { status: toolStatus, reason, env_var_prefix } = vaultData;
+  const resolved = toolStatus === "resolved";
+  const denied = toolStatus === "denied";
 
   const handleApprove = async () => {
     if (!activeChatId || !selectedItem) return;

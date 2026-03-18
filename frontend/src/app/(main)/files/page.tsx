@@ -86,14 +86,14 @@ export default function FilesPage() {
     await uploadFile(file, relativePath);
   }
 
-  async function refreshCurrentFolder() {
+  const refreshCurrentFolder = useCallback(async () => {
     const { currentPath } = getCurrentUploadPath();
     if (!fmApiRef.current) return;
     fmApiRef.current.exec("provide-data", { id: currentPath, data: [] as IEntity[] });
     const sub = userSubpath(currentPath);
     const entries = await listUserFiles(sub || undefined);
     fmApiRef.current.exec("provide-data", { id: currentPath, data: toSvarEntries(entries, MYFILES_ROOT) });
-  }
+  }, []);
 
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -171,7 +171,7 @@ export default function FilesPage() {
     }
 
     await refreshCurrentFolder();
-  }, []);
+  }, [refreshCurrentFolder]);
 
   useEffect(() => {
     apiClient.get<Agent[]>("/api/agents").then(setAgents).catch(() => {});
@@ -229,10 +229,10 @@ export default function FilesPage() {
     return resolveAgentIdUtil(path, agentsRef.current);
   }
 
-  function getFileOwnerPath(fileId: string): { owner: string; path: string } | null {
+  const getFileOwnerPath = useCallback((fileId: string): { owner: string; path: string } | null => {
     if (!user) return null;
     return getFileOwnerPathUtil(fileId, user.id, agentsRef.current);
-  }
+  }, [user]);
 
   const handleInit = useCallback(
     (fmApi: IApi) => {
@@ -467,7 +467,7 @@ export default function FilesPage() {
         }
       });
     },
-    [user],
+    [user, getFileOwnerPath],
   );
 
   const ThemeWrapper = resolved === "dark" ? WillowDark : Willow;

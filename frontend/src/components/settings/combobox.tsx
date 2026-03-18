@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { useCombobox } from "downshift";
 
 interface ComboboxItem {
@@ -28,15 +28,13 @@ export function ComboboxInput({
   onBlur,
 }: ComboboxInputProps) {
   const [filteredItems, setFilteredItems] = useState(items);
-  const prevItemsLenRef = useRef(items.length);
+  const [prevItemsLen, setPrevItemsLen] = useState(items.length);
 
-  // Sync filteredItems when items actually change (by length)
-  useEffect(() => {
-    if (items.length !== prevItemsLenRef.current) {
-      prevItemsLenRef.current = items.length;
-      setFilteredItems(items);
-    }
-  });
+  // Sync filteredItems when items list changes
+  if (items.length !== prevItemsLen) {
+    setPrevItemsLen(items.length);
+    setFilteredItems(items);
+  }
 
   const {
     isOpen,

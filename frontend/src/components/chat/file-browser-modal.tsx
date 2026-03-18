@@ -154,7 +154,7 @@ export function FileBrowserModal({ open, onClose, onSelect }: FileBrowserModalPr
         }
       });
     },
-    [user],
+    [],
   );
 
   const handleAttach = () => {
