@@ -69,6 +69,11 @@ impl Sandbox {
         self.extra_env_vars = vars;
         self
     }
+
+    pub fn with_read_paths(mut self, paths: Vec<String>) -> Self {
+        self.shared_read_paths.extend(paths);
+        self
+    }
 }
 
 impl Sandbox {
@@ -120,23 +125,13 @@ impl Sandbox {
         }
     }
 
-    pub async fn execute(
-        &self,
-        program: &str,
-        args: &[&str],
-        timeout_secs: u64,
-        on_stdout: Option<mpsc::Sender<String>>,
-        stdin_rx: Option<mpsc::Receiver<String>>,
-        cancel_token: Option<CancellationToken>,
-    ) -> Result<SandboxOutput, AppError> {
+    fn base_config(&self) -> Result<(SandboxConfig, PathBuf), AppError> {
         self.setup()?;
 
         let canonical_path = std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
 
-        let mut additional_read_paths = self.shared_read_paths.clone();
         let mut additional_path_dirs = Vec::new();
         let mut env_vars = Vec::new();
-        let mut resolved_args: Vec<String> = Vec::new();
 
         let venv_bin = canonical_path.join(".venv").join("bin");
         if venv_bin.exists() {
@@ -147,28 +142,9 @@ impl Sandbox {
             ));
         }
 
-        // Set HOME to workspace so tools write config inside the sandbox
         env_vars.push(("HOME".to_string(), canonical_path.to_string_lossy().into_owned()));
         env_vars.push(("XDG_CONFIG_HOME".to_string(), canonical_path.join(".config").to_string_lossy().into_owned()));
         env_vars.push(("XDG_CACHE_HOME".to_string(), canonical_path.join(".cache").to_string_lossy().into_owned()));
-
-        for arg in args {
-            let mut resolved = arg.to_string();
-            for (prefix, abs_dir) in &self.skill_dirs {
-                if resolved.contains(prefix) {
-                    resolved = resolved.replace(prefix, abs_dir);
-                }
-                if !additional_read_paths.contains(abs_dir) {
-                    additional_read_paths.push(abs_dir.clone());
-                }
-                if !additional_path_dirs.contains(abs_dir) {
-                    additional_path_dirs.push(abs_dir.clone());
-                }
-            }
-            resolved_args.push(resolved);
-        }
-
-        let resolved_refs: Vec<&str> = resolved_args.iter().map(|s| s.as_str()).collect();
 
         env_vars.extend(self.extra_env_vars.clone());
 
@@ -176,12 +152,102 @@ impl Sandbox {
             workspace_dir: canonical_path.to_string_lossy().into_owned(),
             network_access: self.network_access,
             allowed_network_destinations: self.allowed_network_destinations.clone(),
-            additional_read_paths,
+            additional_read_paths: self.shared_read_paths.clone(),
             additional_path_dirs,
             env_vars,
-            timeout_secs,
             ..Default::default()
         };
+
+        Ok((config, canonical_path))
+    }
+
+    pub fn spawn(
+        &self,
+        program: &str,
+        args: &[&str],
+        working_dir: Option<&str>,
+        extra_path_dirs: Vec<String>,
+        stdout: std::process::Stdio,
+        stderr: std::process::Stdio,
+    ) -> Result<tokio::process::Child, AppError> {
+        let (mut config, canonical_path) = self.base_config()?;
+
+        config.additional_path_dirs.extend(extra_path_dirs);
+
+        if let Some(wd) = working_dir {
+            let canonical_wd = std::fs::canonicalize(wd)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| wd.to_string());
+            config.additional_read_paths.push(canonical_path.to_string_lossy().into_owned());
+            config.workspace_dir = canonical_wd;
+        }
+
+        let mut cmd = self.sandbox.sandboxed_command(program, args, &config)?;
+
+        cmd.env_clear();
+
+        const PASSTHROUGH_VARS: &[&str] =
+            &["TERM", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "USER", "LOGNAME", "TMPDIR", "SHELL"];
+
+        for key in PASSTHROUGH_VARS {
+            if let Ok(val) = std::env::var(key) {
+                cmd.env(key, val);
+            }
+        }
+
+        {
+            let existing = std::env::var("PATH").unwrap_or_default();
+            if config.additional_path_dirs.is_empty() {
+                cmd.env("PATH", existing);
+            } else {
+                let extra = config.additional_path_dirs.join(":");
+                cmd.env("PATH", format!("{extra}:{existing}"));
+            }
+        }
+
+        for (key, value) in &config.env_vars {
+            cmd.env(key, value);
+        }
+
+        cmd.stdout(stdout);
+        cmd.stderr(stderr);
+
+        tokio::process::Command::from(cmd)
+            .spawn()
+            .map_err(|e| AppError::Tool(format!("Failed to spawn process: {e}")))
+    }
+
+    pub async fn execute(
+        &self,
+        program: &str,
+        args: &[&str],
+        timeout_secs: u64,
+        on_stdout: Option<mpsc::Sender<String>>,
+        stdin_rx: Option<mpsc::Receiver<String>>,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<SandboxOutput, AppError> {
+        let (mut config, _) = self.base_config()?;
+        config.timeout_secs = timeout_secs;
+
+        let mut resolved_args: Vec<String> = Vec::new();
+
+        for arg in args {
+            let mut resolved = arg.to_string();
+            for (prefix, abs_dir) in &self.skill_dirs {
+                if resolved.contains(prefix) {
+                    resolved = resolved.replace(prefix, abs_dir);
+                }
+                if !config.additional_read_paths.contains(abs_dir) {
+                    config.additional_read_paths.push(abs_dir.clone());
+                }
+                if !config.additional_path_dirs.contains(abs_dir) {
+                    config.additional_path_dirs.push(abs_dir.clone());
+                }
+            }
+            resolved_args.push(resolved);
+        }
+
+        let resolved_refs: Vec<&str> = resolved_args.iter().map(|s| s.as_str()).collect();
 
         execute_sandboxed(
             &*self.sandbox,
