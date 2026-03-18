@@ -71,8 +71,22 @@ fn apply_landlock(workspace_dir: &str, network_access: bool, additional_read_pat
         .create()
         .map_err(|e| format!("Landlock ruleset create failed: {e}"))?;
 
-    let read_only_paths = ["/usr", "/lib", "/lib64", "/bin", "/sbin"];
-    let read_write_paths = [workspace_dir, "/tmp"];
+    let read_only_paths = [
+        "/usr", "/lib", "/lib64", "/bin", "/sbin",
+        // Local package installs (pip, npm global, etc.)
+        "/usr/local/lib", "/usr/local/share",
+        // Locale and timezone data
+        "/usr/share/locale", "/usr/share/zoneinfo",
+        // Process self-introspection (Python, Go, Perl runtimes)
+        "/proc/self",
+        // System info (multiprocessing, memory-aware tools)
+        "/proc/cpuinfo", "/proc/meminfo",
+    ];
+    let read_write_paths = [
+        workspace_dir, "/tmp",
+        // Standard pseudo-devices
+        "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
+    ];
 
     for path in &read_only_paths {
         if let Ok(fd) = PathFd::new(path) {

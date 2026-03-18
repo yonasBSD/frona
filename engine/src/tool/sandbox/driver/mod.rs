@@ -54,6 +54,8 @@ pub const ETC_READ_ALLOWLIST: &[&str] = &[
     // Language runtimes
     "/etc/python3",
     "/etc/pip.conf",
+    // XDG base directory spec
+    "/etc/xdg",
 ];
 
 use crate::core::error::AppError;

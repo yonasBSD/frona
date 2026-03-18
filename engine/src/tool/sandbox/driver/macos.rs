@@ -22,6 +22,9 @@ const SYSTEM_READ_RULES: &[ReadRule] = &[
     ReadRule::Subpath("/private/var/folders"),
     ReadRule::Subpath("/dev"),
     ReadRule::Subpath("/tmp"),
+    // Local package installs (pip, npm global, etc.)
+    ReadRule::Subpath("/usr/local/lib"),
+    ReadRule::Subpath("/usr/local/share"),
     ReadRule::Literal("/etc"),
     ReadRule::Literal("/private"),
     ReadRule::Literal("/private/etc"),
