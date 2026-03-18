@@ -179,7 +179,7 @@ async fn proxy_app_inner(
                 return StatusCode::SERVICE_UNAVAILABLE.into_response();
             }
 
-            forward_to_port(port, &sub_path, request).await
+            forward_to_port(port, &sub_path, &app_id, request).await
         }
     }
 }
@@ -331,7 +331,7 @@ async fn handle_hibernated_app(
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
 
-            forward_to_port(port, sub_path, original_request).await
+            forward_to_port(port, sub_path, &app.id, original_request).await
         }
         Err(_) => {
             let _ = state
@@ -343,7 +343,28 @@ async fn handle_hibernated_app(
     }
 }
 
-async fn forward_to_port(port: u16, path: &str, original_request: Request) -> Response {
+fn rewrite_location(value: &str, app_prefix: &str) -> Option<String> {
+    if let Some(path) = value.strip_prefix("http://127.0.0.1") {
+        let path = path.find('/').map(|i| &path[i..]).unwrap_or("/");
+        return Some(format!("{app_prefix}{}", path.strip_prefix('/').unwrap_or(path)));
+    }
+
+    if value.starts_with('/') {
+        return Some(format!(
+            "{app_prefix}{}",
+            value.strip_prefix('/').unwrap_or(value)
+        ));
+    }
+
+    None
+}
+
+async fn forward_to_port(
+    port: u16,
+    path: &str,
+    app_id: &str,
+    original_request: Request,
+) -> Response {
     let uri = if path.is_empty() {
         format!("http://127.0.0.1:{port}/")
     } else {
@@ -371,11 +392,20 @@ async fn forward_to_port(port: u16, path: &str, original_request: Request) -> Re
     let status = StatusCode::from_u16(upstream_resp.status().as_u16())
         .unwrap_or(StatusCode::BAD_GATEWAY);
 
+    let app_prefix = format!("/apps/{app_id}/");
     let mut builder = Response::builder().status(status);
     for (key, value) in upstream_resp.headers() {
         if let Ok(name) = axum::http::header::HeaderName::from_bytes(key.as_ref())
             && let Ok(val) = HeaderValue::from_bytes(value.as_bytes())
         {
+            if (name == "location" || name == "content-location")
+                && let Ok(loc_str) = value.to_str()
+                && let Some(rewritten) = rewrite_location(loc_str, &app_prefix)
+                && let Ok(new_val) = HeaderValue::from_str(&rewritten)
+            {
+                builder = builder.header(name, new_val);
+                continue;
+            }
             builder = builder.header(name, val);
         }
     }
@@ -385,5 +415,47 @@ async fn forward_to_port(port: u16, path: &str, original_request: Request) -> Re
             .body(Body::from(body))
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
         Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrite_location_absolute_path() {
+        assert_eq!(
+            rewrite_location("/login", "/apps/x/"),
+            Some("/apps/x/login".to_string())
+        );
+    }
+
+    #[test]
+    fn rewrite_location_root() {
+        assert_eq!(
+            rewrite_location("/", "/apps/x/"),
+            Some("/apps/x/".to_string())
+        );
+    }
+
+    #[test]
+    fn rewrite_location_relative_path() {
+        assert_eq!(rewrite_location("next-page", "/apps/x/"), None);
+    }
+
+    #[test]
+    fn rewrite_location_external_url() {
+        assert_eq!(
+            rewrite_location("https://example.com/foo", "/apps/x/"),
+            None
+        );
+    }
+
+    #[test]
+    fn rewrite_location_localhost_url() {
+        assert_eq!(
+            rewrite_location("http://127.0.0.1:3456/dashboard", "/apps/x/"),
+            Some("/apps/x/dashboard".to_string())
+        );
     }
 }
