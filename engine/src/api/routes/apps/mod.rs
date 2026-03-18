@@ -74,7 +74,7 @@ async fn stop_app(
     Path(id): Path<String>,
 ) -> Result<Json<AppResponse>, ApiError> {
     let app = get_user_app(&state, &auth, &id).await?;
-    let resp = state.app_service.stop(&app.agent_id, &id).await?;
+    let resp = state.app_service.stop(&app.agent_id, &id, &app.chat_id).await?;
     Ok(Json(resp))
 }
 
@@ -84,7 +84,7 @@ async fn restart_app(
     Path(id): Path<String>,
 ) -> Result<Json<AppResponse>, ApiError> {
     let app = get_user_app(&state, &auth, &id).await?;
-    let resp = state.app_service.restart(&app.agent_id, &id).await?;
+    let resp = state.app_service.restart(&app.agent_id, &id, &app.chat_id).await?;
     Ok(Json(resp))
 }
 
@@ -156,7 +156,7 @@ async fn approve_service(
 
         let (result_text, level, title, body, app_id) = match state_clone
             .app_service
-            .deploy_and_await(&agent_id, &user_id, &manifest, Vec::new())
+            .deploy_and_await(&agent_id, &user_id, &chat_id, &manifest, Vec::new())
             .await
         {
             Ok(app) => {

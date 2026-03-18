@@ -27,6 +27,8 @@ fn make_app(id: &str, agent_id: &str, user_id: &str, status: AppStatus) -> App {
         status,
         pid: Some(12345),
         manifest: serde_json::json!({"id": id, "name": format!("App {id}")}),
+        chat_id: "test-chat".to_string(),
+        crash_fix_attempts: 0,
         last_accessed_at: None,
         created_at: now,
         updated_at: now,

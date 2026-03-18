@@ -31,6 +31,7 @@ impl AppService {
         &self,
         agent_id: &str,
         user_id: &str,
+        chat_id: &str,
         manifest: &AppManifest,
         credential_env_vars: Vec<(String, String)>,
     ) -> Result<AppResponse, AppError> {
@@ -71,6 +72,8 @@ impl AppService {
                     status: AppStatus::Serving,
                     pid: None,
                     manifest: manifest_json,
+                    chat_id: chat_id.to_string(),
+                    crash_fix_attempts: 0,
                     last_accessed_at: None,
                     created_at: existing.as_ref().map(|e| e.created_at).unwrap_or(now),
                     updated_at: now,
@@ -111,6 +114,8 @@ impl AppService {
                     status: AppStatus::Starting,
                     pid: None,
                     manifest: manifest_json,
+                    chat_id: chat_id.to_string(),
+                    crash_fix_attempts: 0,
                     last_accessed_at: None,
                     created_at: existing.as_ref().map(|e| e.created_at).unwrap_or(now),
                     updated_at: now,
@@ -128,7 +133,7 @@ impl AppService {
         }
     }
 
-    pub async fn stop(&self, agent_id: &str, app_id: &str) -> Result<AppResponse, AppError> {
+    pub async fn stop(&self, agent_id: &str, app_id: &str, chat_id: &str) -> Result<AppResponse, AppError> {
         let mut app = self.get_owned_app(agent_id, app_id).await?;
 
         self.manager.stop_app(app_id).await?;
@@ -136,6 +141,8 @@ impl AppService {
         app.status = AppStatus::Stopped;
         app.pid = None;
         app.port = None;
+        app.chat_id = chat_id.to_string();
+        app.crash_fix_attempts = 0;
         app.updated_at = chrono::Utc::now();
         let app = self.repo.update(&app).await?;
         Ok(app.into())
@@ -145,6 +152,7 @@ impl AppService {
         &self,
         agent_id: &str,
         app_id: &str,
+        chat_id: &str,
         credential_env_vars: Vec<(String, String)>,
     ) -> Result<AppResponse, AppError> {
         let mut app = self.get_owned_app(agent_id, app_id).await?;
@@ -152,6 +160,9 @@ impl AppService {
         if matches!(app.status, AppStatus::Running | AppStatus::Starting) {
             return Ok(app.into());
         }
+
+        app.chat_id = chat_id.to_string();
+        app.crash_fix_attempts = 0;
 
         let command = app
             .command
@@ -170,8 +181,12 @@ impl AppService {
         &self,
         agent_id: &str,
         app_id: &str,
+        chat_id: &str,
     ) -> Result<AppResponse, AppError> {
         let mut app = self.get_owned_app(agent_id, app_id).await?;
+
+        app.chat_id = chat_id.to_string();
+        app.crash_fix_attempts = 0;
 
         let command = app
             .command
@@ -248,6 +263,18 @@ impl AppService {
         Ok(())
     }
 
+    pub async fn update_crash_fix_attempts(
+        &self,
+        app_id: &str,
+        attempts: u32,
+    ) -> Result<(), AppError> {
+        if let Some(mut app) = self.repo.find_by_id(app_id).await? {
+            app.crash_fix_attempts = attempts;
+            self.repo.update(&app).await?;
+        }
+        Ok(())
+    }
+
     pub async fn update_last_accessed(
         &self,
         app_id: &str,
@@ -302,11 +329,12 @@ impl AppService {
         &self,
         agent_id: &str,
         user_id: &str,
+        chat_id: &str,
         manifest: &AppManifest,
         credential_env_vars: Vec<(String, String)>,
     ) -> Result<AppResponse, AppError> {
         let app = self
-            .deploy(agent_id, user_id, manifest, credential_env_vars)
+            .deploy(agent_id, user_id, chat_id, manifest, credential_env_vars)
             .await?;
 
         if manifest.effective_kind() == "static" {

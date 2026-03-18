@@ -135,14 +135,14 @@ impl ManageServiceTool {
         if let Some(ref existing) = existing {
             let app = self
                 .app_service
-                .restart(&ctx.agent.id, &existing.id)
+                .restart(&ctx.agent.id, &existing.id, &ctx.chat.id)
                 .await?;
             return Ok(ToolOutput::text(format_app_result("restarted", &app)));
         }
 
         let app = self
             .app_service
-            .deploy_and_await(&ctx.agent.id, &ctx.user.id, &manifest, Vec::new())
+            .deploy_and_await(&ctx.agent.id, &ctx.user.id, &ctx.chat.id, &manifest, Vec::new())
             .await?;
 
         Ok(ToolOutput::text(format_app_result("deployed successfully", &app)))
@@ -155,7 +155,7 @@ impl ManageServiceTool {
     ) -> Result<ToolOutput, AppError> {
         let app_id = self.resolve_app_id(ctx, manifest_value.as_ref()).await?;
 
-        let app = self.app_service.stop(&ctx.agent.id, &app_id).await?;
+        let app = self.app_service.stop(&ctx.agent.id, &app_id, &ctx.chat.id).await?;
         self.emit_notification(ctx, &app_id, "stop", NotificationLevel::Info, &format!("App '{}' stopped", app.name)).await;
         Ok(ToolOutput::text(format!(
             "App '{}' stopped. Status: {}",
@@ -172,7 +172,7 @@ impl ManageServiceTool {
 
         let app = self
             .app_service
-            .start(&ctx.agent.id, &app_id, Vec::new())
+            .start(&ctx.agent.id, &app_id, &ctx.chat.id, Vec::new())
             .await?;
 
         self.emit_notification(ctx, &app_id, "start", NotificationLevel::Success, &format!("App '{}' started", app.name)).await;
@@ -186,7 +186,7 @@ impl ManageServiceTool {
     ) -> Result<ToolOutput, AppError> {
         let app_id = self.resolve_app_id(ctx, manifest_value.as_ref()).await?;
 
-        let app = self.app_service.restart(&ctx.agent.id, &app_id).await?;
+        let app = self.app_service.restart(&ctx.agent.id, &app_id, &ctx.chat.id).await?;
 
         self.emit_notification(ctx, &app_id, "restart", NotificationLevel::Info, &format!("App '{}' restarted", app.name)).await;
         Ok(ToolOutput::text(format_app_result("restarted", &app)))
@@ -305,6 +305,8 @@ mod tests {
             status: crate::app::models::AppStatus::Running,
             pid: Some(1234),
             manifest,
+            chat_id: "test-chat".to_string(),
+            crash_fix_attempts: 0,
             last_accessed_at: None,
             created_at: now,
             updated_at: now,
