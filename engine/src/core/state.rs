@@ -222,8 +222,7 @@ impl AppState {
         };
 
         let app_manager = Arc::new(AppManager::new(
-            PathBuf::from(&config.storage.workspaces_path),
-            config.server.sandbox_disabled,
+            sandbox_manager.clone(),
             config.app.port_range_start,
             config.app.port_range_end,
         ));

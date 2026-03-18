@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use tokio::sync::Mutex;
 
 use crate::core::error::AppError;
-use crate::tool::sandbox::driver::{SandboxConfig, SandboxDriver, create_driver};
+use crate::tool::sandbox::SandboxManager;
 
 use super::models::{AppManifest, HealthCheck};
 
@@ -29,22 +29,20 @@ pub struct ManagedProcess {
     pub credential_env_vars: Vec<(String, String)>,
     pub restart_count: u32,
     pub consecutive_failures: u32,
-    pub stderr_path: Option<PathBuf>,
+    pub log_path: Option<PathBuf>,
 }
 
 pub struct AppManager {
     processes: Arc<Mutex<HashMap<String, ManagedProcess>>>,
     allocated_ports: Arc<Mutex<HashSet<u16>>>,
     port_range: (u16, u16),
-    workspaces_path: PathBuf,
-    sandbox_disabled: bool,
+    sandbox_manager: Arc<SandboxManager>,
     last_accessed: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
 }
 
 impl AppManager {
     pub fn new(
-        workspaces_path: PathBuf,
-        sandbox_disabled: bool,
+        sandbox_manager: Arc<SandboxManager>,
         port_range_start: u16,
         port_range_end: u16,
     ) -> Self {
@@ -52,8 +50,7 @@ impl AppManager {
             processes: Arc::new(Mutex::new(HashMap::new())),
             allocated_ports: Arc::new(Mutex::new(HashSet::new())),
             port_range: (port_range_start, port_range_end),
-            workspaces_path,
-            sandbox_disabled,
+            sandbox_manager,
             last_accessed: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -67,13 +64,9 @@ impl AppManager {
         credential_env_vars: Vec<(String, String)>,
     ) -> Result<(u16, u32), AppError> {
         let port = self.allocate_port().await?;
-        let workspace_dir = self.workspace_path(agent_id);
 
-        let sandbox = create_driver(self.sandbox_disabled);
-
-        let (child, stderr_path) = self.spawn_process(
-            &*sandbox,
-            &workspace_dir,
+        let (child, log_path) = self.spawn_process(
+            agent_id,
             command,
             port,
             manifest,
@@ -90,7 +83,7 @@ impl AppManager {
             credential_env_vars,
             restart_count: 0,
             consecutive_failures: 0,
-            stderr_path: Some(stderr_path),
+            log_path: Some(log_path),
         };
 
         self.processes
@@ -139,7 +132,7 @@ impl AppManager {
             Ok(None) => ProcessStatus::Alive,
             Ok(Some(status)) => {
                 let stderr_tail = proc
-                    .stderr_path
+                    .log_path
                     .as_ref()
                     .map(|p| read_tail(p, 4096))
                     .unwrap_or_default();
@@ -287,114 +280,83 @@ impl AppManager {
         Err(AppError::Internal("No available ports in range".into()))
     }
 
-    fn workspace_path(&self, agent_id: &str) -> String {
-        let sanitized = agent_id.replace(['/', '\\', ':', '\0'], "_");
-        let path = self.workspaces_path.join(sanitized);
-        std::fs::canonicalize(&path)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .into_owned()
-    }
 
     fn spawn_process(
         &self,
-        sandbox: &dyn SandboxDriver,
-        workspace_dir: &str,
+        agent_id: &str,
         command: &str,
         port: u16,
         manifest: &AppManifest,
         credential_env_vars: &[(String, String)],
     ) -> Result<(tokio::process::Child, PathBuf), AppError> {
-        let mut allowed_destinations: Vec<String> = Vec::new();
-        allowed_destinations.push(format!("127.0.0.1:{port}"));
-
+        let mut network_dests = vec![format!("127.0.0.1:{port}")];
         if let Some(dests) = &manifest.network_destinations {
             for dest in dests {
-                allowed_destinations.push(format!("{}:{}", dest.host, dest.port));
+                network_dests.push(format!("{}:{}", dest.host, dest.port));
             }
         }
 
-        let base_path = format!("/apps/{}/", manifest.id);
-        let mut env_vars = vec![
-            ("PORT".to_string(), port.to_string()),
-            ("BASE_PATH".to_string(), base_path),
-        ];
+        let mut env_vars = vec![("PORT".to_string(), port.to_string())];
         env_vars.extend(credential_env_vars.iter().cloned());
 
-        let venv_bin = PathBuf::from(workspace_dir).join(".venv").join("bin");
-        let mut additional_path_dirs = Vec::new();
-        if venv_bin.exists() {
-            additional_path_dirs.push(venv_bin.to_string_lossy().into_owned());
-            env_vars.push((
-                "VIRTUAL_ENV".to_string(),
-                PathBuf::from(workspace_dir)
-                    .join(".venv")
-                    .to_string_lossy()
-                    .into_owned(),
-            ));
-        }
+        let mut sandbox = self
+            .sandbox_manager
+            .get_sandbox(agent_id, true, network_dests)
+            .with_extra_env_vars(env_vars);
 
-        env_vars.push(("HOME".to_string(), workspace_dir.to_string()));
-
-        let mut additional_read_paths: Vec<String> = Vec::new();
         if let Some(paths) = &manifest.read_paths {
-            additional_read_paths.extend(paths.clone());
+            sandbox = sandbox.with_read_paths(paths.clone());
         }
 
-        let config = SandboxConfig {
-            workspace_dir: workspace_dir.to_string(),
-            network_access: !allowed_destinations.is_empty(),
-            allowed_network_destinations: allowed_destinations,
-            additional_read_paths,
-            additional_path_dirs,
-            env_vars: env_vars.clone(),
-            timeout_secs: 0, // no timeout for long-running processes
-            ..Default::default()
-        };
+        let app_dir = sandbox.path().join("apps").join(&manifest.id);
+        let app_log_dir = app_dir.join("logs");
+        std::fs::create_dir_all(&app_log_dir)
+            .map_err(|e| AppError::Tool(format!("Failed to create app directory: {e}")))?;
 
-        let mut std_cmd = sandbox.sandboxed_command("bash", &["-c", command], &config)?;
+        let has_source_files = std::fs::read_dir(&app_dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .any(|e| e.file_name() != "logs")
+            })
+            .unwrap_or(false);
 
-        std_cmd.env_clear();
-
-        const PASSTHROUGH_VARS: &[&str] =
-            &["TERM", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "USER", "LOGNAME", "TMPDIR", "SHELL"];
-
-        for key in PASSTHROUGH_VARS {
-            if let Ok(val) = std::env::var(key) {
-                std_cmd.env(key, val);
-            }
+        if !has_source_files {
+            return Err(AppError::Tool(format!(
+                "No source files found in apps/{}/ — write your app code there before deploying",
+                manifest.id
+            )));
         }
 
-        {
-            let existing = std::env::var("PATH").unwrap_or_default();
-            if config.additional_path_dirs.is_empty() {
-                std_cmd.env("PATH", existing);
-            } else {
-                let extra = config.additional_path_dirs.join(":");
-                std_cmd.env("PATH", format!("{extra}:{existing}"));
-            }
+        let app_dir_str = app_dir.to_string_lossy().into_owned();
+
+        let mut extra_path_dirs = Vec::new();
+        let app_venv_bin = app_dir.join(".venv").join("bin");
+        if app_venv_bin.exists() {
+            extra_path_dirs.push(app_venv_bin.to_string_lossy().into_owned());
+        }
+        let app_bin = app_dir.join("bin");
+        if app_bin.exists() {
+            extra_path_dirs.push(app_bin.to_string_lossy().into_owned());
         }
 
-        for (key, value) in &config.env_vars {
-            std_cmd.env(key, value);
-        }
+        let log_path = app_log_dir.join("app.log");
+        let log_file = std::fs::File::create(&log_path)
+            .map_err(|e| AppError::Tool(format!("Failed to create app log: {e}")))?;
+        let log_file_clone = log_file
+            .try_clone()
+            .map_err(|e| AppError::Tool(format!("Failed to clone log file handle: {e}")))?;
 
-        let log_dir = PathBuf::from(workspace_dir).join(".app_logs");
-        let _ = std::fs::create_dir_all(&log_dir);
+        let child = sandbox.spawn(
+            "bash",
+            &["-c", command],
+            Some(&app_dir_str),
+            extra_path_dirs,
+            std::process::Stdio::from(log_file),
+            std::process::Stdio::from(log_file_clone),
+        )?;
 
-        let stderr_path = log_dir.join(format!("{}.stderr.log", manifest.id));
-        let stderr_file = std::fs::File::create(&stderr_path)
-            .map_err(|e| AppError::Tool(format!("Failed to create stderr log: {e}")))?;
-
-        std_cmd.stdout(std::process::Stdio::null());
-        std_cmd.stderr(std::process::Stdio::from(stderr_file));
-
-        let mut cmd = tokio::process::Command::from(std_cmd);
-        let child = cmd
-            .spawn()
-            .map_err(|e| AppError::Tool(format!("Failed to spawn app process: {e}")))?;
-
-        Ok((child, stderr_path))
+        Ok((child, log_path))
     }
 }
 
@@ -420,14 +382,17 @@ fn read_tail(path: &PathBuf, max_bytes: u64) -> String {
 mod tests {
     use super::*;
 
+    fn test_manager(port_start: u16, port_end: u16) -> AppManager {
+        AppManager::new(
+            Arc::new(SandboxManager::new("/tmp/test_workspaces", true)),
+            port_start,
+            port_end,
+        )
+    }
+
     #[tokio::test]
     async fn test_allocate_port_returns_sequential() {
-        let manager = AppManager::new(
-            PathBuf::from("/tmp/test_workspaces"),
-            true,
-            5000,
-            5003,
-        );
+        let manager = test_manager(5000, 5003);
 
         let p1 = manager.allocate_port().await.unwrap();
         let p2 = manager.allocate_port().await.unwrap();
@@ -443,12 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_allocate_port_reuses_after_free() {
-        let manager = AppManager::new(
-            PathBuf::from("/tmp/test_workspaces"),
-            true,
-            5000,
-            5002,
-        );
+        let manager = test_manager(5000, 5002);
 
         let p1 = manager.allocate_port().await.unwrap();
         assert_eq!(p1, 5000);
@@ -461,12 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_record_and_get_access() {
-        let manager = AppManager::new(
-            PathBuf::from("/tmp/test_workspaces"),
-            true,
-            5000,
-            5100,
-        );
+        let manager = test_manager(5000, 5100);
 
         assert!(manager.get_last_accessed("app1").await.is_none());
 
@@ -476,12 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_access_times() {
-        let manager = AppManager::new(
-            PathBuf::from("/tmp/test_workspaces"),
-            true,
-            5000,
-            5100,
-        );
+        let manager = test_manager(5000, 5100);
 
         manager.record_access("app1").await;
         manager.record_access("app2").await;
@@ -495,14 +445,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_restart_count_preserved_after_crash_restart() {
+        let tmp = tempfile::tempdir().expect("failed to create temp dir");
+        let workspaces = tmp.path();
+
+        let app_dir = workspaces.join("agent-1").join("apps").join("test-app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        std::fs::write(app_dir.join("run.sh"), "#!/bin/sh\ntrue").unwrap();
+
         let manager = AppManager::new(
-            PathBuf::from("/tmp/test_workspaces"),
-            true,
+            Arc::new(SandboxManager::new(workspaces, true)),
             6000,
             6010,
         );
 
-        // Spawn a process that exits immediately (simulating a crash)
         let child = tokio::process::Command::new("true")
             .spawn()
             .expect("failed to spawn dummy process");
@@ -541,11 +496,10 @@ mod tests {
                     credential_env_vars: Vec::new(),
                     restart_count: 0,
                     consecutive_failures: 0,
-                    stderr_path: None,
+                    log_path: None,
                 },
             );
 
-        // Wait for the dummy process to exit
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let result = manager.try_restart_crashed("test-app", 3).await.unwrap();
@@ -557,16 +511,25 @@ mod tests {
     }
 
     #[test]
-    fn test_workspace_path_sanitizes() {
-        let manager = AppManager::new(
-            PathBuf::from("/tmp/test_workspaces"),
-            true,
-            5000,
-            5100,
-        );
+    fn test_app_dir_structure() {
+        let workspace = PathBuf::from("/tmp/workspaces/agent_123");
+        let manifest_id = "my-dashboard";
 
-        let path = manager.workspace_path("agent/with\\bad:chars");
-        assert!(!path.contains('/') || path.starts_with("/tmp"));
-        assert!(!path.contains('\\'));
+        let app_dir = workspace.join("apps").join(manifest_id);
+        let log_dir = app_dir.join("logs");
+        let log_path = log_dir.join("app.log");
+
+        assert_eq!(
+            app_dir,
+            PathBuf::from("/tmp/workspaces/agent_123/apps/my-dashboard")
+        );
+        assert_eq!(
+            log_dir,
+            PathBuf::from("/tmp/workspaces/agent_123/apps/my-dashboard/logs")
+        );
+        assert_eq!(
+            log_path,
+            PathBuf::from("/tmp/workspaces/agent_123/apps/my-dashboard/logs/app.log")
+        );
     }
 }
