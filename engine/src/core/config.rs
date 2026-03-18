@@ -414,7 +414,7 @@ impl Default for AppConfig {
             port_range_start: 4000,
             port_range_end: 4100,
             health_check_timeout_secs: 30,
-            max_restart_attempts: 3,
+            max_restart_attempts: 2,
             hibernate_after_secs: 259200,
         }
     }
