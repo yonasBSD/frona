@@ -197,7 +197,9 @@ impl AppService {
         let manifest: AppManifest = serde_json::from_value(app.manifest.clone())
             .map_err(|e| AppError::Internal(format!("Invalid stored manifest: {e}")))?;
 
-        self.manager.stop_app(app_id).await?;
+        if matches!(app.status, AppStatus::Running | AppStatus::Starting) {
+            self.manager.stop_app(app_id).await?;
+        }
 
         self.start_and_update(&mut app, &command, &manifest, Vec::new())
             .await
