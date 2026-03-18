@@ -10,10 +10,21 @@ import {
   useRef,
 } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { api, streamMessage, streamSession, cancelGeneration, getTask } from "./api-client";
+import { api, sendMessage as apiSendMessage, streamSession, cancelGeneration, getTask } from "./api-client";
+import type { StreamSessionCallbacks } from "./api-client";
 import { useNavigation } from "./navigation-context";
 import type { ChatResponse, MessageResponse, CreateChatRequest, ToolCallStatus, TaskResponse, Attachment } from "./types";
 
+interface ChatStreamState {
+  sending: boolean;
+  streamingContent: string;
+  toolCalls: ToolCallStatus[];
+  nextToolId: number;
+}
+
+function emptyStreamState(): ChatStreamState {
+  return { sending: false, streamingContent: "", toolCalls: [], nextToolId: 0 };
+}
 
 interface SessionContextValue {
   activeChatId: string | null;
@@ -47,20 +58,65 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const pendingAgentId = !activeChatId ? agentParam : null;
   const [activeChat, setActiveChat] = useState<ChatResponse | null>(null);
   const [messages, setMessages] = useState<MessageResponse[]>([]);
-  const [sending, setSending] = useState(false);
   const [inferring, setInferring] = useState(false);
-  const [streamingContent, setStreamingContent] = useState<string | null>(null);
-  const streamingContentRef = useRef<string>("");
-  const [activeToolCalls, setActiveToolCalls] = useState<ToolCallStatus[]>([]);
-  const activeToolCallsRef = useRef<ToolCallStatus[]>([]);
-  const abortControllerRef = useRef<AbortController | null>(null);
   const pendingMessageRef = useRef<string | null>(null);
   const activeChatIdRef = useRef<string | null>(null);
   const activeTaskIdRef = useRef<string | null>(null);
   const { updateChatTitle, updateAgent, addStandaloneChat, updateTaskInList, setActiveTab } = useNavigation();
 
+  // Per-chat streaming state, keyed by chatId.
+  // Only the active chat's state is projected into React state for rendering.
+  const chatStreamsRef = useRef<Map<string, ChatStreamState>>(new Map());
+
+  // React state — always reflects the *active* chat's stream state.
+  const [sending, setSending] = useState(false);
+  const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  const [activeToolCalls, setActiveToolCalls] = useState<ToolCallStatus[]>([]);
+
+  function getStream(chatId: string): ChatStreamState {
+    let s = chatStreamsRef.current.get(chatId);
+    if (!s) {
+      s = emptyStreamState();
+      chatStreamsRef.current.set(chatId, s);
+    }
+    return s;
+  }
+
+  /** Flush the given chat's stream state into React state (only if it's the active chat). */
+  function syncToReact(chatId: string, s: ChatStreamState) {
+    if (chatId !== activeChatIdRef.current) return;
+    setSending(s.sending);
+    setStreamingContent(s.streamingContent || null);
+    setActiveToolCalls(s.toolCalls);
+  }
+
+  /** Update a chat's stream state and sync to React if active. */
+  function updateStream(chatId: string, fn: (s: ChatStreamState) => void) {
+    const s = getStream(chatId);
+    fn(s);
+    syncToReact(chatId, s);
+  }
+
+  /** Reset a chat's stream state to idle. */
+  function resetStream(chatId: string) {
+    const s = getStream(chatId);
+    s.sending = false;
+    s.streamingContent = "";
+    s.toolCalls = [];
+    syncToReact(chatId, s);
+  }
+
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
+    // Project the new active chat's stream state into React state.
+    if (activeChatId) {
+      const s = getStream(activeChatId);
+      syncToReact(activeChatId, s);
+    } else {
+      setSending(false);
+      setStreamingContent(null);
+      setActiveToolCalls([]);
+    }
   }, [activeChatId]);
 
   useEffect(() => {
@@ -89,52 +145,161 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     pendingMessageRef.current = message;
   }, []);
 
+  const scheduleFade = useCallback((chatId: string, tcId: number) => {
+    setTimeout(() => {
+      updateStream(chatId, (s) => {
+        const idx = s.toolCalls.findIndex((tc) => tc.id === tcId);
+        if (idx === -1 || s.toolCalls[idx].status === "fading") return;
+        s.toolCalls = [...s.toolCalls];
+        s.toolCalls[idx] = { ...s.toolCalls[idx], status: "fading" as const };
+      });
+      setTimeout(() => {
+        updateStream(chatId, (s) => {
+          s.toolCalls = s.toolCalls.filter((tc) => tc.id !== tcId);
+        });
+      }, 300);
+    }, 3000);
+  }, []);
+
+  // Unified SSE stream — handles all event types
   useEffect(() => {
     const controller = new AbortController();
 
-    streamSession(
-      {
-        onChatMessage: (chatId, message) => {
-          if (chatId !== activeChatIdRef.current) return;
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.id === message.id);
-            if (idx >= 0) {
-              const updated = [...prev];
-              updated[idx] = message;
-              return updated;
-            }
-            return [...prev, message];
-          });
-        },
-        onTaskUpdate: (taskId, status, sourceChatId, title, chatId, resultSummary) => {
-          updateTaskInList(taskId, { status, title, chat_id: chatId, result_summary: resultSummary });
-          if (
-            sourceChatId &&
-            sourceChatId === activeChatIdRef.current &&
-            (status === "completed" || status === "failed")
-          ) {
-            api
-              .get<MessageResponse[]>(`/api/chats/${sourceChatId}/messages`)
-              .then((msgs) => setMessages(msgs))
-              .catch(() => {});
-          }
-          if (taskId && activeTaskIdRef.current && taskId === activeTaskIdRef.current) {
-            getTask(taskId)
-              .then((t) => setActiveTask(t))
-              .catch(() => {});
-          }
-        },
-        onInferenceCount: (count) => {
-          setInferring(count > 0);
-        },
+    const callbacks: StreamSessionCallbacks = {
+      onToken: (chatId, content) => {
+        updateStream(chatId, (s) => {
+          if (!s.sending) s.sending = true;
+          s.streamingContent += content;
+        });
       },
-      controller.signal,
-    );
+      onToolCall: (chatId, name, _args, description) => {
+        if (name === "ask_user_question" || name === "request_user_takeover") return;
+        updateStream(chatId, (s) => {
+          const context = s.streamingContent.trim() || null;
+          s.streamingContent = "";
+          const hasDescription = description && description !== name;
+          const entry: ToolCallStatus = {
+            id: s.nextToolId++,
+            name,
+            description: hasDescription ? description : context,
+            status: "running",
+          };
+          s.toolCalls = [entry, ...s.toolCalls];
+        });
+      },
+      onToolResult: (chatId, name, success) => {
+        updateStream(chatId, (s) => {
+          const idx = s.toolCalls.findIndex(
+            (tc) => tc.name === name && tc.status === "running",
+          );
+          if (idx !== -1) {
+            s.toolCalls = [...s.toolCalls];
+            s.toolCalls[idx] = { ...s.toolCalls[idx], status: success ? "success" : "error" };
+            scheduleFade(chatId, s.toolCalls[idx].id);
+          }
+        });
+      },
+      onEntityUpdated: (_chatId, table, recordId, fields) => {
+        if (table === "agent") {
+          updateAgent(recordId, fields);
+        }
+      },
+      onRetry: (chatId, retryAfterSecs, reason) => {
+        const labels: Record<string, string> = {
+          rate_limited: "Rate limited",
+          server_error: "Server error",
+          network_error: "Network error",
+          empty_response: "Empty response",
+          timeout: "Timeout",
+          overloaded: "Server overloaded",
+        };
+        const label = labels[reason] ?? reason;
+        updateStream(chatId, (s) => {
+          const entry: ToolCallStatus = {
+            id: s.nextToolId++,
+            name: label,
+            description: `Retrying in ${retryAfterSecs}s...`,
+            status: "running",
+          };
+          s.toolCalls = [entry];
+        });
+      },
+      onInferenceDone: (chatId, message) => {
+        resetStream(chatId);
+        if (chatId === activeChatIdRef.current) {
+          setMessages((prev) => [...prev, message]);
+        }
+      },
+      onInferenceCancelled: (chatId) => {
+        resetStream(chatId);
+        if (chatId === activeChatIdRef.current) {
+          api.get<MessageResponse[]>(
+            `/api/chats/${chatId}/messages`,
+          ).then((msgs) => setMessages(msgs)).catch(() => {});
+        }
+      },
+      onInferenceError: (chatId) => {
+        resetStream(chatId);
+      },
+      onToolMessage: (chatId, message) => {
+        resetStream(chatId);
+        if (chatId === activeChatIdRef.current) {
+          setMessages((prev) => [...prev, message]);
+        }
+      },
+      onToolResolved: (chatId, message) => {
+        if (chatId !== activeChatIdRef.current) return;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === message.id ? message : m)),
+        );
+      },
+      onTitle: (chatId, title) => {
+        if (chatId === activeChatIdRef.current) {
+          setActiveChat((prev) => (prev ? { ...prev, title } : prev));
+        }
+        updateChatTitle(chatId, title);
+      },
+      onChatMessage: (chatId, message) => {
+        if (chatId !== activeChatIdRef.current) return;
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === message.id);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = message;
+            return updated;
+          }
+          return [...prev, message];
+        });
+      },
+      onTaskUpdate: (taskId, status, sourceChatId, title, chatId, resultSummary) => {
+        updateTaskInList(taskId, { status, title, chat_id: chatId, result_summary: resultSummary });
+        if (
+          sourceChatId &&
+          sourceChatId === activeChatIdRef.current &&
+          (status === "completed" || status === "failed")
+        ) {
+          api
+            .get<MessageResponse[]>(`/api/chats/${sourceChatId}/messages`)
+            .then((msgs) => setMessages(msgs))
+            .catch(() => {});
+        }
+        if (taskId && activeTaskIdRef.current && taskId === activeTaskIdRef.current) {
+          getTask(taskId)
+            .then((t) => setActiveTask(t))
+            .catch(() => {});
+        }
+      },
+      onInferenceCount: (count) => {
+        setInferring(count > 0);
+      },
+    };
+
+    streamSession(callbacks, controller.signal);
 
     return () => {
       controller.abort();
     };
-  }, [updateTaskInList]);
+  }, [updateTaskInList, updateChatTitle, updateAgent, scheduleFade]);
 
   useEffect(() => {
     if (!activeChatId) {
@@ -193,155 +358,24 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (!activeChatId) return;
-      setSending(true);
-      streamingContentRef.current = "";
-      setStreamingContent("");
-      activeToolCallsRef.current = [];
-      setActiveToolCalls([]);
-
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
+      updateStream(activeChatId, (s) => {
+        s.sending = true;
+        s.streamingContent = "";
+        s.toolCalls = [];
+      });
 
       const body = attachments?.length
         ? { content, attachments }
         : { content };
 
-      let nextId = 0;
-      const scheduleFade = (tcId: number) => {
-        setTimeout(() => {
-          const arr = activeToolCallsRef.current;
-          const idx = arr.findIndex((tc) => tc.id === tcId);
-          if (idx === -1 || arr[idx].status === "fading") return;
-          const updated = [...arr];
-          updated[idx] = { ...updated[idx], status: "fading" as const };
-          activeToolCallsRef.current = updated;
-          setActiveToolCalls(updated);
-          setTimeout(() => {
-            activeToolCallsRef.current = activeToolCallsRef.current.filter(
-              (tc) => tc.id !== tcId,
-            );
-            setActiveToolCalls([...activeToolCallsRef.current]);
-          }, 300);
-        }, 3000);
-      };
-
-      await streamMessage(activeChatId, body, {
-        onUserMessage: (msg) => {
-          setMessages((prev) => [...prev, msg]);
-        },
-        onToken: (tokenContent) => {
-          streamingContentRef.current += tokenContent;
-          setStreamingContent(streamingContentRef.current);
-        },
-        onDone: (msg) => {
-          setStreamingContent(null);
-          activeToolCallsRef.current = [];
-          setActiveToolCalls([]);
-          setMessages((prev) => [...prev, msg]);
-          setSending(false);
-          abortControllerRef.current = null;
-        },
-        onError: () => {
-          setStreamingContent(null);
-          activeToolCallsRef.current = [];
-          setActiveToolCalls([]);
-          setSending(false);
-          abortControllerRef.current = null;
-        },
-        onTitle: (title) => {
-          setActiveChat((prev) => (prev ? { ...prev, title } : prev));
-          updateChatTitle(activeChatId, title);
-        },
-        onToolCall: (name, _args, description) => {
-          if (name === "ask_user_question" || name === "request_user_takeover") return;
-          const context = streamingContentRef.current.trim() || null;
-          streamingContentRef.current = "";
-          setStreamingContent("");
-          const hasDescription = description && description !== name;
-          const entry: ToolCallStatus = {
-            id: nextId++,
-            name,
-            description: hasDescription ? description : context,
-            status: "running",
-          };
-          activeToolCallsRef.current = [entry, ...activeToolCallsRef.current];
-          setActiveToolCalls(activeToolCallsRef.current);
-        },
-        onToolResult: (name, _result, success) => {
-          const idx = activeToolCallsRef.current.findIndex(
-            (tc) => tc.name === name && tc.status === "running",
-          );
-          if (idx !== -1) {
-            const updated = [...activeToolCallsRef.current];
-            updated[idx] = { ...updated[idx], status: success ? "success" : "error" };
-            activeToolCallsRef.current = updated;
-            setActiveToolCalls(updated);
-            scheduleFade(updated[idx].id);
-          }
-        },
-        onToolMessage: (msg) => {
-          setMessages((prev) => [...prev, msg]);
-          setStreamingContent(null);
-          activeToolCallsRef.current = [];
-          setActiveToolCalls([]);
-          setSending(false);
-        },
-        onToolResolved: (msg) => {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === msg.id ? msg : m)),
-          );
-        },
-        onRetry: (retryAfterSecs, reason) => {
-          const labels: Record<string, string> = {
-            rate_limited: "Rate limited",
-            server_error: "Server error",
-            network_error: "Network error",
-            empty_response: "Empty response",
-            timeout: "Timeout",
-            overloaded: "Server overloaded",
-          };
-          const label = labels[reason] ?? reason;
-          const entry: ToolCallStatus = {
-            id: nextId++,
-            name: label,
-            description: `Retrying in ${retryAfterSecs}s...`,
-            status: "running",
-          };
-          activeToolCallsRef.current = [entry];
-          setActiveToolCalls(activeToolCallsRef.current);
-        },
-        onEntityUpdated: (table, recordId, fields) => {
-          if (table === "agent") {
-            updateAgent(recordId, fields);
-          }
-        },
-        onCancelled: () => {
-          setStreamingContent(null);
-          activeToolCallsRef.current = [];
-          setActiveToolCalls([]);
-          setSending(false);
-          abortControllerRef.current = null;
-          api.get<MessageResponse[]>(
-            `/api/chats/${activeChatId}/messages`,
-          ).then((msgs) => setMessages(msgs)).catch(() => {});
-        },
-        onStreamEnd: async () => {
-          try {
-            const msgs = await api.get<MessageResponse[]>(
-              `/api/chats/${activeChatId}/messages`,
-            );
-            setMessages(msgs);
-          } catch {
-            // ignore
-          }
-          setStreamingContent(null);
-          activeToolCallsRef.current = [];
-          setActiveToolCalls([]);
-          setSending(false);
-        },
-      }, controller.signal);
+      try {
+        const userMsg = await apiSendMessage(activeChatId, body);
+        setMessages((prev) => [...prev, userMsg]);
+      } catch {
+        resetStream(activeChatId);
+      }
     },
-    [activeChatId, pendingAgentId, router, addStandaloneChat, updateChatTitle, updateAgent],
+    [activeChatId, pendingAgentId, router, addStandaloneChat],
   );
 
   useEffect(() => {
@@ -353,13 +387,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const stopGeneration = useCallback(() => {
     if (!activeChatId) return;
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
     cancelGeneration(activeChatId).catch(() => {});
-    setStreamingContent(null);
-    activeToolCallsRef.current = [];
-    setActiveToolCalls([]);
-    setSending(false);
+    resetStream(activeChatId);
     api.get<MessageResponse[]>(
       `/api/chats/${activeChatId}/messages`,
     ).then((msgs) => setMessages(msgs)).catch(() => {});

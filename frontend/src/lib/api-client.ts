@@ -228,159 +228,36 @@ export function fileDownloadUrl(attachment: Attachment, username: string): strin
   return "";
 }
 
-export async function streamMessage(
+export async function sendMessage(
   chatId: string,
   body: { content: string; attachments?: Attachment[] },
-  callbacks: {
-    onUserMessage: (msg: MessageResponse) => void;
-    onToken: (content: string) => void;
-    onDone: (msg: MessageResponse) => void;
-    onError: (error: Error) => void;
-    onTitle?: (title: string) => void;
-    onToolCall?: (name: string, args: unknown, description?: string) => void;
-    onToolResult?: (name: string, result: string, success: boolean) => void;
-    onEntityUpdated?: (table: string, recordId: string, fields: Record<string, unknown>) => void;
-    onToolMessage?: (msg: MessageResponse) => void;
-    onToolResolved?: (msg: MessageResponse) => void;
-    onRetry?: (retryAfterSecs: number, reason: string) => void;
-    onCancelled?: () => void;
-    onStreamEnd?: () => void;
-  },
-  signal?: AbortSignal,
-): Promise<void> {
-  const token = await ensureAccessToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/api/chats/${chatId}/messages/stream`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal,
-    });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      return;
-    }
-    callbacks.onError(
-      err instanceof Error ? err : new Error("Network error"),
-    );
-    return;
-  }
-
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({ error: res.statusText }));
-    callbacks.onError(new ApiError(res.status, errorBody.error || "Request failed"));
-    return;
-  }
-
-  const reader = res.body?.getReader();
-  if (!reader) {
-    callbacks.onError(new Error("No response body"));
-    return;
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let currentEvent = "";
-  let receivedDone = false;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          currentEvent = line.slice(7).trim();
-        } else if (line.startsWith("data: ")) {
-          const data = line.slice(6);
-          try {
-            const parsed = JSON.parse(data);
-            switch (currentEvent) {
-              case "user_message":
-                callbacks.onUserMessage(parsed as MessageResponse);
-                break;
-              case "token":
-                callbacks.onToken(parsed.content as string);
-                break;
-              case "done":
-                receivedDone = true;
-                callbacks.onDone(parsed.message as MessageResponse);
-                break;
-              case "title":
-                callbacks.onTitle?.(parsed.title as string);
-                break;
-              case "tool_call":
-                callbacks.onToolCall?.(
-                  parsed.name as string,
-                  parsed.arguments,
-                  parsed.description as string | undefined,
-                );
-                break;
-              case "tool_result":
-                callbacks.onToolResult?.(
-                  parsed.name as string,
-                  parsed.result as string,
-                  parsed.success as boolean,
-                );
-                break;
-              case "entity_updated":
-                callbacks.onEntityUpdated?.(
-                  parsed.table as string,
-                  parsed.record_id as string,
-                  parsed.fields as Record<string, unknown>,
-                );
-                break;
-              case "tool_message":
-                callbacks.onToolMessage?.(parsed as MessageResponse);
-                break;
-              case "tool_resolved":
-                callbacks.onToolResolved?.(parsed as MessageResponse);
-                break;
-              case "retry":
-                callbacks.onRetry?.(parsed.retry_after_secs as number, parsed.reason as string);
-                break;
-              case "cancelled":
-                callbacks.onCancelled?.();
-                break;
-            }
-          } catch {
-            // skip malformed JSON
-          }
-          currentEvent = "";
-        }
-      }
-    }
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      return;
-    }
-    callbacks.onError(
-      err instanceof Error ? err : new Error("Stream read error"),
-    );
-  }
-
-  if (!receivedDone) {
-    callbacks.onStreamEnd?.();
-  }
+): Promise<MessageResponse> {
+  return request<MessageResponse>(`/api/chats/${chatId}/messages/stream`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
-export async function streamSession(
-  callbacks: {
-    onChatMessage: (chatId: string, message: MessageResponse) => void;
-    onTaskUpdate: (taskId: string, status: string, sourceChatId: string | null, title: string, chatId: string | null, resultSummary: string | null) => void;
-    onInferenceCount: (count: number) => void;
-  },
-  signal?: AbortSignal,
+export interface StreamSessionCallbacks {
+  onToken?: (chatId: string, content: string) => void;
+  onToolCall?: (chatId: string, name: string, args: unknown, description?: string) => void;
+  onToolResult?: (chatId: string, name: string, success: boolean) => void;
+  onEntityUpdated?: (chatId: string, table: string, recordId: string, fields: Record<string, unknown>) => void;
+  onRetry?: (chatId: string, retryAfterSecs: number, reason: string) => void;
+  onInferenceDone?: (chatId: string, message: MessageResponse) => void;
+  onInferenceCancelled?: (chatId: string, reason: string) => void;
+  onInferenceError?: (chatId: string, error: string) => void;
+  onToolMessage?: (chatId: string, message: MessageResponse) => void;
+  onToolResolved?: (chatId: string, message: MessageResponse) => void;
+  onTitle?: (chatId: string, title: string) => void;
+  onChatMessage?: (chatId: string, message: MessageResponse) => void;
+  onTaskUpdate?: (taskId: string, status: string, sourceChatId: string | null, title: string, chatId: string | null, resultSummary: string | null) => void;
+  onInferenceCount?: (count: number) => void;
+}
+
+async function connectStream(
+  callbacks: StreamSessionCallbacks,
+  signal: AbortSignal,
 ): Promise<void> {
   const token = await ensureAccessToken();
   const headers: Record<string, string> = {};
@@ -393,10 +270,12 @@ export async function streamSession(
     res = await fetch(`${API_URL}/api/stream`, { headers, signal });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return;
-    return;
+    throw err;
   }
 
-  if (!res.ok) return;
+  if (!res.ok) {
+    throw new Error(`Stream connection failed: ${res.status}`);
+  }
 
   const reader = res.body?.getReader();
   if (!reader) return;
@@ -420,12 +299,46 @@ export async function streamSession(
         } else if (line.startsWith("data: ")) {
           try {
             const parsed = JSON.parse(line.slice(6));
+            const chatId = (parsed.chat_id as string) ?? "";
             switch (currentEvent) {
+              case "token":
+                callbacks.onToken?.(chatId, parsed.content as string);
+                break;
+              case "tool_call":
+                callbacks.onToolCall?.(chatId, parsed.name as string, parsed.arguments, parsed.description as string | undefined);
+                break;
+              case "tool_result":
+                callbacks.onToolResult?.(chatId, parsed.name as string, parsed.success as boolean);
+                break;
+              case "entity_updated":
+                callbacks.onEntityUpdated?.(chatId, parsed.table as string, parsed.record_id as string, parsed.fields as Record<string, unknown>);
+                break;
+              case "retry":
+                callbacks.onRetry?.(chatId, parsed.retry_after_secs as number, parsed.reason as string);
+                break;
+              case "inference_done":
+                callbacks.onInferenceDone?.(chatId, parsed.message as MessageResponse);
+                break;
+              case "inference_cancelled":
+                callbacks.onInferenceCancelled?.(chatId, parsed.reason as string);
+                break;
+              case "inference_error":
+                callbacks.onInferenceError?.(chatId, parsed.error as string);
+                break;
+              case "tool_message":
+                callbacks.onToolMessage?.(chatId, parsed.message as MessageResponse);
+                break;
+              case "tool_resolved":
+                callbacks.onToolResolved?.(chatId, parsed.message as MessageResponse);
+                break;
+              case "title":
+                callbacks.onTitle?.(chatId, parsed.title as string);
+                break;
               case "chat_message":
-                callbacks.onChatMessage(parsed.chat_id as string, parsed.message as MessageResponse);
+                callbacks.onChatMessage?.(chatId, parsed.message as MessageResponse);
                 break;
               case "task_update":
-                callbacks.onTaskUpdate(
+                callbacks.onTaskUpdate?.(
                   parsed.task_id as string,
                   parsed.status as string,
                   parsed.source_chat_id as string | null,
@@ -435,7 +348,7 @@ export async function streamSession(
                 );
                 break;
               case "inference_count":
-                callbacks.onInferenceCount(parsed.count as number);
+                callbacks.onInferenceCount?.(parsed.count as number);
                 break;
             }
           } catch {
@@ -447,6 +360,32 @@ export async function streamSession(
     }
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return;
+    throw err;
+  }
+}
+
+export async function streamSession(
+  callbacks: StreamSessionCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const ctrl = new AbortController();
+  if (signal) {
+    signal.addEventListener("abort", () => ctrl.abort());
+  }
+
+  let delay = 1000;
+  const maxDelay = 30000;
+
+  while (!ctrl.signal.aborted) {
+    try {
+      await connectStream(callbacks, ctrl.signal);
+      delay = 1000;
+    } catch {
+      if (ctrl.signal.aborted) return;
+    }
+    if (ctrl.signal.aborted) return;
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(delay * 2, maxDelay);
   }
 }
 
