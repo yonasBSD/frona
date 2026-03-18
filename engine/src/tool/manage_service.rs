@@ -3,8 +3,11 @@ use serde_json::Value;
 use crate::agent::prompt::PromptLoader;
 use crate::app::models::{App, AppManifest, AppResponse};
 use crate::app::service::AppService;
+use crate::chat::broadcast::BroadcastService;
 use crate::chat::message::models::{MessageTool, ToolStatus};
 use crate::core::error::AppError;
+use crate::notification::models::{NotificationData, NotificationLevel};
+use crate::notification::service::NotificationService;
 
 use frona_derive::agent_tool;
 
@@ -13,13 +16,22 @@ use super::{InferenceContext, ToolOutput};
 pub struct ManageServiceTool {
     app_service: AppService,
     prompts: PromptLoader,
+    notification_service: NotificationService,
+    broadcast_service: BroadcastService,
 }
 
 impl ManageServiceTool {
-    pub fn new(app_service: AppService, prompts: PromptLoader) -> Self {
+    pub fn new(
+        app_service: AppService,
+        prompts: PromptLoader,
+        notification_service: NotificationService,
+        broadcast_service: BroadcastService,
+    ) -> Self {
         Self {
             app_service,
             prompts,
+            notification_service,
+            broadcast_service,
         }
     }
 }
@@ -144,6 +156,7 @@ impl ManageServiceTool {
         let app_id = self.resolve_app_id(ctx, manifest_value.as_ref()).await?;
 
         let app = self.app_service.stop(&ctx.agent.id, &app_id).await?;
+        self.emit_notification(ctx, &app_id, "stop", NotificationLevel::Info, &format!("App '{}' stopped", app.name)).await;
         Ok(ToolOutput::text(format!(
             "App '{}' stopped. Status: {}",
             app.name, app.status
@@ -162,6 +175,7 @@ impl ManageServiceTool {
             .start(&ctx.agent.id, &app_id, Vec::new())
             .await?;
 
+        self.emit_notification(ctx, &app_id, "start", NotificationLevel::Success, &format!("App '{}' started", app.name)).await;
         Ok(ToolOutput::text(format_app_result("started", &app)))
     }
 
@@ -174,6 +188,7 @@ impl ManageServiceTool {
 
         let app = self.app_service.restart(&ctx.agent.id, &app_id).await?;
 
+        self.emit_notification(ctx, &app_id, "restart", NotificationLevel::Info, &format!("App '{}' restarted", app.name)).await;
         Ok(ToolOutput::text(format_app_result("restarted", &app)))
     }
 
@@ -194,6 +209,32 @@ impl ManageServiceTool {
         self.app_service.destroy(&ctx.agent.id, &app_id).await?;
 
         Ok(ToolOutput::text(format!("App '{app_name}' destroyed.")))
+    }
+
+    async fn emit_notification(
+        &self,
+        ctx: &InferenceContext,
+        app_id: &str,
+        action: &str,
+        level: NotificationLevel,
+        title: &str,
+    ) {
+        if let Ok(notification) = self
+            .notification_service
+            .create(
+                &ctx.user.id,
+                NotificationData::App {
+                    app_id: app_id.to_string(),
+                    action: action.to_string(),
+                },
+                level,
+                title.to_string(),
+                String::new(),
+            )
+            .await
+        {
+            self.broadcast_service.send_notification(&ctx.user.id, notification);
+        }
     }
 
     async fn resolve_app_id(

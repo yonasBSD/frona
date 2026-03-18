@@ -200,6 +200,8 @@ pub fn build_tool_registry(
         registry.register(Arc::new(crate::tool::manage_service::ManageServiceTool::new(
             state.app_service.clone(),
             prompts.clone(),
+            state.notification_service.clone(),
+            state.broadcast_service.clone(),
         )));
     }
 

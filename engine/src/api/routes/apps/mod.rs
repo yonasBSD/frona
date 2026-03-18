@@ -132,33 +132,11 @@ async fn approve_service(
             )))
         })?;
 
-    let base_url = state.config.server.public_base_url();
-
-    let result_text = match state
-        .app_service
-        .deploy_and_await(&chat.agent_id, &auth.user_id, &manifest, Vec::new())
-        .await
-    {
-        Ok(app) => crate::tool::manage_service::format_app_result("deployed successfully", &app),
-        Err(e) => format!("Deploy failed: {e}"),
-    };
-
-    let app = state
-        .app_service
-        .find_by_manifest_id(&chat.agent_id, &manifest.id)
-        .await
-        .ok()
-        .flatten();
-    let app_url = app.and_then(|a| {
-        let resp: crate::app::models::AppResponse = a.into();
-        resp.url.map(|u| format!("{base_url}{u}"))
-    });
-
     let pending_msg_id = pending_msg.id.clone();
 
     let resolved = state
         .chat_service
-        .resolve_tool_message(&pending_msg_id, Some(result_text))
+        .resolve_tool_message(&pending_msg_id, Some("Deploying...".to_string()))
         .await
         .map_err(ApiError::from)?;
 
@@ -170,12 +148,70 @@ async fn approve_service(
 
     let user_id = auth.user_id.clone();
     let chat_id = req.chat_id.clone();
+    let agent_id = chat.agent_id.clone();
+    let manifest_name = manifest.name.clone();
     let state_clone = state.clone();
     tokio::spawn(async move {
+        let base_url = state_clone.config.server.public_base_url();
+
+        let (result_text, level, title, body, app_id) = match state_clone
+            .app_service
+            .deploy_and_await(&agent_id, &user_id, &manifest, Vec::new())
+            .await
+        {
+            Ok(app) => {
+                let app_url = format!("{base_url}{}", app.url.as_deref().unwrap_or(""));
+                let id = app.id.clone();
+                (
+                    crate::tool::manage_service::format_app_result("deployed successfully", &app),
+                    crate::notification::models::NotificationLevel::Success,
+                    format!("App '{}' deployed", manifest_name),
+                    app_url,
+                    id,
+                )
+            }
+            Err(e) => (
+                format!("Deploy failed: {e}"),
+                crate::notification::models::NotificationLevel::Error,
+                format!("Deploy failed: '{}'", manifest_name),
+                e.to_string(),
+                String::new(),
+            ),
+        };
+
+        if let Ok(msg) = state_clone
+            .chat_service
+            .resolve_tool_message(&pending_msg_id, Some(result_text))
+            .await
+        {
+            state_clone.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
+                user_id: user_id.clone(),
+                chat_id: Some(chat_id.clone()),
+                kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: msg },
+            });
+        }
+
+        if let Ok(notification) = state_clone
+            .notification_service
+            .create(
+                &user_id,
+                crate::notification::models::NotificationData::App {
+                    app_id,
+                    action: "deploy".to_string(),
+                },
+                level,
+                title,
+                body,
+            )
+            .await
+        {
+            state_clone.broadcast_service.send_notification(&user_id, notification);
+        }
+
         crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
     });
 
-    Ok(Json(serde_json::json!({ "approved": true, "url": app_url })))
+    Ok(Json(serde_json::json!({ "approved": true })))
 }
 
 async fn deny_service(
