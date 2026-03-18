@@ -6,6 +6,7 @@ use axum::response::sse::Event;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::inference::tool_loop::InferenceEventKind;
+use crate::notification::models::Notification;
 
 use super::message::models::MessageResponse;
 
@@ -22,6 +23,9 @@ pub enum BroadcastEventKind {
     ToolMessage { message: MessageResponse },
     ToolResolved { message: MessageResponse },
     Title { title: String },
+
+    // Notifications (user-level, not chat-scoped)
+    NewNotification { notification: Notification },
 
     // Existing broadcast events
     ChatMessage { message: MessageResponse },
@@ -239,6 +243,10 @@ fn map_event_to_sse(event: &BroadcastEvent) -> Option<Event> {
             "inference_count",
             serde_json::json!({ "count": count }),
         )),
+        BroadcastEventKind::NewNotification { notification } => Some(sse_event(
+            "notification",
+            serde_json::json!({ "notification": notification }),
+        )),
     }
 }
 
@@ -363,6 +371,14 @@ impl BroadcastService {
                 source_chat_id: source_chat_id.map(|s| s.to_string()),
                 result_summary: result_summary.map(|s| s.to_string()),
             },
+        });
+    }
+
+    pub fn send_notification(&self, user_id: &str, notification: Notification) {
+        self.dispatch(BroadcastEvent {
+            user_id: user_id.to_string(),
+            chat_id: None,
+            kind: BroadcastEventKind::NewNotification { notification },
         });
     }
 

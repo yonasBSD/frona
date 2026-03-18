@@ -27,6 +27,7 @@ use crate::credential::vault::service::VaultService;
 use crate::inference::ModelProviderRegistry;
 use crate::inference::config::ModelRegistryConfig;
 use crate::memory::service::MemoryService;
+use crate::notification::service::NotificationService;
 use crate::agent::prompt::PromptLoader;
 use crate::space::service::SpaceService;
 use crate::agent::task::service::TaskService;
@@ -89,6 +90,7 @@ pub struct AppState {
     pub browser_session_manager: Arc<BrowserSessionManager>,
     pub active_sessions: ActiveSessions,
     pub memory_service: MemoryService,
+    pub notification_service: NotificationService,
     pub sandbox_manager: Arc<SandboxManager>,
     pub cli_tools_config: Arc<Vec<CliToolConfig>>,
     pub search_provider: Option<Arc<dyn SearchProvider>>,
@@ -255,6 +257,7 @@ impl AppState {
             browser_session_manager: Arc::new(BrowserSessionManager::new(config.browser.clone())),
             active_sessions: ActiveSessions::default(),
             memory_service,
+            notification_service: NotificationService::new(SurrealRepo::new(db.clone())),
             sandbox_manager,
             cli_tools_config,
             search_provider,

@@ -8,6 +8,7 @@ pub mod generic;
 pub mod keypairs;
 pub mod memories;
 pub mod messages;
+pub mod notifications;
 pub mod oauth;
 pub mod skills;
 pub mod spaces;

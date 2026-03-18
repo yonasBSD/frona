@@ -64,6 +64,9 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE INDEX IF NOT EXISTS idx_oauth_identity_sub ON TABLE oauth_identity COLUMNS external_sub UNIQUE;
         DEFINE INDEX IF NOT EXISTS idx_oauth_identity_user ON TABLE oauth_identity COLUMNS user_id;
 
+        DEFINE TABLE IF NOT EXISTS notification SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_notification_user ON TABLE notification COLUMNS user_id;
+
         DEFINE TABLE IF NOT EXISTS call SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_call_chat ON TABLE call COLUMNS chat UNIQUE;
 

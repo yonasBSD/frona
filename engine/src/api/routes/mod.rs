@@ -10,6 +10,7 @@ pub mod files;
 pub mod messages;
 pub mod metrics;
 pub mod navigation;
+pub mod notifications;
 pub mod spaces;
 pub mod system;
 pub mod tasks;
