@@ -125,7 +125,7 @@ impl Sandbox {
         }
     }
 
-    fn base_config(&self) -> Result<(SandboxConfig, PathBuf), AppError> {
+    fn base_config(&self) -> Result<SandboxConfig, AppError> {
         self.setup()?;
 
         let canonical_path = std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
@@ -158,7 +158,7 @@ impl Sandbox {
             ..Default::default()
         };
 
-        Ok((config, canonical_path))
+        Ok(config)
     }
 
     pub fn spawn(
@@ -170,7 +170,7 @@ impl Sandbox {
         stdout: std::process::Stdio,
         stderr: std::process::Stdio,
     ) -> Result<tokio::process::Child, AppError> {
-        let (mut config, canonical_path) = self.base_config()?;
+        let mut config = self.base_config()?;
 
         config.additional_path_dirs.extend(extra_path_dirs);
 
@@ -178,8 +178,7 @@ impl Sandbox {
             let canonical_wd = std::fs::canonicalize(wd)
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|_| wd.to_string());
-            config.additional_read_paths.push(canonical_path.to_string_lossy().into_owned());
-            config.workspace_dir = canonical_wd;
+            config.working_dir = Some(canonical_wd);
         }
 
         let mut cmd = self.sandbox.sandboxed_command(program, args, &config)?;
@@ -226,7 +225,7 @@ impl Sandbox {
         stdin_rx: Option<mpsc::Receiver<String>>,
         cancel_token: Option<CancellationToken>,
     ) -> Result<SandboxOutput, AppError> {
-        let (mut config, _) = self.base_config()?;
+        let mut config = self.base_config()?;
         config.timeout_secs = timeout_secs;
 
         let mut resolved_args: Vec<String> = Vec::new();

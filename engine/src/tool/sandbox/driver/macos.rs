@@ -186,7 +186,7 @@ impl SandboxDriver for MacosDriver {
         cmd.arg(&profile);
         cmd.arg(program);
         cmd.args(args);
-        cmd.current_dir(&config.workspace_dir);
+        cmd.current_dir(config.working_dir.as_deref().unwrap_or(&config.workspace_dir));
 
         Ok(cmd)
     }

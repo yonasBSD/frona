@@ -62,6 +62,7 @@ use crate::core::error::AppError;
 
 pub struct SandboxConfig {
     pub workspace_dir: String,
+    pub working_dir: Option<String>,
     pub network_access: bool,
     pub allowed_network_destinations: Vec<String>,
     pub additional_read_paths: Vec<String>,
@@ -75,6 +76,7 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
             workspace_dir: String::new(),
+            working_dir: None,
             network_access: false,
             allowed_network_destinations: Vec::new(),
             additional_read_paths: Vec::new(),

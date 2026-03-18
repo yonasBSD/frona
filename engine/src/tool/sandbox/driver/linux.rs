@@ -23,7 +23,7 @@ impl SandboxDriver for LandlockDriver {
 
             let mut cmd = Command::new(program);
             cmd.args(args);
-            cmd.current_dir(&config.workspace_dir);
+            cmd.current_dir(config.working_dir.as_deref().unwrap_or(&config.workspace_dir));
 
             unsafe {
                 cmd.pre_exec(move || {
