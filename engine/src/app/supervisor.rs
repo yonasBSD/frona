@@ -1,6 +1,7 @@
 use tracing::info;
 
 use crate::core::state::AppState;
+use crate::notification::models::NotificationLevel;
 
 use super::manager::{ProcessExit, ProcessStatus};
 use super::models::AppStatus;
@@ -45,6 +46,12 @@ pub async fn restore_and_supervise_apps(
                         .app_service
                         .update_status(&app.id, AppStatus::Failed, None, None)
                         .await;
+                    send_app_notification(
+                        &state, &app.user_id, &app.id, "restore",
+                        NotificationLevel::Error,
+                        &format!("App '{}' failed to start", app.name),
+                        &e.to_string(),
+                    ).await;
                 }
             }
         }
@@ -103,6 +110,14 @@ pub async fn restore_and_supervise_apps(
                             .await;
                         state.app_service.manager().remove_process(app_id).await;
                         tracing::warn!(app_id = %app_id, "App exceeded max restarts, removed from supervision");
+                        if let Ok(Some(app)) = state.app_service.get(app_id).await {
+                            send_app_notification(
+                                &state, &app.user_id, app_id, "crash",
+                                NotificationLevel::Error,
+                                &format!("App '{}' crashed", app.name),
+                                &format!("Exceeded max restarts.\n{stderr_summary}"),
+                            ).await;
+                        }
                     }
                     Err(e) => {
                         tracing::error!(app_id = %app_id, error = %e, "Failed to restart app");
@@ -146,5 +161,32 @@ pub async fn restore_and_supervise_apps(
                 }
             }
         }
+    }
+}
+
+async fn send_app_notification(
+    state: &AppState,
+    user_id: &str,
+    app_id: &str,
+    action: &str,
+    level: NotificationLevel,
+    title: &str,
+    body: &str,
+) {
+    if let Ok(notification) = state
+        .notification_service
+        .create(
+            user_id,
+            crate::notification::models::NotificationData::App {
+                app_id: app_id.to_string(),
+                action: action.to_string(),
+            },
+            level,
+            title.to_string(),
+            body.to_string(),
+        )
+        .await
+    {
+        state.broadcast_service.send_notification(user_id, notification);
     }
 }
