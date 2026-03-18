@@ -6,9 +6,9 @@ use rig::completion::message::{
 };
 use rig::completion::request::ToolDefinition as RigToolDefinition;
 use rig::completion::{AssistantContent, Message as RigMessage};
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::chat::broadcast::EventSender;
 use crate::chat::message::models::MessageTool;
 use crate::core::error::AppError;
 use crate::core::metrics::{self, InferenceMetricsContext};
@@ -24,6 +24,7 @@ pub struct InferenceEvent {
     pub kind: InferenceEventKind,
 }
 
+#[derive(Debug, Clone)]
 pub enum InferenceEventKind {
     Text(String),
     ToolCall {
@@ -85,14 +86,13 @@ fn to_rig_tool_definitions(defs: &[ToolDefinition]) -> Vec<RigToolDefinition> {
 
 async fn check_cancellation(
     cancel_token: &CancellationToken,
-    event_tx: &mpsc::UnboundedSender<InferenceEvent>,
+    event_tx: &EventSender,
     accumulated_text: &str,
 ) -> Option<ToolLoopOutcome> {
     if cancel_token.is_cancelled() {
-        let _ = event_tx
-            .send(InferenceEvent {
-                kind: InferenceEventKind::Cancelled(accumulated_text.to_string()),
-            });
+        event_tx.send(InferenceEvent {
+            kind: InferenceEventKind::Cancelled(accumulated_text.to_string()),
+        });
         Some(ToolLoopOutcome::Cancelled(accumulated_text.to_string()))
     } else {
         None
@@ -102,7 +102,7 @@ async fn check_cancellation(
 
 async fn process_model_response(
     contents: &[AssistantContent],
-    event_tx: &mpsc::UnboundedSender<InferenceEvent>,
+    event_tx: &EventSender,
     chat_history: &mut Vec<RigMessage>,
 ) -> bool {
     let mut has_tool_calls = false;
@@ -116,8 +116,7 @@ async fn process_model_response(
                 .as_object_mut()
                 .and_then(|obj| obj.remove("description"))
                 .and_then(|v| v.as_str().map(String::from));
-            let _ = event_tx
-                .send(InferenceEvent {
+            event_tx.send(InferenceEvent {
                     kind: InferenceEventKind::ToolCall {
                         name: tool_call.function.name.clone(),
                         arguments: args,
@@ -181,7 +180,7 @@ async fn execute_tool_calls(
     contents: &[AssistantContent],
     tool_registry: &AgentToolRegistry,
     ctx: &InferenceContext,
-    event_tx: &mpsc::UnboundedSender<InferenceEvent>,
+    event_tx: &EventSender,
     chat_history: &mut Vec<RigMessage>,
     all_attachments: &mut Vec<crate::storage::Attachment>,
     metrics_ctx: &InferenceMetricsContext,
@@ -236,8 +235,7 @@ async fn execute_tool_calls(
         };
 
         let success = tool_output.as_ref().is_some_and(|o| o.is_success());
-        let _ = event_tx
-            .send(InferenceEvent {
+        event_tx.send(InferenceEvent {
                 kind: InferenceEventKind::ToolResult {
                     name: tool_name.clone(),
                     result: text.clone(),
@@ -309,7 +307,7 @@ pub async fn run_tool_loop(
     system_prompt: &str,
     mut chat_history: Vec<RigMessage>,
     tool_registry: &AgentToolRegistry,
-    event_tx: mpsc::UnboundedSender<InferenceEvent>,
+    event_tx: EventSender,
     cancel_token: CancellationToken,
     ctx: &InferenceContext,
     metrics_ctx: &InferenceMetricsContext,
@@ -363,8 +361,7 @@ pub async fn run_tool_loop(
         {
             StreamResult::Contents(c) => c,
             StreamResult::Cancelled => {
-                let _ = event_tx
-                    .send(InferenceEvent {
+                event_tx.send(InferenceEvent {
                         kind: InferenceEventKind::Cancelled(accumulated_text.clone()),
                     });
                 return Ok(ToolLoopOutcome::Cancelled(accumulated_text));
@@ -375,8 +372,7 @@ pub async fn run_tool_loop(
             process_model_response(&contents, &event_tx, &mut chat_history).await;
 
         if !has_tool_calls {
-            let _ = event_tx
-                .send(InferenceEvent {
+            event_tx.send(InferenceEvent {
                     kind: InferenceEventKind::Done(accumulated_text.clone()),
                 });
             break;
@@ -400,8 +396,7 @@ pub async fn run_tool_loop(
         if exec_result.has_external {
             let external_tool = exec_result.external_tool_result.unwrap();
             let system_prompt_injection = external_tool.system_prompt.clone();
-            let _ = event_tx
-                .send(InferenceEvent {
+            event_tx.send(InferenceEvent {
                     kind: InferenceEventKind::Done(accumulated_text.clone()),
                 });
             return Ok(ToolLoopOutcome::ExternalToolPending {
@@ -424,7 +419,7 @@ pub async fn run_tool_loop(
             }
         });
         if lifecycle_event.is_some() {
-            let _ = event_tx.send(InferenceEvent {
+            event_tx.send(InferenceEvent {
                 kind: InferenceEventKind::Done(accumulated_text.clone()),
             });
             return Ok(ToolLoopOutcome::Completed {
@@ -440,8 +435,7 @@ pub async fn run_tool_loop(
         }
 
         if turn == max_tool_turns - 1 {
-            let _ = event_tx
-                .send(InferenceEvent {
+            event_tx.send(InferenceEvent {
                     kind: InferenceEventKind::Error(
                         "Max tool turns reached".to_string(),
                     ),

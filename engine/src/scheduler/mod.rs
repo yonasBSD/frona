@@ -395,14 +395,14 @@ async fn execute_background_agent(
     .await;
 
     match result {
-        Ok(AgentLoopOutcome { response, accumulated_text, .. }) => {
-            if let InferenceResponse::Completed { attachments, .. } = response
-                && !accumulated_text.is_empty()
+        Ok(AgentLoopOutcome { response }) => {
+            if let InferenceResponse::Completed { text, attachments, .. } = response
+                && !text.is_empty()
             {
                 let _ = state
                     .chat_service
                     .save_assistant_message_with_tool_calls(
-                        chat_id, accumulated_text, None, attachments,
+                        chat_id, text, None, attachments,
                     )
                     .await;
             }

@@ -179,42 +179,34 @@ impl TaskExecutor {
             .await;
 
             match result {
-                Ok(execution::AgentLoopOutcome {
-                    response,
-                    accumulated_text,
-                    ..
-                }) => match response {
-                    InferenceResponse::Completed { attachments, lifecycle_event, .. } => {
+                Ok(execution::AgentLoopOutcome { response }) => match response {
+                    InferenceResponse::Completed { text, attachments, lifecycle_event } => {
                         self.save_assistant_message_if_needed(
                             &task,
                             &chat_id,
-                            &accumulated_text,
+                            &text,
                             attachments,
                         )
                         .await;
 
                         if let Some(event) = lifecycle_event {
-                            // Save lifecycle event after the assistant message
-                            // so it appears last in the chat history.
                             let _ = self.app_state.chat_service
                                 .save_system_event(&chat_id, event.clone())
                                 .await;
                             let action = self.lifecycle_action_from_event(
                                 event,
-                                &accumulated_text,
+                                &text,
                             );
                             self.handle_lifecycle_action(&task, &chat_id, action)
                                 .await?;
                             return Ok(());
                         }
 
-                        // Check for lifecycle event in DB (crash recovery)
                         if let Some(action) = self.find_lifecycle_event(&chat_id).await {
                             self.handle_lifecycle_action(&task, &chat_id, action)
                                 .await?;
                             return Ok(());
                         }
-                        // No lifecycle event — agent didn't signal, continue outer loop
                         continue;
                     }
                     InferenceResponse::ExternalToolPending {
@@ -239,8 +231,8 @@ impl TaskExecutor {
                         self.wait_for_resolution(&task.id, &cancel_token).await?;
                         continue;
                     }
-                    InferenceResponse::Cancelled(_) => {
-                        self.handle_cancelled(&task, &chat_id, accumulated_text)
+                    InferenceResponse::Cancelled(text) => {
+                        self.handle_cancelled(&task, &chat_id, text)
                             .await?;
                         return Ok(());
                     }

@@ -12,6 +12,7 @@ pub use error::InferenceError;
 pub use provider::ModelRef;
 pub use registry::ModelProviderRegistry;
 pub use request::{InferenceRequest, InferenceResponse, InferenceContext};
+pub use crate::chat::broadcast::EventSender;
 pub use rig::completion::request::Usage;
 pub use tool_loop::{InferenceEvent, InferenceEventKind};
 
@@ -46,14 +47,14 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
         );
 
         let mut accumulated_text = String::new();
-        let event_tx = request.ctx.event_tx;
+        let event_tx = &request.ctx.event_tx;
         match retry::stream_with_retry_and_fallback(
             &request.registry,
             &request.model_group,
             &request.system_prompt,
             &history,
             &[],
-            &event_tx,
+            event_tx,
             &request.cancel_token,
             &mut accumulated_text,
             &metrics_ctx,
@@ -61,10 +62,9 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
         .await?
         {
             retry::StreamResult::Contents(_) => {
-                let _ = event_tx
-                    .send(InferenceEvent {
-                        kind: InferenceEventKind::Done(accumulated_text.clone()),
-                    });
+                event_tx.send(InferenceEvent {
+                    kind: InferenceEventKind::Done(accumulated_text.clone()),
+                });
                 Ok(InferenceResponse::Completed {
                     text: accumulated_text,
                     attachments: vec![],
@@ -72,10 +72,9 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
                 })
             }
             retry::StreamResult::Cancelled => {
-                let _ = event_tx
-                    .send(InferenceEvent {
-                        kind: InferenceEventKind::Cancelled(accumulated_text.clone()),
-                    });
+                event_tx.send(InferenceEvent {
+                    kind: InferenceEventKind::Cancelled(accumulated_text.clone()),
+                });
                 Ok(InferenceResponse::Cancelled(accumulated_text))
             }
         }

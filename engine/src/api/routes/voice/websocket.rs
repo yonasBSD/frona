@@ -293,8 +293,7 @@ async fn handle_voice_turn(
 
                 return Ok((accumulated_text, true));
             }
-            InferenceResponse::Completed { .. } => {
-                let text = outcome.last_segment;
+            InferenceResponse::Completed { text, .. } => {
                 if !text.is_empty() {
                     state
                         .chat_service
@@ -305,7 +304,7 @@ async fn handle_voice_turn(
                 return Ok((text, false));
             }
             _ => {
-                return Ok((outcome.last_segment, false));
+                return Ok((String::new(), false));
             }
         }
     }

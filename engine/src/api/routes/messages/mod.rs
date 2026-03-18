@@ -7,10 +7,8 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::stream::Stream;
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::StreamExt;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use crate::chat::broadcast::BroadcastEvent;
 use crate::chat::message::models::{MessageResponse, ResolveToolRequest, SendMessageRequest};
 use crate::credential::presign::presign_response;
 
@@ -112,50 +110,14 @@ async fn resolve_tool_message(
     Ok(Json(updated))
 }
 
-pub(super) fn sse_event(name: &str, data: impl serde::Serialize) -> Event {
-    Event::default().event(name).json_data(data).unwrap()
-}
-
 async fn event_stream(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let user_id = auth.user_id.clone();
-    let rx = state.broadcast_service.subscribe();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, Infallible>>();
 
-    let stream = BroadcastStream::new(rx).filter_map(move |result| {
-        let user_id = user_id.clone();
-        match result {
-            Ok(BroadcastEvent::ChatMessage { user_id: uid, chat_id, message }) if uid == user_id => {
-                Some(Ok(sse_event("chat_message", serde_json::json!({
-                    "chat_id": chat_id,
-                    "message": message,
-                }))))
-            }
-            Ok(BroadcastEvent::TaskUpdate {
-                user_id: uid,
-                task_id,
-                status,
-                title,
-                chat_id,
-                source_chat_id,
-                result_summary,
-            }) if uid == user_id => {
-                Some(Ok(sse_event("task_update", serde_json::json!({
-                    "task_id": task_id,
-                    "status": status,
-                    "title": title,
-                    "chat_id": chat_id,
-                    "source_chat_id": source_chat_id,
-                    "result_summary": result_summary,
-                }))))
-            }
-            Ok(BroadcastEvent::InferenceCount { count }) => {
-                Some(Ok(sse_event("inference_count", serde_json::json!({ "count": count }))))
-            }
-            _ => None,
-        }
-    });
+    state.broadcast_service.register_session(&auth.user_id, tx);
 
+    let stream = UnboundedReceiverStream::new(rx);
     Sse::new(stream).keep_alive(KeepAlive::default())
 }

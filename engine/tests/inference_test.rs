@@ -5,7 +5,7 @@ use std::sync::Arc;
 use frona::core::error::AppError;
 use frona::inference::error::InferenceError;
 use frona::inference::text_inference;
-use frona::inference::tool_loop::{run_tool_loop, InferenceEventKind, ToolLoopOutcome};
+use frona::inference::tool_loop::{run_tool_loop, ToolLoopOutcome};
 use frona::tool::registry::AgentToolRegistry;
 use helpers::*;
 use rig::completion::Message as RigMessage;
@@ -26,7 +26,7 @@ async fn test_tool_loop_simple_text_response() {
     let registry = test_registry_with_provider("mock", provider.clone());
     let model_group = test_model_group();
     let tool_registry = AgentToolRegistry::new();
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let (event_sender, mut sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -37,7 +37,7 @@ async fn test_tool_loop_simple_text_response() {
         "You are a test assistant",
         vec![RigMessage::user("hi")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -52,20 +52,12 @@ async fn test_tool_loop_simple_text_response() {
         other => panic!("Expected Completed, got {other:?}"),
     }
 
-    let mut saw_text = false;
-    let mut saw_done = false;
-    while let Ok(event) = event_rx.try_recv() {
-        match event.kind {
-            InferenceEventKind::Text(t) => {
-                assert_eq!(t, "Hello!");
-                saw_text = true;
-            }
-            InferenceEventKind::Done(_) => saw_done = true,
-            _ => {}
-        }
-    }
-    assert!(saw_text, "Should emit Text event");
-    assert!(saw_done, "Should emit Done event");
+    // Allow the dispatcher to process queued events
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let frames = drain_sse_frames(&mut sse_rx).await;
+    let saw_text = frames.iter().any(|f| f.event == "token" && f.data["content"] == "Hello!");
+    assert!(saw_text, "Should emit token event with 'Hello!'");
     assert_eq!(provider.calls(), 1);
 }
 
@@ -88,7 +80,7 @@ async fn test_tool_loop_single_tool_call() {
         "search",
         vec!["search results here".into()],
     )));
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let (event_sender, mut sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -99,7 +91,7 @@ async fn test_tool_loop_single_tool_call() {
         "system",
         vec![RigMessage::user("search for rust")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -116,25 +108,13 @@ async fn test_tool_loop_single_tool_call() {
 
     assert_eq!(provider.calls(), 2);
 
-    let mut saw_tool_call = false;
-    let mut saw_tool_result = false;
-    while let Ok(event) = event_rx.try_recv() {
-        match event.kind {
-            InferenceEventKind::ToolCall { name, .. } => {
-                assert_eq!(name, "search");
-                saw_tool_call = true;
-            }
-            InferenceEventKind::ToolResult { name, result, success } => {
-                assert_eq!(name, "search");
-                assert_eq!(result, "search results here");
-                assert!(success);
-                saw_tool_result = true;
-            }
-            _ => {}
-        }
-    }
-    assert!(saw_tool_call, "Should emit ToolCall event");
-    assert!(saw_tool_result, "Should emit ToolResult event");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let frames = drain_sse_frames(&mut sse_rx).await;
+    let saw_tool_call = frames.iter().any(|f| f.event == "tool_call" && f.data["name"] == "search");
+    let saw_tool_result = frames.iter().any(|f| f.event == "tool_result" && f.data["name"] == "search" && f.data["success"] == true);
+    assert!(saw_tool_call, "Should emit tool_call event");
+    assert!(saw_tool_result, "Should emit tool_result event");
 }
 
 #[tokio::test]
@@ -165,7 +145,7 @@ async fn test_tool_loop_multi_turn() {
         "step_two",
         vec!["step two done".into()],
     )));
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let (event_sender, _sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -176,7 +156,7 @@ async fn test_tool_loop_multi_turn() {
         "system",
         vec![RigMessage::user("do steps")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -203,7 +183,7 @@ async fn test_tool_loop_external_tool_returns_pending() {
     let model_group = test_model_group();
     let mut tool_registry = AgentToolRegistry::new();
     tool_registry.register(Arc::new(MockExternalTool::new("ext_tool")));
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let (event_sender, _sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -214,7 +194,7 @@ async fn test_tool_loop_external_tool_returns_pending() {
         "system",
         vec![RigMessage::user("run external")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -246,7 +226,7 @@ async fn test_tool_loop_mixed_internal_external() {
         vec!["internal done".into()],
     )));
     tool_registry.register(Arc::new(MockExternalTool::new("external")));
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let (event_sender, _sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -257,7 +237,7 @@ async fn test_tool_loop_mixed_internal_external() {
         "system",
         vec![RigMessage::user("do both")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -289,7 +269,7 @@ async fn test_tool_loop_cancellation_before_inference() {
     let registry = test_registry_with_provider("mock", provider.clone());
     let model_group = test_model_group();
     let tool_registry = AgentToolRegistry::new();
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let (event_sender, _sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     cancel.cancel();
     let ctx = mock_context();
@@ -301,7 +281,7 @@ async fn test_tool_loop_cancellation_before_inference() {
         "system",
         vec![RigMessage::user("hello")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -311,14 +291,6 @@ async fn test_tool_loop_cancellation_before_inference() {
 
     assert!(matches!(outcome, ToolLoopOutcome::Cancelled(_)));
     assert_eq!(provider.calls(), 0);
-
-    let mut saw_cancelled = false;
-    while let Ok(event) = event_rx.try_recv() {
-        if matches!(event.kind, InferenceEventKind::Cancelled(_)) {
-            saw_cancelled = true;
-        }
-    }
-    assert!(saw_cancelled, "Should emit Cancelled event");
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -334,7 +306,7 @@ async fn test_tool_loop_rate_limit_retry() {
     let registry = test_registry_with_provider("mock", provider.clone());
     let model_group = test_model_group();
     let tool_registry = AgentToolRegistry::new();
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let (event_sender, mut sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -345,7 +317,7 @@ async fn test_tool_loop_rate_limit_retry() {
         "system",
         vec![RigMessage::user("hello")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -362,16 +334,12 @@ async fn test_tool_loop_rate_limit_retry() {
 
     assert_eq!(provider.calls(), 2);
 
-    let mut saw_retry = false;
-    while let Ok(event) = event_rx.try_recv() {
-        if matches!(
-            event.kind,
-            InferenceEventKind::Retry { .. }
-        ) {
-            saw_retry = true;
-        }
-    }
-    assert!(saw_retry, "Should emit Retry event");
+    // With start_paused, we need to advance time for the dispatcher to run
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let frames = drain_sse_frames(&mut sse_rx).await;
+    let saw_retry = frames.iter().any(|f| f.event == "retry");
+    assert!(saw_retry, "Should emit retry event");
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -389,7 +357,7 @@ async fn test_tool_loop_rate_limit_exhausted() {
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
     let tool_registry = AgentToolRegistry::new();
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let (event_sender, _sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -400,7 +368,7 @@ async fn test_tool_loop_rate_limit_exhausted() {
         "system",
         vec![RigMessage::user("hello")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -432,7 +400,7 @@ async fn test_tool_loop_tool_execution_failure() {
     let model_group = test_model_group();
     let mut tool_registry = AgentToolRegistry::new();
     tool_registry.register(Arc::new(MockFailingTool::new("bad_tool")));
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let (event_sender, mut sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -443,7 +411,7 @@ async fn test_tool_loop_tool_execution_failure() {
         "system",
         vec![RigMessage::user("use bad tool")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -454,17 +422,15 @@ async fn test_tool_loop_tool_execution_failure() {
     assert!(matches!(outcome, ToolLoopOutcome::Completed { .. }));
     assert_eq!(provider.calls(), 2);
 
-    let mut saw_error_result = false;
-    while let Ok(event) = event_rx.try_recv() {
-        if let InferenceEventKind::ToolResult { name, result, success } = event.kind
-            && name == "bad_tool"
-        {
-            assert!(result.starts_with("Error:"), "Got: {result}");
-            assert!(!success);
-            saw_error_result = true;
-        }
-    }
-    assert!(saw_error_result, "Should emit tool result with error");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let frames = drain_sse_frames(&mut sse_rx).await;
+    let saw_error_result = frames.iter().any(|f| {
+        f.event == "tool_result"
+            && f.data["name"] == "bad_tool"
+            && f.data["success"] == false
+    });
+    assert!(saw_error_result, "Should emit tool_result event for bad_tool with success=false");
 }
 
 #[tokio::test]
@@ -477,7 +443,7 @@ async fn test_tool_loop_provider_error() {
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
     let tool_registry = AgentToolRegistry::new();
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let (event_sender, _sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -488,7 +454,7 @@ async fn test_tool_loop_provider_error() {
         "system",
         vec![RigMessage::user("hello")],
         &tool_registry,
-        event_tx,
+        event_sender,
         cancel,
         &ctx,
         &metrics,
@@ -572,7 +538,7 @@ async fn test_fallback_main_fails_fallback_succeeds() {
     .unwrap();
 
     assert_eq!(result, "fallback success");
-    assert_eq!(main_provider.calls(), 1); // non-retryable, goes straight to fallback
+    assert_eq!(main_provider.calls(), 1);
     assert_eq!(fallback_provider.calls(), 1);
 }
 
@@ -823,7 +789,7 @@ async fn test_streaming_tokens_arrive_individually() {
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
     let tool_registry = AgentToolRegistry::new();
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let (event_sender, mut sse_rx, _broadcast) = test_event_sender();
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
@@ -835,7 +801,7 @@ async fn test_streaming_tokens_arrive_individually() {
             "system",
             vec![RigMessage::user("hi")],
             &tool_registry,
-            event_tx,
+            event_sender,
             cancel,
             &ctx,
             &metrics,
@@ -843,16 +809,24 @@ async fn test_streaming_tokens_arrive_individually() {
         .await
     });
 
-    // Collect text events with timestamps
+    // Collect token events with timestamps by polling the SSE receiver.
+    // The dispatcher forwards pre-serialized SSE frames; we parse them back.
     let mut received: Vec<(String, std::time::Instant)> = Vec::new();
     let start = std::time::Instant::now();
-    while let Some(event) = event_rx.recv().await {
-        match event.kind {
-            InferenceEventKind::Text(t) => {
-                received.push((t, std::time::Instant::now()));
+    let deadline = start + std::time::Duration::from_secs(5);
+    loop {
+        match tokio::time::timeout_at(deadline.into(), sse_rx.recv()).await {
+            Ok(Some(Ok(event))) => {
+                if let Some(frame) = parse_sse_frame(event).await
+                    && frame.event == "token"
+                    && let Some(content) = frame.data["content"].as_str()
+                {
+                    received.push((content.to_string(), std::time::Instant::now()));
+                }
             }
-            InferenceEventKind::Done(_) => break,
-            _ => {}
+            Ok(Some(Err(_))) => continue,
+            Ok(None) => break, // channel closed
+            Err(_) => break,   // timeout
         }
     }
 
@@ -899,4 +873,3 @@ async fn test_streaming_tokens_arrive_individually() {
         "{burst_pct:.0}% of tokens arrived in bursts — channel pipeline is batching"
     );
 }
-

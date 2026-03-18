@@ -227,7 +227,8 @@ impl AgentTool for MockFailingTool {
 }
 
 pub fn mock_context() -> InferenceContext {
-    let (tx, _rx) = mpsc::unbounded_channel();
+    let broadcast = frona::chat::broadcast::BroadcastService::new();
+    let event_sender = broadcast.create_event_sender("test-user", "test-chat");
     InferenceContext::new(
         frona::auth::User {
             id: "test-user".into(),
@@ -267,7 +268,7 @@ pub fn mock_context() -> InferenceContext {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },
-        tx,
+        event_sender,
     )
 }
 
@@ -322,4 +323,92 @@ pub fn init_metrics() {
     INIT.call_once(|| {
         metrics::setup_metrics_recorder();
     });
+}
+
+/// An SSE frame received from the broadcast dispatcher, parsed back into
+/// event name + JSON data for assertion.
+pub struct SseFrame {
+    pub event: String,
+    pub data: Value,
+}
+
+/// Convert an axum SSE `Event` to its wire-format string by running it
+/// through a one-shot Sse body, the same way axum itself serializes events.
+async fn event_to_string(event: axum::response::sse::Event) -> String {
+    use axum::response::sse::Sse;
+    use axum::response::IntoResponse;
+    use http_body_util::BodyExt;
+
+    let stream = futures::stream::once(async { Ok::<_, std::convert::Infallible>(event) });
+    let sse = Sse::new(stream);
+    let response = sse.into_response();
+    let body = response.into_body();
+    let collected = body.collect().await.unwrap();
+    String::from_utf8(collected.to_bytes().to_vec()).unwrap()
+}
+
+/// Parse an SSE wire-format string into field name/value pairs, using the
+/// same approach as axum's own test suite.
+fn parse_sse_text(payload: &str) -> Option<SseFrame> {
+    let mut event_name = String::new();
+    let mut data_parts = Vec::new();
+
+    for line in payload.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once(':') {
+            let value = value.trim_start();
+            match key {
+                "event" => event_name = value.to_string(),
+                "data" => data_parts.push(value.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    if event_name.is_empty() {
+        return None;
+    }
+
+    let joined = data_parts.join("\n");
+    let data: Value = serde_json::from_str(&joined).unwrap_or(Value::Null);
+
+    Some(SseFrame { event: event_name, data })
+}
+
+/// Parse a single axum SSE `Event` into an `SseFrame`.
+pub async fn parse_sse_frame(event: axum::response::sse::Event) -> Option<SseFrame> {
+    let text = event_to_string(event).await;
+    parse_sse_text(&text)
+}
+
+/// Drain all pending SSE events from a receiver, parse each into `SseFrame`.
+pub async fn drain_sse_frames(
+    rx: &mut mpsc::UnboundedReceiver<Result<axum::response::sse::Event, std::convert::Infallible>>,
+) -> Vec<SseFrame> {
+    let mut frames = Vec::new();
+    while let Ok(Ok(event)) = rx.try_recv() {
+        if let Some(frame) = parse_sse_frame(event).await {
+            frames.push(frame);
+        }
+    }
+    frames
+}
+
+/// Create an `EventSender` backed by a real `BroadcastService` with a
+/// registered SSE session, returning both the sender and the SSE receiver.
+/// This exercises the full production path: serialize → dispatch → fan-out.
+pub fn test_event_sender() -> (
+    frona::chat::broadcast::EventSender,
+    mpsc::UnboundedReceiver<Result<axum::response::sse::Event, std::convert::Infallible>>,
+    frona::chat::broadcast::BroadcastService,
+) {
+    let broadcast = frona::chat::broadcast::BroadcastService::new();
+    let event_sender = broadcast.create_event_sender("test-user", "test-chat");
+
+    let (tx, rx) = mpsc::unbounded_channel();
+    broadcast.register_session("test-user", tx);
+
+    (event_sender, rx, broadcast)
 }

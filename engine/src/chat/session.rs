@@ -1,13 +1,13 @@
 use rig::completion::Message as RigMessage;
 pub use tokio_util::sync::CancellationToken;
 
+use crate::chat::broadcast::EventSender;
 use crate::chat::models::Chat;
 use crate::chat::service::AgentConfig;
 use crate::core::error::AppError;
 use crate::core::state::AppState;
 use crate::inference::config::ModelGroup;
 use crate::inference::conversation::{ConversationBuilder, ConversationContext, DefaultConversationBuilder, TaskConversationBuilder};
-use crate::inference::tool_loop::InferenceEvent;
 use crate::inference::ModelProviderRegistry;
 use crate::tool::registry::AgentToolRegistry;
 use crate::tool::InferenceContext;
@@ -22,7 +22,6 @@ pub struct ChatSessionContext {
     pub tool_registry: AgentToolRegistry,
     pub tool_ctx: InferenceContext,
     pub cancel_token: CancellationToken,
-    pub tool_event_rx: tokio::sync::mpsc::UnboundedReceiver<InferenceEvent>,
 }
 
 impl ChatSessionContext {
@@ -42,8 +41,8 @@ impl ChatSessionContext {
         cancel_token: CancellationToken,
         is_task: bool,
     ) -> Result<Self, AppError> {
-        let (tool_event_tx, tool_event_rx) =
-            tokio::sync::mpsc::unbounded_channel::<InferenceEvent>();
+        let event_sender: EventSender =
+            state.broadcast_service.create_event_sender(user_id, &chat.id);
         let agent_config = state
             .chat_service
             .resolve_agent_config(&chat.agent_id)
@@ -100,8 +99,6 @@ impl ChatSessionContext {
             system_prompt.push_str(&task_prompt);
         }
 
-        // Append any per-turn context injected by tools (e.g. active_call block),
-        // in the order they appear in the conversation.
         for msg in &stored_messages {
             if let Some(sp) = &msg.system_prompt {
                 system_prompt.push_str("\n\n");
@@ -158,7 +155,7 @@ impl ChatSessionContext {
             .find_by_id(&chat.agent_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
-        let mut tool_ctx = InferenceContext::new(user, agent, chat.clone(), tool_event_tx);
+        let mut tool_ctx = InferenceContext::new(user, agent, chat.clone(), event_sender);
         tool_ctx.task = task;
 
         let vault_env = state
@@ -181,7 +178,6 @@ impl ChatSessionContext {
             tool_registry,
             tool_ctx,
             cancel_token,
-            tool_event_rx,
         })
     }
 }

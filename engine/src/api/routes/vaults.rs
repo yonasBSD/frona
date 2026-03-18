@@ -244,11 +244,11 @@ async fn approve_request(
             .await
             .map_err(ApiError::from)?;
 
-        state.broadcast_service.broadcast_chat_message(
-            &auth.user_id,
-            &req.chat_id,
-            resolved,
-        );
+        state.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
+            user_id: auth.user_id.clone(),
+            chat_id: Some(req.chat_id.clone()),
+            kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: resolved },
+        });
     }
 
     let user_id = auth.user_id.clone();
@@ -291,11 +291,11 @@ async fn deny_request(
             .await
             .map_err(ApiError::from)?;
 
-        state.broadcast_service.broadcast_chat_message(
-            &auth.user_id,
-            &req.chat_id,
-            denied,
-        );
+        state.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
+            user_id: auth.user_id.clone(),
+            chat_id: Some(req.chat_id.clone()),
+            kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: denied },
+        });
     }
 
     let user_id = auth.user_id.clone();

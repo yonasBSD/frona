@@ -1,12 +1,8 @@
-use std::convert::Infallible;
-
 use axum::extract::{Path, State};
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
-use futures::stream::Stream;
 use rig::completion::Message as RigMessage;
-use tokio_stream::wrappers::UnboundedReceiverStream;
 
+use crate::chat::broadcast::{BroadcastEventKind, EventSender};
 use crate::chat::message::models::SendMessageRequest;
 use crate::chat::service::ChatService;
 use crate::credential::presign::{PresignService, presign_response};
@@ -14,13 +10,11 @@ use crate::inference::conversation::{
     ConversationBuilder, ConversationContext, DefaultConversationBuilder, build_user_message,
 };
 use crate::inference::request::{InferenceRequest, InferenceResponse};
-use crate::inference::tool_loop::{InferenceEvent, InferenceEventKind};
+use crate::chat::message::models::MessageResponse;
 
 use super::super::super::error::ApiError;
 use super::super::super::middleware::auth::AuthUser;
-use crate::core::state::{ActiveSessions, AppState};
-
-use super::sse_event;
+use crate::core::state::AppState;
 
 fn spawn_inference(
     req: InferenceRequest,
@@ -28,11 +22,7 @@ fn spawn_inference(
     tokio::spawn(async move { crate::inference::inference(req).await })
 }
 
-struct SseSink {
-    tx: tokio::sync::mpsc::UnboundedSender<Result<Event, Infallible>>,
-    username: String,
-}
-
+#[allow(clippy::too_many_arguments)]
 async fn handle_inference_result(
     result: Result<Result<InferenceResponse, crate::core::error::AppError>, tokio::task::JoinError>,
     accumulated: String,
@@ -40,7 +30,8 @@ async fn handle_inference_result(
     chat_id: &str,
     presign_svc: &PresignService,
     user_id: &str,
-    sink: &SseSink,
+    username: &str,
+    event_sender: &EventSender,
 ) {
     match result {
         Ok(Ok(response)) => match response {
@@ -50,16 +41,17 @@ async fn handle_inference_result(
                         .save_assistant_message_with_tool_calls(chat_id, accumulated, None, attachments)
                         .await
                 {
-                    presign_response(presign_svc, &mut msg, user_id, &sink.username).await;
-                    let _ = sink.tx.send(Ok(sse_event("done", serde_json::json!({ "message": msg }))));
+                    presign_response(presign_svc, &mut msg, user_id, username).await;
+                    event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
                 }
             }
             InferenceResponse::Cancelled(_) => {
                 if !accumulated.is_empty() {
                     let _ = chat_service.save_assistant_message(chat_id, accumulated).await;
                 }
-                let _ = sink.tx
-                    .send(Ok(sse_event("cancelled", serde_json::json!({ "reason": "User cancelled generation" }))));
+                event_sender.send_kind(BroadcastEventKind::InferenceCancelled {
+                    reason: "User cancelled generation".to_string(),
+                });
             }
             InferenceResponse::ExternalToolPending {
                 accumulated_text,
@@ -73,98 +65,23 @@ async fn handle_inference_result(
                     .save_external_tool_pending(chat_id, text, tool_calls_json, &tool_results, external_tool)
                     .await
                 {
-                    presign_response(presign_svc, &mut tool_msg, user_id, &sink.username).await;
-                    let _ = sink.tx.send(Ok(sse_event("tool_message", &tool_msg)));
+                    presign_response(presign_svc, &mut tool_msg, user_id, username).await;
+                    event_sender.send_kind(BroadcastEventKind::ToolMessage { message: tool_msg });
                 }
             }
         },
-        Ok(Err(e)) => tracing::error!(error = %e, "Inference failed"),
-        Err(e) => tracing::error!(error = %e, "Inference task panicked"),
-    }
-}
-
-struct MessageStreamSession {
-    tx: tokio::sync::mpsc::UnboundedSender<Result<Event, Infallible>>,
-    chat_service: ChatService,
-    presign_svc: PresignService,
-    active_sessions: ActiveSessions,
-    chat_id: String,
-    user_id: String,
-    username: String,
-}
-
-impl MessageStreamSession {
-    fn send(&self, name: &str, data: impl serde::Serialize) -> bool {
-        self.tx.send(Ok(sse_event(name, data))).is_ok()
-    }
-
-    async fn send_or_cleanup(&self, name: &str, data: impl serde::Serialize) -> bool {
-        if !self.send(name, data) {
-            self.cleanup().await;
-            return false;
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "Inference failed");
+            event_sender.send_kind(BroadcastEventKind::InferenceError {
+                error: e.to_string(),
+            });
         }
-        true
-    }
-
-    async fn stream_and_handle(
-        &self,
-        event_rx: &mut tokio::sync::mpsc::UnboundedReceiver<InferenceEvent>,
-        handle: tokio::task::JoinHandle<Result<InferenceResponse, crate::core::error::AppError>>,
-    ) {
-        let mut accumulated = String::new();
-        let mut last_segment = String::new();
-        let mut had_tool_calls = false;
-        while let Some(event) = event_rx.recv().await {
-            match event.kind {
-                InferenceEventKind::Text(text) => {
-                    accumulated.push_str(&text);
-                    last_segment.push_str(&text);
-                    if !self.send("token", serde_json::json!({ "content": text })) {
-                        break;
-                    }
-                }
-                InferenceEventKind::ToolCall { name, arguments, description } => {
-                    let is_human_tool = name == "ask_user_question" || name == "request_user_takeover";
-                    if !is_human_tool {
-                        had_tool_calls = true;
-                        last_segment.clear();
-                        let _ = self
-                            .send("tool_call", serde_json::json!({ "name": name, "arguments": arguments, "description": description }));
-                    }
-                }
-                InferenceEventKind::ToolResult { name, success, .. } => {
-                    last_segment.clear();
-                    let _ = self.send("tool_result", serde_json::json!({ "name": name, "success": success }));
-                }
-                InferenceEventKind::EntityUpdated { table, record_id, fields } => {
-                    let _ = self
-                        .send("entity_updated", serde_json::json!({ "table": table, "record_id": record_id, "fields": fields }));
-                }
-                InferenceEventKind::Retry { retry_after_ms, reason } => {
-                    let _ = self.send("retry", serde_json::json!({ "retry_after_secs": retry_after_ms / 1000, "reason": reason }));
-                }
-                InferenceEventKind::Done(_) => {}
-                InferenceEventKind::Cancelled(_) => break,
-                InferenceEventKind::Error(err) => {
-                    let _ = self.send("error", serde_json::json!({ "error": err }));
-                }
-            }
+        Err(e) => {
+            tracing::error!(error = %e, "Inference task panicked");
+            event_sender.send_kind(BroadcastEventKind::InferenceError {
+                error: "Internal error".to_string(),
+            });
         }
-
-        let content = if had_tool_calls && !last_segment.is_empty() {
-            last_segment
-        } else {
-            accumulated
-        };
-        let sink = SseSink {
-            tx: self.tx.clone(),
-            username: self.username.clone(),
-        };
-        handle_inference_result(handle.await, content, &self.chat_service, &self.chat_id, &self.presign_svc, &self.user_id, &sink).await;
-    }
-
-    async fn cleanup(&self) {
-        self.active_sessions.remove(&self.chat_id).await;
     }
 }
 
@@ -173,7 +90,7 @@ pub(crate) async fn stream_message(
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
     Json(req): Json<SendMessageRequest>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
+) -> Result<Json<MessageResponse>, ApiError> {
     use crate::chat::message::models::{MessageTool, ToolStatus};
 
     let chat = state
@@ -243,26 +160,15 @@ pub(crate) async fn stream_message(
     ctx.rig_history = rig_history;
 
     let user_content = req.content;
-
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, Infallible>>();
-
     let agent_id = ctx.chat.agent_id.clone();
     let needs_title = ctx.chat.title.is_none();
 
     let crate::chat::session::ChatSessionContext {
         system_prompt, model_group, rig_history, registry, tool_registry,
-        tool_ctx, cancel_token, mut tool_event_rx, ..
+        tool_ctx, cancel_token, ..
     } = ctx;
 
-    let session = MessageStreamSession {
-        tx,
-        chat_service: state.chat_service.clone(),
-        presign_svc: state.presign_service.clone(),
-        active_sessions: state.active_sessions.clone(),
-        chat_id: chat_id.clone(),
-        user_id: auth.user_id.clone(),
-        username: auth.username.clone(),
-    };
+    let event_sender = tool_ctx.event_tx.clone();
 
     if let Some(pending_id) = pending_tool_id {
         let mut user_response = state
@@ -271,7 +177,7 @@ pub(crate) async fn stream_message(
             .await
             .map_err(ApiError::from)?;
 
-        presign_response(&session.presign_svc, &mut user_response, &auth.user_id, &auth.username).await;
+        presign_response(&state.presign_service, &mut user_response, &auth.user_id, &auth.username).await;
 
         let resolved = state
             .chat_service
@@ -289,15 +195,17 @@ pub(crate) async fn stream_message(
             user_id: auth.user_id.clone(),
         };
 
-        tokio::spawn(async move {
-            if !session.send_or_cleanup("user_message", &user_response).await {
-                return;
-            }
-            if !session.send_or_cleanup("tool_resolved", &resolved).await {
-                return;
-            }
+        let chat_service = state.chat_service.clone();
+        let presign_svc = state.presign_service.clone();
+        let active_sessions = state.active_sessions.clone();
+        let user_id = auth.user_id.clone();
+        let username = auth.username.clone();
+        let chat_id_clone = chat_id.clone();
 
-            let stored_messages = session.chat_service.get_stored_messages(&session.chat_id).await;
+        event_sender.send_kind(BroadcastEventKind::ToolResolved { message: resolved });
+
+        tokio::spawn(async move {
+            let stored_messages = chat_service.get_stored_messages(&chat_id_clone).await;
             let rig_history = pending_conv_builder.build(&stored_messages, &pending_conv_ctx).await;
 
             let handle = spawn_inference(InferenceRequest {
@@ -306,9 +214,26 @@ pub(crate) async fn stream_message(
                 ctx: tool_ctx, cancel_token,
             });
 
-            session.stream_and_handle(&mut tool_event_rx, handle).await;
-            session.cleanup().await;
+            let result = handle.await;
+            let mut accumulated = String::new();
+            if let Ok(Ok(ref resp)) = result {
+                match resp {
+                    InferenceResponse::Completed { text, .. } => accumulated = text.clone(),
+                    InferenceResponse::Cancelled(text) => accumulated = text.clone(),
+                    InferenceResponse::ExternalToolPending { accumulated_text, .. } => {
+                        accumulated = accumulated_text.clone()
+                    }
+                }
+            }
+
+            handle_inference_result(
+                result, accumulated, &chat_service, &chat_id_clone,
+                &presign_svc, &user_id, &username, &event_sender,
+            ).await;
+            active_sessions.remove(&chat_id_clone).await;
         });
+
+        Ok(Json(user_response))
     } else {
         let attachments = req.attachments.clone();
 
@@ -318,27 +243,28 @@ pub(crate) async fn stream_message(
             .await
             .map_err(ApiError::from)?;
 
-        presign_response(&session.presign_svc, &mut user_response, &auth.user_id, &auth.username).await;
+        presign_response(&state.presign_service, &mut user_response, &auth.user_id, &auth.username).await;
 
+        let chat_service = state.chat_service.clone();
+        let presign_svc = state.presign_service.clone();
+        let active_sessions = state.active_sessions.clone();
+        let user_id = auth.user_id.clone();
+        let username = auth.username.clone();
         let msg_user_service = state.user_service.clone();
         let msg_storage_service = state.storage_service.clone();
+        let chat_id_clone = chat_id.clone();
 
         tokio::spawn(async move {
-            if !session.send_or_cleanup("user_message", &user_response).await {
-                return;
-            }
-
             if needs_title {
-                let svc = session.chat_service.clone();
-                let cid = session.chat_id.clone();
+                let svc = chat_service.clone();
+                let cid = chat_id_clone.clone();
                 let aid = agent_id.clone();
                 let content = user_content.clone();
-                let title_tx = session.tx.clone();
+                let es = event_sender.clone();
                 tokio::spawn(async move {
                     match svc.generate_title(&cid, &aid, &content).await {
                         Ok(title) => {
-                            let _ = title_tx.send(Ok(sse_event("title", serde_json::json!({ "title": title }))));
-
+                            es.send_kind(BroadcastEventKind::Title { title });
                         }
                         Err(e) => {
                             tracing::warn!(error = %e, "Title generation failed");
@@ -362,12 +288,25 @@ pub(crate) async fn stream_message(
                 ctx: tool_ctx, cancel_token,
             });
 
-            session.stream_and_handle(&mut tool_event_rx, handle).await;
-            session.cleanup().await;
+            let result = handle.await;
+            let mut accumulated = String::new();
+            if let Ok(Ok(ref resp)) = result {
+                match resp {
+                    InferenceResponse::Completed { text, .. } => accumulated = text.clone(),
+                    InferenceResponse::Cancelled(text) => accumulated = text.clone(),
+                    InferenceResponse::ExternalToolPending { accumulated_text, .. } => {
+                        accumulated = accumulated_text.clone()
+                    }
+                }
+            }
+
+            handle_inference_result(
+                result, accumulated, &chat_service, &chat_id_clone,
+                &presign_svc, &user_id, &username, &event_sender,
+            ).await;
+            active_sessions.remove(&chat_id_clone).await;
         });
+
+        Ok(Json(user_response))
     }
-
-    let stream = UnboundedReceiverStream::new(rx);
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
-

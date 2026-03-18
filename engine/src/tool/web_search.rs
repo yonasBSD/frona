@@ -372,7 +372,8 @@ mod tests {
     }
 
     fn mock_context() -> InferenceContext {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let broadcast = crate::chat::broadcast::BroadcastService::new();
+        let event_sender = broadcast.create_event_sender("u", "c");
         InferenceContext::new(
             crate::auth::User {
                 id: "u".into(), username: "u".into(), email: "e".into(), name: "n".into(),
@@ -394,7 +395,7 @@ mod tests {
                 archived_at: None,
                 created_at: chrono::Utc::now(), updated_at: chrono::Utc::now(),
             },
-            tx,
+            event_sender,
         )
     }
 

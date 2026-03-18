@@ -7,6 +7,7 @@ use rig::completion::{AssistantContent, Message as RigMessage};
 use rig::completion::message::UserContent;
 use tokio::sync::mpsc;
 
+use crate::chat::broadcast::EventSender;
 use crate::core::metrics::{self, InferenceMetricsContext};
 
 use super::config::{ModelGroup, RetryConfig};
@@ -174,7 +175,7 @@ pub async fn stream_with_retry_and_fallback(
     system_prompt: &str,
     chat_history: &[RigMessage],
     tools: &[RigToolDefinition],
-    event_tx: &mpsc::UnboundedSender<InferenceEvent>,
+    event_tx: &EventSender,
     cancel_token: &tokio_util::sync::CancellationToken,
     accumulated_text: &mut String,
     metrics_ctx: &InferenceMetricsContext,
@@ -196,10 +197,9 @@ pub async fn stream_with_retry_and_fallback(
             let mut text = String::new();
             while let Some(token) = text_rx.recv().await {
                 text.push_str(&token);
-                let _ = event_tx_clone
-                    .send(InferenceEvent {
-                        kind: InferenceEventKind::Text(token),
-                    });
+                event_tx_clone.send(InferenceEvent {
+                    kind: InferenceEventKind::Text(token),
+                });
             }
             text
         });
@@ -264,7 +264,7 @@ pub async fn stream_with_retry_and_fallback(
     .when(|e| e.is_retryable())
     .notify(|e, dur| {
         tracing::warn!(model = %model_str, error = %e, delay = ?dur, "Retryable error, backing off");
-        let _ = event_tx.send(InferenceEvent {
+        event_tx.send(InferenceEvent {
             kind: InferenceEventKind::Retry {
                 retry_after_ms: dur.as_millis() as u64,
                 reason: e.retry_reason(),

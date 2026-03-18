@@ -5,7 +5,7 @@ use surrealdb::engine::local::Db;
 use surrealdb::types::RecordId;
 
 use crate::core::error::AppError;
-use crate::inference::tool_loop::{InferenceEvent, InferenceEventKind};
+use crate::inference::InferenceEventKind;
 
 use super::{AgentTool, InferenceContext, ToolDefinition, ToolOutput};
 
@@ -125,15 +125,13 @@ impl AgentTool for UpdateEntityTool {
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let _ = ctx
-            .event_tx
-            .send(InferenceEvent {
-                kind: InferenceEventKind::EntityUpdated {
-                    table: self.table.clone(),
-                    record_id: record_id.clone(),
-                    fields: merge_value,
-                },
-            });
+        ctx.event_tx.send(crate::inference::tool_loop::InferenceEvent {
+            kind: InferenceEventKind::EntityUpdated {
+                table: self.table.clone(),
+                record_id: record_id.clone(),
+                fields: merge_value,
+            },
+        });
 
         Ok(ToolOutput::text(format!("Updated fields: {}", field_names.join(", "))))
     }

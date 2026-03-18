@@ -7,7 +7,7 @@ use surrealdb::types::RecordId;
 
 use crate::agent::prompt::PromptLoader;
 use crate::core::error::AppError;
-use crate::inference::tool_loop::{InferenceEvent, InferenceEventKind};
+use crate::inference::InferenceEventKind;
 use frona_derive::agent_tool;
 
 use super::{InferenceContext, ToolOutput};
@@ -104,15 +104,13 @@ impl UpdateIdentityTool {
             entity_fields.insert("name".to_string(), serde_json::json!(agent_name));
         }
 
-        let _ = ctx
-            .event_tx
-            .send(InferenceEvent {
-                kind: InferenceEventKind::EntityUpdated {
-                    table: "agent".to_string(),
-                    record_id: agent_id.clone(),
-                    fields: Value::Object(entity_fields),
-                },
-            });
+        ctx.event_tx.send(crate::inference::tool_loop::InferenceEvent {
+            kind: InferenceEventKind::EntityUpdated {
+                table: "agent".to_string(),
+                record_id: agent_id.clone(),
+                fields: Value::Object(entity_fields),
+            },
+        });
 
         let updated_keys: Vec<&String> = attrs.keys().collect();
         Ok(ToolOutput::text(format!(
