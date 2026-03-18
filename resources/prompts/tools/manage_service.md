@@ -27,7 +27,7 @@ Manage web services deployed from your workspace. You can build a web app (any l
 
 ## Actions
 
-- **deploy** — Start a new service or update an existing one. Requires user approval on first deploy or when the manifest changes.
+- **deploy** — Start a new service or update an existing one. Requires user approval on first deploy or when security-relevant manifest fields change (command, kind, network destinations, credentials, paths, expose). Code-only changes restart automatically without re-approval.
 - **stop** — Stop a running service. Process is terminated but the app entity is preserved.
 - **start** — Start a previously stopped service.
 - **restart** — Stop and restart a running service.

@@ -100,7 +100,9 @@ impl ManageServiceTool {
 
         let existing = self.app_service.find_by_manifest_id(&ctx.agent.id, &manifest.id).await?;
 
-        if check_needs_approval(&existing, &manifest_value) {
+        let needs_approval = check_needs_approval(&existing, &manifest_value);
+
+        if needs_approval {
             let previous = existing.map(|a| a.manifest);
 
             return Ok(ToolOutput::text(serde_json::json!({
@@ -116,6 +118,14 @@ impl ManageServiceTool {
                 response: None,
             })
             .as_pending_external());
+        }
+
+        if let Some(ref existing) = existing {
+            let app = self
+                .app_service
+                .restart(&ctx.agent.id, &existing.id)
+                .await?;
+            return Ok(ToolOutput::text(format_app_result("restarted", &app)));
         }
 
         let app = self
@@ -213,8 +223,135 @@ pub fn format_app_result(action: &str, app: &AppResponse) -> String {
 }
 
 fn check_needs_approval(existing: &Option<App>, manifest_value: &Value) -> bool {
-    match existing {
-        None => true,
-        Some(app) => app.manifest != *manifest_value,
+    let Some(app) = existing else {
+        return true;
+    };
+
+    let (Ok(old), Ok(new)) = (
+        serde_json::from_value::<AppManifest>(app.manifest.clone()),
+        serde_json::from_value::<AppManifest>(manifest_value.clone()),
+    ) else {
+        return true;
+    };
+
+    old.command != new.command
+        || old.effective_kind() != new.effective_kind()
+        || old.static_dir != new.static_dir
+        || old.effective_expose() != new.effective_expose()
+        || old.network_destinations != new.network_destinations
+        || old.credentials != new.credentials
+        || old.read_paths != new.read_paths
+        || old.write_paths != new.write_paths
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_app(manifest: serde_json::Value) -> App {
+        let now = Utc::now();
+        App {
+            id: "app-1".to_string(),
+            agent_id: "agent-1".to_string(),
+            user_id: "user-1".to_string(),
+            name: "Test".to_string(),
+            description: None,
+            kind: "service".to_string(),
+            command: Some("python app.py".to_string()),
+            static_dir: None,
+            port: Some(4000),
+            status: crate::app::models::AppStatus::Running,
+            pid: Some(1234),
+            manifest,
+            last_accessed_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn approval_required_for_new_app() {
+        let manifest = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
+        assert!(check_needs_approval(&None, &manifest));
+    }
+
+    #[test]
+    fn no_approval_when_manifest_identical() {
+        let manifest = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
+        let app = make_app(manifest.clone());
+        assert!(!check_needs_approval(&Some(app), &manifest));
+    }
+
+    #[test]
+    fn no_approval_when_only_name_changes() {
+        let old = serde_json::json!({"id": "test", "name": "Old Name", "command": "python app.py"});
+        let new = serde_json::json!({"id": "test", "name": "New Name", "command": "python app.py"});
+        let app = make_app(old);
+        assert!(!check_needs_approval(&Some(app), &new));
+    }
+
+    #[test]
+    fn no_approval_when_only_description_changes() {
+        let old = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
+        let new = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py", "description": "new desc"});
+        let app = make_app(old);
+        assert!(!check_needs_approval(&Some(app), &new));
+    }
+
+    #[test]
+    fn no_approval_when_only_health_check_changes() {
+        let old = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
+        let new = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py", "health_check": {"path": "/healthz"}});
+        let app = make_app(old);
+        assert!(!check_needs_approval(&Some(app), &new));
+    }
+
+    #[test]
+    fn approval_required_when_command_changes() {
+        let old = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
+        let new = serde_json::json!({"id": "test", "name": "Test", "command": "node server.js"});
+        let app = make_app(old);
+        assert!(check_needs_approval(&Some(app), &new));
+    }
+
+    #[test]
+    fn approval_required_when_network_destinations_change() {
+        let old = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
+        let new = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py", "network_destinations": [{"host": "evil.com", "port": 443}]});
+        let app = make_app(old);
+        assert!(check_needs_approval(&Some(app), &new));
+    }
+
+    #[test]
+    fn approval_required_when_credentials_change() {
+        let old = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
+        let new = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py", "credentials": [{"query": "api-key", "reason": "need it", "env_var_prefix": "API"}]});
+        let app = make_app(old);
+        assert!(check_needs_approval(&Some(app), &new));
+    }
+
+    #[test]
+    fn approval_required_when_expose_changes() {
+        let old = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py", "expose": false});
+        let new = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py", "expose": true});
+        let app = make_app(old);
+        assert!(check_needs_approval(&Some(app), &new));
+    }
+
+    #[test]
+    fn approval_required_when_kind_changes() {
+        let old = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
+        let new = serde_json::json!({"id": "test", "name": "Test", "kind": "static", "static_dir": "dist/"});
+        let app = make_app(old);
+        assert!(check_needs_approval(&Some(app), &new));
+    }
+
+    #[test]
+    fn approval_required_when_stored_manifest_unparseable() {
+        let old = serde_json::json!("not a valid manifest");
+        let new = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
+        let app = make_app(old);
+        assert!(check_needs_approval(&Some(app), &new));
     }
 }
