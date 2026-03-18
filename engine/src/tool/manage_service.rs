@@ -120,7 +120,7 @@ impl ManageServiceTool {
 
         let app = self
             .app_service
-            .deploy(&ctx.agent.id, &ctx.user.id, &manifest, Vec::new())
+            .deploy_and_await(&ctx.agent.id, &ctx.user.id, &manifest, Vec::new())
             .await?;
 
         Ok(ToolOutput::text(format_app_result("deployed successfully", &app)))

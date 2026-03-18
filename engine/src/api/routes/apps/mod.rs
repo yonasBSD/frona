@@ -134,14 +134,25 @@ async fn approve_service(
 
     let base_url = state.config.server.public_base_url();
 
+    let result_text = match state
+        .app_service
+        .deploy_and_await(&chat.agent_id, &auth.user_id, &manifest, Vec::new())
+        .await
+    {
+        Ok(app) => crate::tool::manage_service::format_app_result("deployed successfully", &app),
+        Err(e) => format!("Deploy failed: {e}"),
+    };
+
     let app = state
         .app_service
-        .deploy(&chat.agent_id, &auth.user_id, &manifest, Vec::new())
+        .find_by_manifest_id(&chat.agent_id, &manifest.id)
         .await
-        .map_err(ApiError::from)?;
-
-    let app_url = app.url.as_ref().map(|u| format!("{base_url}{u}"));
-    let result_text = crate::tool::manage_service::format_app_result("deployed successfully", &app);
+        .ok()
+        .flatten();
+    let app_url = app.and_then(|a| {
+        let resp: crate::app::models::AppResponse = a.into();
+        resp.url.map(|u| format!("{base_url}{u}"))
+    });
 
     let pending_msg_id = pending_msg.id.clone();
 

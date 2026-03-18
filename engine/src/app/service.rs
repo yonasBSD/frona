@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::core::config::AppConfig;
 use crate::core::error::AppError;
 
-use super::manager::AppManager;
-use super::models::{App, AppManifest, AppResponse, AppStatus};
+use super::manager::{AppManager, ProcessStatus};
+use super::models::{App, AppManifest, AppResponse, AppStatus, HealthCheck};
 use super::repository::AppRepository;
 
 #[derive(Clone)]
@@ -296,6 +296,80 @@ impl AppService {
                 .get("id")
                 .is_some_and(|id| *id == manifest_json_id)
         }))
+    }
+
+    pub async fn deploy_and_await(
+        &self,
+        agent_id: &str,
+        user_id: &str,
+        manifest: &AppManifest,
+        credential_env_vars: Vec<(String, String)>,
+    ) -> Result<AppResponse, AppError> {
+        let app = self
+            .deploy(agent_id, user_id, manifest, credential_env_vars)
+            .await?;
+
+        if manifest.effective_kind() == "static" {
+            return Ok(app);
+        }
+
+        let port = match app.port {
+            Some(p) => p,
+            None => return Ok(app),
+        };
+
+        let hc = manifest.health_check.clone().unwrap_or(HealthCheck {
+            path: "/".to_string(),
+            interval_secs: None,
+            timeout_secs: None,
+            initial_delay_secs: Some(2),
+            failure_threshold: None,
+        });
+
+        let initial_delay = std::time::Duration::from_secs(hc.effective_initial_delay());
+        let interval = std::time::Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(self.config.health_check_timeout_secs);
+
+        tokio::time::sleep(initial_delay).await;
+
+        loop {
+            if self.manager.health_check(port, &hc).await {
+                return Ok(app);
+            }
+
+            if let ProcessStatus::Dead(_) = self.manager.check_process(&app.id).await {
+                match self
+                    .manager
+                    .try_restart_crashed(&app.id, self.config.max_restart_attempts)
+                    .await
+                {
+                    Ok(Some((new_port, pid))) => {
+                        self.update_status(&app.id, AppStatus::Running, Some(new_port), Some(pid))
+                            .await?;
+                        tokio::time::sleep(initial_delay).await;
+                        continue;
+                    }
+                    _ => {
+                        self.update_status(&app.id, AppStatus::Failed, None, None)
+                            .await?;
+                        self.manager.remove_process(&app.id).await;
+                        return Err(AppError::Tool(
+                            "App failed to start after all restart attempts. Check apps/{id}/logs/app.log for details.".into(),
+                        ));
+                    }
+                }
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                return Err(AppError::Tool(format!(
+                    "App started but health check on {} did not pass within {}s. The app may still be starting — check apps/{}/logs/app.log",
+                    hc.path, self.config.health_check_timeout_secs, app.id
+                )));
+            }
+
+            tokio::time::sleep(interval).await;
+        }
     }
 
     async fn start_and_update(
