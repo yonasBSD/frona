@@ -117,6 +117,7 @@ pub async fn restore_and_supervise_apps(
                                 &format!("App '{}' crashed", app.name),
                                 &format!("Exceeded max restarts.\n{stderr_summary}"),
                             ).await;
+                            attempt_fix_app_on_crash(&state, &app).await;
                         }
                     }
                     Err(e) => {
@@ -162,6 +163,36 @@ pub async fn restore_and_supervise_apps(
             }
         }
     }
+}
+
+async fn attempt_fix_app_on_crash(state: &AppState, app: &super::models::App) {
+    if app.crash_fix_attempts > 0 {
+        return;
+    }
+
+    if let Some(mut app) = state.app_service.get(&app.id).await.ok().flatten() {
+        app.crash_fix_attempts += 1;
+        let _ = state.app_service.update_crash_fix_attempts(&app.id, app.crash_fix_attempts).await;
+    }
+
+    let Some(crash_msg) = state.prompts.read_with_vars(
+        "APP_CRASH.md",
+        &[("app_name", &app.name), ("app_id", &app.id)],
+    ) else {
+        return;
+    };
+
+    let _ = state
+        .chat_service
+        .save_system_message(&app.chat_id, crash_msg, false)
+        .await;
+
+    let state = state.clone();
+    let user_id = app.user_id.clone();
+    let chat_id = app.chat_id.clone();
+    tokio::spawn(async move {
+        crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id).await;
+    });
 }
 
 async fn send_app_notification(
