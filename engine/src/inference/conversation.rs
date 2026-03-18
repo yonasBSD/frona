@@ -57,7 +57,13 @@ impl ConversationBuilder for DefaultConversationBuilder {
                 }
                 MessageRole::Agent => convert_agent_message(msg, &ctx.agent_id),
                 MessageRole::ToolResult => convert_tool_result(msg),
-                MessageRole::System => None,
+                MessageRole::System => {
+                    if msg.content.is_empty() {
+                        None
+                    } else {
+                        Some(RigMessage::user(&msg.content))
+                    }
+                }
             };
             if let Some(m) = converted {
                 result.push(m);
@@ -116,7 +122,13 @@ impl ConversationBuilder for TaskConversationBuilder {
                     }
                 }
                 MessageRole::ToolResult => convert_tool_result(msg),
-                MessageRole::System => None,
+                MessageRole::System => {
+                    if msg.content.is_empty() {
+                        None
+                    } else {
+                        Some(RigMessage::user(&msg.content))
+                    }
+                }
             };
             if let Some(m) = converted {
                 result.push(m);

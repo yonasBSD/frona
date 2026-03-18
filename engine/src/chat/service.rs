@@ -318,6 +318,22 @@ impl ChatService {
         self.save_message(msg).await
     }
 
+    pub async fn save_system_message(
+        &self,
+        chat_id: &str,
+        content: String,
+        system_prompt: bool,
+    ) -> Result<MessageResponse, AppError> {
+        let msg = if system_prompt {
+            Message::builder(chat_id, MessageRole::System, String::new())
+                .system_prompt(content)
+                .build()
+        } else {
+            Message::builder(chat_id, MessageRole::System, content).build()
+        };
+        self.save_message(msg).await
+    }
+
     pub async fn save_assistant_message(
         &self,
         chat_id: &str,
