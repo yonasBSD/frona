@@ -19,6 +19,12 @@ required:
 ---
 Manage web services deployed from your workspace. You can build a web app (any language/runtime), then deploy it as a live service accessible via URL.
 
+## Workflow
+
+1. Choose an app id (e.g. `my-dashboard`)
+2. Create the directory `apps/{id}/` and write your source code there
+3. Deploy with `manage_service` — commands run from `apps/{id}/` automatically
+
 ## Actions
 
 - **deploy** — Start a new service or update an existing one. Requires user approval on first deploy or when the manifest changes.
@@ -54,10 +60,10 @@ Always pass the full manifest with every call. The system automatically detects 
 
 ### Key Fields
 
-- **id** (required): Stable identifier for the service, e.g. "gold-dashboard"
+- **id** (required): Stable identifier, e.g. "gold-dashboard". Your app lives in `apps/{id}/`.
 - **name** (required): Human-readable name
 - **kind**: "service" (default) runs a command, "static" serves files
-- **command**: Startup command for service mode. Your app MUST listen on the PORT environment variable.
+- **command**: Startup command (e.g. `python app.py`). Runs from `apps/{id}/`, so just use the filename. Your app MUST listen on the PORT environment variable.
 - **static_dir**: Directory to serve for static mode, relative to workspace (e.g. "dist/")
 - **network_destinations**: Allowed outbound network destinations (host + port pairs)
 - **credentials**: Vault credentials to inject as environment variables
@@ -66,20 +72,19 @@ Always pass the full manifest with every call. The system automatically detects 
 - **hibernate**: Auto-hibernate after idle period (default: true). Set false for always-on services.
 - **expose**: Whether to expose via reverse proxy (default: true). Set false for background workers.
 
+### Logs
+
+App output (stdout and stderr) is written to `apps/{id}/logs/app.log`. Read it with the shell tool to debug issues.
+
 ### Environment Variables
 
-For service mode, your app receives these environment variables:
+For service mode, your app receives:
 
 - **PORT** — The port your app must listen on.
-- **BASE_PATH** — The URL prefix where your app is served (e.g. `/apps/my-dashboard/`). All internal URLs, API routes, and asset references must be relative to this path.
 
-```python
-import os
-port = int(os.environ.get("PORT", 8000))
-base_path = os.environ.get("BASE_PATH", "/")
-```
+Your app is served behind a reverse proxy. The proxy strips the path prefix on inbound requests, so your server-side code sees requests at `/`.
 
-**Important:** Your app is served behind a reverse proxy at `BASE_PATH`. All fetch calls, links, and asset references in your HTML/JS must use paths relative to `BASE_PATH`, not absolute paths from `/`. For example, use `fetch('api/prices')` (relative) or `fetch(BASE_PATH + 'api/prices')`, never `fetch('/api/prices')`.
+**Important:** In client-side code (HTML, JavaScript), always use **relative paths** without a leading slash. For example, use `fetch('api/prices')` not `fetch('/api/prices')`, and `<a href="login">` not `<a href="/login">`. Absolute paths (starting with `/`) bypass the app proxy and hit the main server instead.
 
 The full JSON Schema for the manifest is available at: {{schema_path}}
 
