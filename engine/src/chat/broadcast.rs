@@ -144,10 +144,17 @@ fn map_event_to_sse(event: &BroadcastEvent) -> Option<Event> {
                         "description": description,
                     }),
                 )),
-                InferenceEventKind::ToolResult { name, success, .. } => Some(sse_event(
-                    "tool_result",
-                    serde_json::json!({ "chat_id": chat_id, "name": name, "success": success }),
+                InferenceEventKind::Reasoning(text) => Some(sse_event(
+                    "reasoning",
+                    serde_json::json!({ "chat_id": chat_id, "content": text }),
                 )),
+                InferenceEventKind::ToolResult { name, result, success } => {
+                    let summary: String = result.chars().take(200).collect();
+                    Some(sse_event(
+                        "tool_result",
+                        serde_json::json!({ "chat_id": chat_id, "name": name, "success": success, "summary": summary }),
+                    ))
+                }
                 InferenceEventKind::EntityUpdated { table, record_id, fields } => Some(sse_event(
                     "entity_updated",
                     serde_json::json!({

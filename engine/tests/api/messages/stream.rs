@@ -95,6 +95,7 @@ async fn event_stream_receives_chat_message_broadcast() {
         tool: None,
         attachments: vec![],
         contact_id: None,
+        reasoning: None,
         created_at: chrono::Utc::now(),
     };
     broadcast.broadcast_chat_message(&user_id, "chat-1", msg);
@@ -111,6 +112,7 @@ async fn event_stream_receives_chat_message_broadcast() {
         tool: None,
         attachments: vec![],
         contact_id: None,
+        reasoning: None,
         created_at: chrono::Utc::now(),
     };
     broadcast.broadcast_chat_message("other-user-id", "chat-2", other_msg);

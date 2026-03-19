@@ -35,10 +35,10 @@ async fn handle_inference_result(
 ) {
     match result {
         Ok(Ok(response)) => match response {
-            InferenceResponse::Completed { text: _, attachments, .. } => {
+            InferenceResponse::Completed { text: _, attachments, reasoning, .. } => {
                 if !accumulated.is_empty()
                     && let Ok(mut msg) = chat_service
-                        .save_assistant_message_with_tool_calls(chat_id, accumulated, None, attachments)
+                        .save_assistant_message_with_tool_calls(chat_id, accumulated, None, attachments, reasoning)
                         .await
                 {
                     presign_response(presign_svc, &mut msg, user_id, username).await;

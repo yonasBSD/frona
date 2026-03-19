@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 
 pub enum MockResponse {
     Text(String),
+    TextWithReasoning(String, String),
     ToolCalls(Vec<(String, String, Value)>),
     Error(InferenceError),
 }
@@ -68,6 +69,13 @@ impl ModelProvider for MockModelProvider {
         };
         match self.next_response() {
             MockResponse::Text(t) => Ok((vec![AssistantContent::text(&t)], usage)),
+            MockResponse::TextWithReasoning(text, reasoning) => {
+                let contents = vec![
+                    AssistantContent::Reasoning(rig::completion::message::Reasoning::new(&reasoning)),
+                    AssistantContent::text(&text),
+                ];
+                Ok((contents, usage))
+            }
             MockResponse::ToolCalls(calls) => {
                 let contents = calls
                     .into_iter()
@@ -87,14 +95,22 @@ impl ModelProvider for MockModelProvider {
         _system_prompt: &str,
         _chat_history: Vec<RigMessage>,
         _tools: Vec<RigToolDefinition>,
-        token_tx: mpsc::Sender<String>,
+        token_tx: mpsc::Sender<frona::inference::provider::StreamToken>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
     ) -> Result<Vec<AssistantContent>, InferenceError> {
         match self.next_response() {
             MockResponse::Text(t) => {
-                let _ = token_tx.send(t.clone()).await;
+                let _ = token_tx.send(frona::inference::provider::StreamToken::Text(t.clone())).await;
                 Ok(vec![AssistantContent::text(t)])
+            }
+            MockResponse::TextWithReasoning(text, reasoning) => {
+                let _ = token_tx.send(frona::inference::provider::StreamToken::Reasoning(reasoning.clone())).await;
+                let _ = token_tx.send(frona::inference::provider::StreamToken::Text(text.clone())).await;
+                Ok(vec![
+                    AssistantContent::Reasoning(rig::completion::message::Reasoning::new(&reasoning)),
+                    AssistantContent::text(text),
+                ])
             }
             MockResponse::ToolCalls(calls) => {
                 let contents = calls

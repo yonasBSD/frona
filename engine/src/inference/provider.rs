@@ -14,6 +14,11 @@ use crate::chat::broadcast::BroadcastService;
 use crate::core::metrics;
 use super::error::InferenceError;
 
+pub enum StreamToken {
+    Text(String),
+    Reasoning(String),
+}
+
 struct CompletionRequestBuilder<'a> {
     system_prompt: &'a str,
     chat_history: Vec<RigMessage>,
@@ -157,7 +162,7 @@ pub trait ModelProvider: Send + Sync {
         system_prompt: &str,
         chat_history: Vec<RigMessage>,
         tools: Vec<RigToolDefinition>,
-        token_tx: mpsc::Sender<String>,
+        token_tx: mpsc::Sender<StreamToken>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
     ) -> Result<Vec<AssistantContent>, InferenceError>;
@@ -233,7 +238,7 @@ where
         system_prompt: &str,
         chat_history: Vec<RigMessage>,
         tools: Vec<RigToolDefinition>,
-        token_tx: mpsc::Sender<String>,
+        token_tx: mpsc::Sender<StreamToken>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
     ) -> Result<Vec<AssistantContent>, InferenceError> {
@@ -278,7 +283,7 @@ where
 
         if !accumulated_text.is_empty() {
             if still_buffering {
-                let _ = token_tx.send(accumulated_text.clone()).await;
+                let _ = token_tx.send(StreamToken::Text(accumulated_text.clone())).await;
             }
             contents.insert(0, AssistantContent::text(&accumulated_text));
         }
@@ -295,7 +300,7 @@ where
 
 async fn consume_tool_stream<S, R>(
     mut stream: S,
-    token_tx: &mpsc::Sender<String>,
+    token_tx: &mpsc::Sender<StreamToken>,
     tool_names: &[String],
 ) -> Result<(String, Vec<AssistantContent>, bool), InferenceError>
 where
@@ -308,6 +313,9 @@ where
     let mut contents: Vec<AssistantContent> = Vec::new();
     let mut accumulated_text = String::new();
     let mut buffering = true;
+    let mut accumulated_reasoning = String::new();
+    let mut reasoning_id: Option<String> = None;
+    let mut reasoning_signature: Option<String> = None;
 
     while let Some(chunk) = stream.next().await {
         match chunk {
@@ -319,22 +327,44 @@ where
                             .iter()
                             .any(|name| accumulated_text.contains(name.as_str()));
                         if !has_tool_name {
-                            let _ = token_tx.send(accumulated_text.clone()).await;
+                            let _ = token_tx.send(StreamToken::Text(accumulated_text.clone())).await;
                             buffering = false;
                         }
                     }
                 } else {
-                    let _ = token_tx.send(text.text).await;
+                    let _ = token_tx.send(StreamToken::Text(text.text)).await;
                 }
             }
             Ok(rig::streaming::StreamedAssistantContent::ToolCall { tool_call, .. }) => {
                 contents.push(AssistantContent::ToolCall(tool_call));
+            }
+            Ok(rig::streaming::StreamedAssistantContent::Reasoning(r)) => {
+                let text = r.reasoning.join("");
+                accumulated_reasoning.push_str(&text);
+                reasoning_id = r.id;
+                reasoning_signature = r.signature;
+                let _ = token_tx.send(StreamToken::Reasoning(text)).await;
+            }
+            Ok(rig::streaming::StreamedAssistantContent::ReasoningDelta { id, reasoning }) => {
+                accumulated_reasoning.push_str(&reasoning);
+                if id.is_some() {
+                    reasoning_id = id;
+                }
+                let _ = token_tx.send(StreamToken::Reasoning(reasoning)).await;
             }
             Ok(_) => {}
             Err(e) => {
                 return Err(InferenceError::CompletionFailed(e));
             }
         }
+    }
+
+    if !accumulated_reasoning.is_empty() {
+        contents.push(AssistantContent::Reasoning(
+            rig::completion::message::Reasoning::new(&accumulated_reasoning)
+                .optional_id(reasoning_id)
+                .with_signature(reasoning_signature),
+        ));
     }
 
     Ok((accumulated_text, contents, buffering))

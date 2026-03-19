@@ -160,6 +160,13 @@ pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage
             && let Some(calls) = tool_calls_val.as_array()
         {
             let mut items: Vec<AssistantContent> = Vec::new();
+            if let Some(r) = &msg.reasoning {
+                items.push(AssistantContent::Reasoning(
+                    rig::completion::message::Reasoning::new(&r.content)
+                        .optional_id(r.id.clone())
+                        .with_signature(r.signature.clone()),
+                ));
+            }
             if !msg.content.is_empty() {
                 items.push(AssistantContent::text(&msg.content));
             }
@@ -171,6 +178,21 @@ pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage
             }
             if items.is_empty() {
                 return None;
+            }
+            if let Ok(content) = rig::OneOrMany::many(items) {
+                return Some(RigMessage::Assistant { id: None, content });
+            }
+        }
+        if let Some(r) = &msg.reasoning {
+            let mut items: Vec<AssistantContent> = vec![
+                AssistantContent::Reasoning(
+                    rig::completion::message::Reasoning::new(&r.content)
+                        .optional_id(r.id.clone())
+                        .with_signature(r.signature.clone()),
+                ),
+            ];
+            if !msg.content.is_empty() {
+                items.push(AssistantContent::text(&msg.content));
             }
             if let Ok(content) = rig::OneOrMany::many(items) {
                 return Some(RigMessage::Assistant { id: None, content });
@@ -309,6 +331,7 @@ mod tests {
             attachments: vec![],
             contact_id: None,
             system_prompt: None,
+            reasoning: None,
             created_at: Utc::now(),
         }
     }
@@ -463,5 +486,74 @@ mod tests {
         let text = format_files_block_simple(&msg.content, &msg.attachments);
         assert!(text.contains("Task done"));
         assert!(text.contains("output.csv"));
+    }
+
+    #[test]
+    fn agent_with_reasoning_includes_reasoning_in_assistant_message() {
+        use crate::chat::message::models::Reasoning;
+
+        let msg = Message {
+            agent_id: Some("agent-1".to_string()),
+            reasoning: Some(Reasoning {
+                id: Some("reasoning-1".to_string()),
+                content: "Let me think about this...".to_string(),
+                signature: Some("sig-abc".to_string()),
+            }),
+            ..make_message(MessageRole::Agent, "Here is my answer")
+        };
+        let result = convert_agent_message(&msg, "agent-1");
+        assert!(result.is_some());
+        let rig_msg = result.unwrap();
+        if let RigMessage::Assistant { content, .. } = &rig_msg {
+            let has_reasoning = content.iter().any(|c| matches!(c, AssistantContent::Reasoning(_)));
+            assert!(has_reasoning, "Expected reasoning content in assistant message");
+            let has_text = content.iter().any(|c| matches!(c, AssistantContent::Text(_)));
+            assert!(has_text, "Expected text content in assistant message");
+        } else {
+            panic!("Expected Assistant message");
+        }
+    }
+
+    #[test]
+    fn agent_with_reasoning_and_tool_calls_includes_reasoning() {
+        use crate::chat::message::models::Reasoning;
+
+        let tool_calls = serde_json::json!([{
+            "id": "tc-1",
+            "name": "web_search",
+            "arguments": {"query": "test"}
+        }]);
+        let msg = Message {
+            agent_id: Some("agent-1".to_string()),
+            tool_calls: Some(tool_calls),
+            reasoning: Some(Reasoning {
+                id: None,
+                content: "I should search for this.".to_string(),
+                signature: None,
+            }),
+            ..make_message(MessageRole::Agent, "searching...")
+        };
+        let result = convert_agent_message(&msg, "agent-1");
+        assert!(result.is_some());
+        let rig_msg = result.unwrap();
+        if let RigMessage::Assistant { content, .. } = &rig_msg {
+            let reasoning_count = content.iter().filter(|c| matches!(c, AssistantContent::Reasoning(_))).count();
+            assert_eq!(reasoning_count, 1);
+            let tool_call_count = content.iter().filter(|c| matches!(c, AssistantContent::ToolCall(_))).count();
+            assert_eq!(tool_call_count, 1);
+        } else {
+            panic!("Expected Assistant message");
+        }
+    }
+
+    #[test]
+    fn agent_without_reasoning_is_unchanged() {
+        let msg = make_agent_message("hello", "agent-1");
+        let result = convert_agent_message(&msg, "agent-1");
+        assert!(result.is_some());
+        if let RigMessage::Assistant { content, .. } = result.unwrap() {
+            let has_reasoning = content.iter().any(|c| matches!(c, AssistantContent::Reasoning(_)));
+            assert!(!has_reasoning);
+        }
     }
 }

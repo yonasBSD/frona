@@ -402,7 +402,7 @@ async fn execute_background_agent(
                 let _ = state
                     .chat_service
                     .save_assistant_message_with_tool_calls(
-                        chat_id, text, None, attachments,
+                        chat_id, text, None, attachments, None,
                     )
                     .await;
             }

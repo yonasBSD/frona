@@ -180,7 +180,7 @@ impl TaskExecutor {
 
             match result {
                 Ok(execution::AgentLoopOutcome { response }) => match response {
-                    InferenceResponse::Completed { text, attachments, lifecycle_event } => {
+                    InferenceResponse::Completed { text, attachments, lifecycle_event, .. } => {
                         self.save_assistant_message_if_needed(
                             &task,
                             &chat_id,
@@ -425,6 +425,7 @@ impl TaskExecutor {
                     accumulated_text.to_string(),
                     None,
                     attachments,
+                    None,
                 )
                 .await
             {

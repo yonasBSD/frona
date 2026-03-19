@@ -27,7 +27,7 @@ pub struct AgentConfig {
 
 use super::models::{ChatResponse, CreateChatRequest, UpdateChatRequest};
 use super::message::models::{MessageResponse, SendMessageRequest};
-use super::message::models::{Message, MessageRole, MessageTool, ToolStatus};
+use super::message::models::{Message, MessageRole, MessageTool, Reasoning, ToolStatus};
 use super::message::repository::MessageRepository;
 use super::models::Chat;
 use super::repository::ChatRepository;
@@ -339,7 +339,7 @@ impl ChatService {
         chat_id: &str,
         content: String,
     ) -> Result<MessageResponse, AppError> {
-        self.save_assistant_message_with_tool_calls(chat_id, content, None, vec![]).await
+        self.save_assistant_message_with_tool_calls(chat_id, content, None, vec![], None).await
     }
 
     pub async fn save_assistant_message_with_tool_calls(
@@ -348,6 +348,7 @@ impl ChatService {
         content: String,
         tool_calls: Option<serde_json::Value>,
         attachments: Vec<crate::storage::Attachment>,
+        reasoning: Option<Reasoning>,
     ) -> Result<MessageResponse, AppError> {
         let chat = self.chat_repo.find_by_id(chat_id).await?.ok_or_else(|| {
             AppError::NotFound("Chat not found".into())
@@ -357,6 +358,9 @@ impl ChatService {
             .attachments(attachments);
         if let Some(tc) = tool_calls {
             builder = builder.tool_calls(tc);
+        }
+        if let Some(r) = reasoning {
+            builder = builder.reasoning(r);
         }
         self.save_message(builder.build()).await
     }
@@ -494,6 +498,7 @@ impl ChatService {
                 accumulated_text,
                 Some(tool_calls_json),
                 vec![],
+                None,
             )
             .await;
 

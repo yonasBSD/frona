@@ -63,6 +63,7 @@ fn test_message(chat_id: &str, content: &str) -> Message {
         attachments: vec![],
         contact_id: None,
         system_prompt: None,
+        reasoning: None,
         created_at: Utc::now(),
     }
 }
@@ -508,4 +509,83 @@ async fn test_find_attachments_scoped_to_chat() {
     let attachments = msg_repo.find_attachments_by_chat_id(&chat_a.id).await.unwrap();
     assert_eq!(attachments.len(), 1);
     assert_eq!(attachments[0].filename, "a.txt");
+}
+
+// ---------------------------------------------------------------------------
+// Reasoning integration tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_message_with_reasoning_round_trips_through_db() {
+    use frona::chat::message::models::Reasoning;
+
+    let db = test_db().await;
+    let msg_repo = SurrealMessageRepo::new(db.clone());
+    let chat_repo = SurrealChatRepo::new(db);
+
+    let chat = test_chat("user-1", "system", None);
+    chat_repo.create(&chat).await.unwrap();
+
+    let mut msg = test_message(&chat.id, "Here is my answer");
+    msg.role = MessageRole::Agent;
+    msg.reasoning = Some(Reasoning {
+        id: Some("r-123".to_string()),
+        content: "Let me think about this carefully...".to_string(),
+        signature: Some("sig-abc-def".to_string()),
+    });
+
+    msg_repo.create(&msg).await.unwrap();
+
+    let found = msg_repo.find_by_chat_id(&chat.id).await.unwrap();
+    assert_eq!(found.len(), 1);
+
+    let r = found[0].reasoning.as_ref().expect("reasoning should be persisted");
+    assert_eq!(r.id, Some("r-123".to_string()));
+    assert_eq!(r.content, "Let me think about this carefully...");
+    assert_eq!(r.signature, Some("sig-abc-def".to_string()));
+}
+
+#[tokio::test]
+async fn test_message_without_reasoning_backward_compat() {
+    let db = test_db().await;
+    let msg_repo = SurrealMessageRepo::new(db.clone());
+    let chat_repo = SurrealChatRepo::new(db);
+
+    let chat = test_chat("user-1", "system", None);
+    chat_repo.create(&chat).await.unwrap();
+
+    let msg = test_message(&chat.id, "no reasoning here");
+    msg_repo.create(&msg).await.unwrap();
+
+    let found = msg_repo.find_by_chat_id(&chat.id).await.unwrap();
+    assert_eq!(found.len(), 1);
+    assert!(found[0].reasoning.is_none());
+}
+
+#[tokio::test]
+async fn test_message_reasoning_with_no_signature() {
+    use frona::chat::message::models::Reasoning;
+
+    let db = test_db().await;
+    let msg_repo = SurrealMessageRepo::new(db.clone());
+    let chat_repo = SurrealChatRepo::new(db);
+
+    let chat = test_chat("user-1", "system", None);
+    chat_repo.create(&chat).await.unwrap();
+
+    let mut msg = test_message(&chat.id, "response");
+    msg.role = MessageRole::Agent;
+    msg.reasoning = Some(Reasoning {
+        id: None,
+        content: "Quick thought".to_string(),
+        signature: None,
+    });
+
+    msg_repo.create(&msg).await.unwrap();
+
+    let found = msg_repo.find_by_chat_id(&chat.id).await.unwrap();
+    let r = found[0].reasoning.as_ref().unwrap();
+    assert!(r.id.is_none());
+    assert_eq!(r.content, "Quick thought");
+    assert!(r.signature.is_none());
 }

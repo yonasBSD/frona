@@ -13,7 +13,7 @@ use crate::core::metrics::{self, InferenceMetricsContext};
 use super::config::{ModelGroup, RetryConfig};
 use super::context::truncate_history;
 use super::error::InferenceError;
-use super::provider::ModelRef;
+use super::provider::{ModelRef, StreamToken};
 use super::registry::ModelProviderRegistry;
 use super::tool_loop::{InferenceEvent, InferenceEventKind};
 
@@ -189,17 +189,26 @@ pub async fn stream_with_retry_and_fallback(
     let model_str = model_group.main.as_str();
 
     let result = (|| async {
-        let (text_tx, text_rx) = mpsc::channel::<String>(64);
+        let (text_tx, text_rx) = mpsc::channel::<StreamToken>(64);
 
         let event_tx_clone = event_tx.clone();
         let forward_handle = tokio::spawn(async move {
             let mut text_rx = text_rx;
             let mut text = String::new();
             while let Some(token) = text_rx.recv().await {
-                text.push_str(&token);
-                event_tx_clone.send(InferenceEvent {
-                    kind: InferenceEventKind::Text(token),
-                });
+                match token {
+                    StreamToken::Text(t) => {
+                        text.push_str(&t);
+                        event_tx_clone.send(InferenceEvent {
+                            kind: InferenceEventKind::Text(t),
+                        });
+                    }
+                    StreamToken::Reasoning(r) => {
+                        event_tx_clone.send(InferenceEvent {
+                            kind: InferenceEventKind::Reasoning(r),
+                        });
+                    }
+                }
             }
             text
         });

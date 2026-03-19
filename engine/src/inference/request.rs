@@ -15,6 +15,8 @@ use super::config::ModelGroup;
 use super::registry::ModelProviderRegistry;
 use crate::chat::message::models::MessageTool;
 
+use crate::chat::message::models::Reasoning;
+
 use super::tool_loop::ToolCallResult;
 
 pub struct InferenceContext {
@@ -65,6 +67,7 @@ pub enum InferenceResponse {
         text: String,
         attachments: Vec<crate::storage::Attachment>,
         lifecycle_event: Option<MessageTool>,
+        reasoning: Option<Reasoning>,
     },
     Cancelled(String),
     ExternalToolPending {

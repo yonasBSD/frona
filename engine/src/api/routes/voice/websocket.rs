@@ -201,6 +201,7 @@ async fn handle_voice_turn(
                         accumulated_text,
                         Some(tool_calls_json),
                         vec![],
+                        None,
                     )
                     .await
                     .ok();
@@ -255,6 +256,7 @@ async fn handle_voice_turn(
                         accumulated_text.clone(),
                         Some(tool_calls_json),
                         vec![],
+                        None,
                     )
                     .await
                     .ok();

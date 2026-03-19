@@ -63,7 +63,7 @@ pub async fn resume_agent_loop(
 
     match result {
         Ok(AgentLoopOutcome { response }) => match response {
-            InferenceResponse::Completed { text, attachments, .. } => {
+            InferenceResponse::Completed { text, attachments, reasoning, .. } => {
                 if !text.is_empty()
                     && let Ok(mut msg) = state
                         .chat_service
@@ -72,6 +72,7 @@ pub async fn resume_agent_loop(
                             text,
                             None,
                             attachments,
+                            reasoning,
                         )
                         .await
                 {

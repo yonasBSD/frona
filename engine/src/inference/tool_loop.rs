@@ -9,7 +9,7 @@ use rig::completion::{AssistantContent, Message as RigMessage};
 use tokio_util::sync::CancellationToken;
 
 use crate::chat::broadcast::EventSender;
-use crate::chat::message::models::MessageTool;
+use crate::chat::message::models::{MessageTool, Reasoning};
 use crate::core::error::AppError;
 use crate::core::metrics::{self, InferenceMetricsContext};
 use crate::tool::registry::AgentToolRegistry;
@@ -27,6 +27,7 @@ pub struct InferenceEvent {
 #[derive(Debug, Clone)]
 pub enum InferenceEventKind {
     Text(String),
+    Reasoning(String),
     ToolCall {
         name: String,
         arguments: serde_json::Value,
@@ -63,6 +64,7 @@ pub enum ToolLoopOutcome {
         text: String,
         attachments: Vec<crate::storage::Attachment>,
         lifecycle_event: Option<MessageTool>,
+        reasoning: Option<Reasoning>,
     },
     Cancelled(String),
     ExternalToolPending {
@@ -72,6 +74,20 @@ pub enum ToolLoopOutcome {
         external_tool: Box<ToolCallResult>,
         system_prompt: Option<String>,
     },
+}
+
+pub fn extract_reasoning(contents: &[AssistantContent]) -> Option<Reasoning> {
+    contents.iter().find_map(|c| {
+        if let AssistantContent::Reasoning(r) = c {
+            Some(Reasoning {
+                id: r.id.clone(),
+                content: r.reasoning.join(""),
+                signature: r.signature.clone(),
+            })
+        } else {
+            None
+        }
+    })
 }
 
 fn to_rig_tool_definitions(defs: &[ToolDefinition]) -> Vec<RigToolDefinition> {
@@ -318,6 +334,7 @@ pub async fn run_tool_loop(
     let mut accumulated_text = String::new();
     let mut all_attachments: Vec<crate::storage::Attachment> = Vec::new();
     let mut current_system_prompt = system_prompt.to_string();
+    let mut last_reasoning: Option<Reasoning> = None;
 
     let max_tool_turns = model_group.inference.max_tool_turns;
     for turn in 0..max_tool_turns {
@@ -367,6 +384,8 @@ pub async fn run_tool_loop(
                 return Ok(ToolLoopOutcome::Cancelled(accumulated_text));
             }
         };
+
+        last_reasoning = extract_reasoning(&contents);
 
         let has_tool_calls =
             process_model_response(&contents, &event_tx, &mut chat_history).await;
@@ -426,6 +445,7 @@ pub async fn run_tool_loop(
                 text: accumulated_text,
                 attachments: all_attachments,
                 lifecycle_event,
+                reasoning: last_reasoning,
             });
         }
 
@@ -447,5 +467,51 @@ pub async fn run_tool_loop(
         text: accumulated_text,
         attachments: all_attachments,
         lifecycle_event: None,
+        reasoning: last_reasoning,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rig::completion::AssistantContent;
+
+    #[test]
+    fn extract_reasoning_from_contents() {
+        let contents = vec![
+            AssistantContent::Reasoning(
+                rig::completion::message::Reasoning::new("thinking hard")
+                    .with_id("r-1".to_string())
+                    .with_signature(Some("sig-123".to_string())),
+            ),
+            AssistantContent::text("final answer"),
+        ];
+        let r = extract_reasoning(&contents);
+        assert!(r.is_some());
+        let r = r.unwrap();
+        assert_eq!(r.content, "thinking hard");
+        assert_eq!(r.id, Some("r-1".to_string()));
+        assert_eq!(r.signature, Some("sig-123".to_string()));
+    }
+
+    #[test]
+    fn extract_reasoning_returns_none_when_absent() {
+        let contents = vec![
+            AssistantContent::text("just text"),
+        ];
+        assert!(extract_reasoning(&contents).is_none());
+    }
+
+    #[test]
+    fn extract_reasoning_joins_multi_chunk() {
+        let contents = vec![
+            AssistantContent::Reasoning(
+                rig::completion::message::Reasoning::multi(
+                    vec!["chunk1 ".to_string(), "chunk2".to_string()],
+                ),
+            ),
+        ];
+        let r = extract_reasoning(&contents).unwrap();
+        assert_eq!(r.content, "chunk1 chunk2");
+    }
 }

@@ -759,7 +759,7 @@ impl frona::inference::provider::ModelProvider for StreamingMockProvider {
         _system_prompt: &str,
         _chat_history: Vec<rig::completion::Message>,
         _tools: Vec<rig::completion::request::ToolDefinition>,
-        token_tx: mpsc::Sender<String>,
+        token_tx: mpsc::Sender<frona::inference::provider::StreamToken>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
     ) -> Result<Vec<rig::completion::AssistantContent>, InferenceError> {
@@ -767,7 +767,7 @@ impl frona::inference::provider::ModelProvider for StreamingMockProvider {
         let mut full_text = String::new();
         for token in &self.tokens {
             full_text.push_str(token);
-            let _ = token_tx.send(token.clone()).await;
+            let _ = token_tx.send(frona::inference::provider::StreamToken::Text(token.clone())).await;
             tokio::time::sleep(self.delay_between).await;
         }
         Ok(vec![rig::completion::AssistantContent::text(full_text)])
@@ -871,5 +871,219 @@ async fn test_streaming_tokens_arrive_individually() {
     assert!(
         burst_pct < 30.0,
         "{burst_pct:.0}% of tokens arrived in bursts — channel pipeline is batching"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// reasoning support tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_tool_loop_reasoning_in_completed_outcome() {
+    init_metrics();
+
+    let provider = Arc::new(MockModelProvider::new(vec![
+        MockResponse::TextWithReasoning(
+            "The answer is 42.".into(),
+            "Let me think step by step...".into(),
+        ),
+    ]));
+    let registry = test_registry_with_provider("mock", provider);
+    let model_group = test_model_group();
+    let tool_registry = AgentToolRegistry::new();
+    let (event_sender, mut sse_rx, _broadcast) = test_event_sender();
+    let cancel = CancellationToken::new();
+    let ctx = mock_context();
+    let metrics = test_metrics_ctx();
+
+    let outcome = run_tool_loop(
+        &registry,
+        &model_group,
+        "system",
+        vec![RigMessage::user("what is the meaning of life?")],
+        &tool_registry,
+        event_sender,
+        cancel,
+        &ctx,
+        &metrics,
+    )
+    .await
+    .unwrap();
+
+    match outcome {
+        ToolLoopOutcome::Completed { text, reasoning, .. } => {
+            assert!(text.contains("The answer is 42."));
+            let r = reasoning.expect("reasoning should be present");
+            assert_eq!(r.content, "Let me think step by step...");
+        }
+        other => panic!("Expected Completed, got {other:?}"),
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let frames = drain_sse_frames(&mut sse_rx).await;
+
+    let saw_reasoning = frames.iter().any(|f| {
+        f.event == "reasoning" && f.data["content"] == "Let me think step by step..."
+    });
+    assert!(saw_reasoning, "Should emit reasoning SSE event");
+
+    let saw_text = frames
+        .iter()
+        .any(|f| f.event == "token" && f.data["content"] == "The answer is 42.");
+    assert!(saw_text, "Should emit token SSE event");
+}
+
+#[tokio::test]
+async fn test_tool_loop_reasoning_with_tool_calls() {
+    init_metrics();
+
+    let provider = Arc::new(MockModelProvider::new(vec![
+        MockResponse::ToolCalls(vec![(
+            "c1".into(),
+            "search".into(),
+            serde_json::json!({"query": "test"}),
+        )]),
+        MockResponse::TextWithReasoning(
+            "Found it.".into(),
+            "Based on the search results...".into(),
+        ),
+    ]));
+    let registry = test_registry_with_provider("mock", provider);
+    let model_group = test_model_group();
+    let mut tool_registry = AgentToolRegistry::new();
+    tool_registry.register(Arc::new(MockInternalTool::new(
+        "search",
+        vec!["search results".into()],
+    )));
+    let (event_sender, mut sse_rx, _broadcast) = test_event_sender();
+    let cancel = CancellationToken::new();
+    let ctx = mock_context();
+    let metrics = test_metrics_ctx();
+
+    let outcome = run_tool_loop(
+        &registry,
+        &model_group,
+        "system",
+        vec![RigMessage::user("search for something")],
+        &tool_registry,
+        event_sender,
+        cancel,
+        &ctx,
+        &metrics,
+    )
+    .await
+    .unwrap();
+
+    match outcome {
+        ToolLoopOutcome::Completed { text, reasoning, .. } => {
+            assert!(text.contains("Found it."));
+            let r = reasoning.expect("reasoning should be present from last turn");
+            assert_eq!(r.content, "Based on the search results...");
+        }
+        other => panic!("Expected Completed, got {other:?}"),
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let frames = drain_sse_frames(&mut sse_rx).await;
+
+    let saw_reasoning = frames.iter().any(|f| f.event == "reasoning");
+    assert!(saw_reasoning, "Should emit reasoning SSE event after tool call");
+}
+
+#[tokio::test]
+async fn test_tool_loop_no_reasoning_when_absent() {
+    init_metrics();
+
+    let provider = Arc::new(MockModelProvider::new(vec![MockResponse::Text(
+        "Plain text.".into(),
+    )]));
+    let registry = test_registry_with_provider("mock", provider);
+    let model_group = test_model_group();
+    let tool_registry = AgentToolRegistry::new();
+    let (event_sender, mut sse_rx, _broadcast) = test_event_sender();
+    let cancel = CancellationToken::new();
+    let ctx = mock_context();
+    let metrics = test_metrics_ctx();
+
+    let outcome = run_tool_loop(
+        &registry,
+        &model_group,
+        "system",
+        vec![RigMessage::user("hello")],
+        &tool_registry,
+        event_sender,
+        cancel,
+        &ctx,
+        &metrics,
+    )
+    .await
+    .unwrap();
+
+    match outcome {
+        ToolLoopOutcome::Completed { reasoning, .. } => {
+            assert!(reasoning.is_none(), "No reasoning expected for plain text");
+        }
+        other => panic!("Expected Completed, got {other:?}"),
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let frames = drain_sse_frames(&mut sse_rx).await;
+    let saw_reasoning = frames.iter().any(|f| f.event == "reasoning");
+    assert!(!saw_reasoning, "Should not emit reasoning event for plain text");
+}
+
+#[tokio::test]
+async fn test_tool_result_sse_includes_summary() {
+    init_metrics();
+
+    let provider = Arc::new(MockModelProvider::new(vec![
+        MockResponse::ToolCalls(vec![(
+            "c1".into(),
+            "lookup".into(),
+            serde_json::json!({}),
+        )]),
+        MockResponse::Text("Done.".into()),
+    ]));
+    let registry = test_registry_with_provider("mock", provider);
+    let model_group = test_model_group();
+    let mut tool_registry = AgentToolRegistry::new();
+    tool_registry.register(Arc::new(MockInternalTool::new(
+        "lookup",
+        vec!["detailed result data here".into()],
+    )));
+    let (event_sender, mut sse_rx, _broadcast) = test_event_sender();
+    let cancel = CancellationToken::new();
+    let ctx = mock_context();
+    let metrics = test_metrics_ctx();
+
+    let _outcome = run_tool_loop(
+        &registry,
+        &model_group,
+        "system",
+        vec![RigMessage::user("lookup something")],
+        &tool_registry,
+        event_sender,
+        cancel,
+        &ctx,
+        &metrics,
+    )
+    .await
+    .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let frames = drain_sse_frames(&mut sse_rx).await;
+
+    let tool_result_frame = frames
+        .iter()
+        .find(|f| f.event == "tool_result" && f.data["name"] == "lookup")
+        .expect("Should emit tool_result event");
+
+    assert!(
+        tool_result_frame.data.get("summary").is_some(),
+        "tool_result SSE should include summary field"
+    );
+    assert_eq!(
+        tool_result_frame.data["summary"].as_str().unwrap(),
+        "detailed result data here"
     );
 }

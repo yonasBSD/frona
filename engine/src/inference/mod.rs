@@ -32,6 +32,7 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
     };
 
     if request.tool_registry.is_empty() {
+        use tool_loop::extract_reasoning;
         let max_output = request
             .model_group
             .max_tokens
@@ -61,7 +62,8 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
         )
         .await?
         {
-            retry::StreamResult::Contents(_) => {
+            retry::StreamResult::Contents(contents) => {
+                let reasoning = extract_reasoning(&contents);
                 event_tx.send(InferenceEvent {
                     kind: InferenceEventKind::Done(accumulated_text.clone()),
                 });
@@ -69,6 +71,7 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
                     text: accumulated_text,
                     attachments: vec![],
                     lifecycle_event: None,
+                    reasoning,
                 })
             }
             retry::StreamResult::Cancelled => {
@@ -94,8 +97,8 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
         .await?;
 
         Ok(match outcome {
-            tool_loop::ToolLoopOutcome::Completed { text, attachments, lifecycle_event } => {
-                InferenceResponse::Completed { text, attachments, lifecycle_event }
+            tool_loop::ToolLoopOutcome::Completed { text, attachments, lifecycle_event, reasoning } => {
+                InferenceResponse::Completed { text, attachments, lifecycle_event, reasoning }
             }
             tool_loop::ToolLoopOutcome::Cancelled(text) => InferenceResponse::Cancelled(text),
             tool_loop::ToolLoopOutcome::ExternalToolPending {
