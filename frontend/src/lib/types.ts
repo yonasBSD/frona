@@ -149,6 +149,7 @@ export interface MessageResponse {
   tool?: MessageTool;
   attachments?: Attachment[];
   contact_id?: string;
+  reasoning?: string;
   created_at: string;
 }
 
@@ -233,6 +234,7 @@ export interface ToolCallStatus {
   id: number;
   name: string;
   description: string | null;
+  summary: string | null;
   status: "running" | "success" | "error" | "fading";
 }
 

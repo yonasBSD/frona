@@ -18,12 +18,14 @@ import type { ChatResponse, MessageResponse, CreateChatRequest, ToolCallStatus, 
 interface ChatStreamState {
   sending: boolean;
   streamingContent: string;
+  streamingReasoning: string;
   toolCalls: ToolCallStatus[];
+  completedToolCalls: ToolCallStatus[];
   nextToolId: number;
 }
 
 function emptyStreamState(): ChatStreamState {
-  return { sending: false, streamingContent: "", toolCalls: [], nextToolId: 0 };
+  return { sending: false, streamingContent: "", streamingReasoning: "", toolCalls: [], completedToolCalls: [], nextToolId: 0 };
 }
 
 // --- Module-level streaming state (only one SessionProvider exists) ---
@@ -58,7 +60,9 @@ function resetStream(chatId: string) {
   const s = getStream(chatId);
   s.sending = false;
   s.streamingContent = "";
+  s.streamingReasoning = "";
   s.toolCalls = [];
+  s.completedToolCalls = [];
   if (chatId === sessionStore.activeChatId && sessionStore.syncToReact) {
     sessionStore.syncToReact(chatId, s);
   }
@@ -76,7 +80,9 @@ interface SessionContextValue {
   sending: boolean;
   inferring: boolean;
   streamingContent: string | null;
+  streamingReasoning: string | null;
   activeToolCalls: ToolCallStatus[];
+  completedToolCalls: ToolCallStatus[];
   sendMessage: (content: string, attachments?: Attachment[]) => Promise<void>;
   stopGeneration: () => void;
   createChat: (req: CreateChatRequest) => Promise<ChatResponse>;
@@ -105,14 +111,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   // React state — always reflects the *active* chat's stream state.
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  const [streamingReasoning, setStreamingReasoning] = useState<string | null>(null);
   const [activeToolCalls, setActiveToolCalls] = useState<ToolCallStatus[]>([]);
+  const [completedToolCalls, setCompletedToolCalls] = useState<ToolCallStatus[]>([]);
 
   // Connect module-level sync to React state setters
   useEffect(() => {
     sessionStore.syncToReact = (_chatId: string, s: ChatStreamState) => {
       setSending(s.sending);
       setStreamingContent(s.streamingContent || null);
+      setStreamingReasoning(s.streamingReasoning || null);
       setActiveToolCalls(s.toolCalls);
+      setCompletedToolCalls(s.completedToolCalls);
     };
     return () => { sessionStore.syncToReact = null; };
   }, []);
@@ -125,11 +135,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const s = getStream(activeChatId);
       setSending(s.sending);
       setStreamingContent(s.streamingContent || null);
+      setStreamingReasoning(s.streamingReasoning || null);
       setActiveToolCalls(s.toolCalls);
+      setCompletedToolCalls(s.completedToolCalls);
     } else {
       setSending(false);
       setStreamingContent(null);
+      setStreamingReasoning(null);
       setActiveToolCalls([]);
+      setCompletedToolCalls([]);
       setActiveChat(null);
       setMessages([]);
     }
@@ -201,29 +215,38 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           s.streamingContent += content;
         });
       },
+      onReasoning: (chatId, content) => {
+        updateStream(chatId, (s) => {
+          if (!s.sending) s.sending = true;
+          s.streamingReasoning += content;
+        });
+      },
       onToolCall: (chatId, name, _args, description) => {
         if (name === "ask_user_question" || name === "request_user_takeover") return;
         updateStream(chatId, (s) => {
           const context = s.streamingContent.trim() || null;
-          s.streamingContent = "";
           const hasDescription = description && description !== name;
           const entry: ToolCallStatus = {
             id: s.nextToolId++,
             name,
             description: hasDescription ? description : context,
+            summary: null,
             status: "running",
           };
           s.toolCalls = [entry, ...s.toolCalls];
         });
       },
-      onToolResult: (chatId, name, success) => {
+      onToolResult: (chatId, name, success, summary) => {
         updateStream(chatId, (s) => {
           const idx = s.toolCalls.findIndex(
             (tc) => tc.name === name && tc.status === "running",
           );
           if (idx !== -1) {
             s.toolCalls = [...s.toolCalls];
-            s.toolCalls[idx] = { ...s.toolCalls[idx], status: success ? "success" : "error" };
+            const status: ToolCallStatus["status"] = success ? "success" : "error";
+            const completed: ToolCallStatus = { ...s.toolCalls[idx], status, summary: summary ?? null };
+            s.toolCalls[idx] = completed;
+            s.completedToolCalls = [...s.completedToolCalls, completed];
             scheduleFade(chatId, s.toolCalls[idx].id);
           }
         });
@@ -248,6 +271,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             id: s.nextToolId++,
             name: label,
             description: `Retrying in ${retryAfterSecs}s...`,
+            summary: null,
             status: "running",
           };
           s.toolCalls = [entry];
@@ -390,7 +414,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       updateStream(activeChatId, (s) => {
         s.sending = true;
         s.streamingContent = "";
+        s.streamingReasoning = "";
         s.toolCalls = [];
+        s.completedToolCalls = [];
       });
 
       const body = attachments?.length
@@ -442,7 +468,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         sending,
         inferring,
         streamingContent,
+        streamingReasoning,
         activeToolCalls,
+        completedToolCalls,
         sendMessage,
         stopGeneration,
         createChat,

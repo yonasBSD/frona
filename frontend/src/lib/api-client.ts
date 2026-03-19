@@ -240,8 +240,9 @@ export async function sendMessage(
 
 export interface StreamSessionCallbacks {
   onToken?: (chatId: string, content: string) => void;
+  onReasoning?: (chatId: string, content: string) => void;
   onToolCall?: (chatId: string, name: string, args: unknown, description?: string) => void;
-  onToolResult?: (chatId: string, name: string, success: boolean) => void;
+  onToolResult?: (chatId: string, name: string, success: boolean, summary?: string) => void;
   onEntityUpdated?: (chatId: string, table: string, recordId: string, fields: Record<string, unknown>) => void;
   onRetry?: (chatId: string, retryAfterSecs: number, reason: string) => void;
   onInferenceDone?: (chatId: string, message: MessageResponse) => void;
@@ -305,11 +306,14 @@ async function connectStream(
               case "token":
                 callbacks.onToken?.(chatId, parsed.content as string);
                 break;
+              case "reasoning":
+                callbacks.onReasoning?.(chatId, parsed.content as string);
+                break;
               case "tool_call":
                 callbacks.onToolCall?.(chatId, parsed.name as string, parsed.arguments, parsed.description as string | undefined);
                 break;
               case "tool_result":
-                callbacks.onToolResult?.(chatId, parsed.name as string, parsed.success as boolean);
+                callbacks.onToolResult?.(chatId, parsed.name as string, parsed.success as boolean, parsed.summary as string | undefined);
                 break;
               case "entity_updated":
                 callbacks.onEntityUpdated?.(chatId, parsed.table as string, parsed.record_id as string, parsed.fields as Record<string, unknown>);
