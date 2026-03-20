@@ -14,14 +14,13 @@ import { agentDisplayName } from "@/lib/types";
 import { DeleteConfirmDialog } from "@/components/nav/delete-confirm-dialog";
 
 export function ChatHeader() {
-  const { activeChat, pendingAgentId } = useSession();
+  const { activeChat, agentId: sessionAgentId } = useSession();
+  const agentId = sessionAgentId ?? undefined;
   const { agents, standaloneChats, archivedChats, archiveChat, unarchiveChat, deleteChat } = useNavigation();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-
-  const agentId = activeChat?.agent_id ?? pendingAgentId;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -34,8 +33,6 @@ export function ChatHeader() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [menuOpen]);
 
-  if (!agentId) return null;
-
   const agent = agents.find((a) => a.id === agentId);
   const agentName = agentDisplayName(agentId, agent?.name);
   const isArchived = !!activeChat?.archived_at;
@@ -44,7 +41,7 @@ export function ChatHeader() {
     if (!activeChat) return;
     setMenuOpen(false);
     await archiveChat(activeChat.id);
-    router.push("/chat?agent=system");
+    router.push("/chat");
   };
 
   const handleUnarchive = async () => {
@@ -60,7 +57,7 @@ export function ChatHeader() {
       neighborRoute(archivedChats, activeChat.id, (id) => `/chat?id=${id}`);
     setShowDeleteDialog(false);
     await deleteChat(activeChat.id);
-    router.push(next ?? "/chat?agent=system");
+    router.push(next ?? "/chat");
   };
 
   return (

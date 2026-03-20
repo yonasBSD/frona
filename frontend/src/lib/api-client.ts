@@ -35,7 +35,7 @@ async function refreshAccessToken(): Promise<string | null> {
   }
 }
 
-async function ensureAccessToken(): Promise<string | null> {
+export async function ensureAccessToken(): Promise<string | null> {
   if (accessToken) return accessToken;
   if (refreshPromise) return refreshPromise;
   refreshPromise = refreshAccessToken().finally(() => {
@@ -94,7 +94,7 @@ async function request<T>(
   return JSON.parse(text);
 }
 
-import type { MessageResponse, Attachment, FileEntry, Notification } from "./types";
+import type { MessageResponse, Attachment, FileEntry } from "./types";
 
 export async function uploadFile(file: File, relativePath?: string): Promise<Attachment> {
   const formData = new FormData();
@@ -236,165 +236,6 @@ export async function sendMessage(
     method: "POST",
     body: JSON.stringify(body),
   });
-}
-
-export interface StreamSessionCallbacks {
-  onToken?: (chatId: string, content: string) => void;
-  onReasoning?: (chatId: string, content: string) => void;
-  onToolCall?: (chatId: string, name: string, args: unknown, description?: string) => void;
-  onToolResult?: (chatId: string, name: string, success: boolean, summary?: string) => void;
-  onEntityUpdated?: (chatId: string, table: string, recordId: string, fields: Record<string, unknown>) => void;
-  onRetry?: (chatId: string, retryAfterSecs: number, reason: string) => void;
-  onInferenceDone?: (chatId: string, message: MessageResponse) => void;
-  onInferenceCancelled?: (chatId: string, reason: string) => void;
-  onInferenceError?: (chatId: string, error: string) => void;
-  onToolMessage?: (chatId: string, message: MessageResponse) => void;
-  onToolResolved?: (chatId: string, message: MessageResponse) => void;
-  onTitle?: (chatId: string, title: string) => void;
-  onChatMessage?: (chatId: string, message: MessageResponse) => void;
-  onTaskUpdate?: (taskId: string, status: string, sourceChatId: string | null, title: string, chatId: string | null, resultSummary: string | null) => void;
-  onInferenceCount?: (count: number) => void;
-  onNotification?: (notification: Notification) => void;
-}
-
-async function connectStream(
-  callbacks: StreamSessionCallbacks,
-  signal: AbortSignal,
-): Promise<void> {
-  const token = await ensureAccessToken();
-  const headers: Record<string, string> = {};
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/api/stream`, { headers, signal });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") return;
-    throw err;
-  }
-
-  if (!res.ok) {
-    throw new Error(`Stream connection failed: ${res.status}`);
-  }
-
-  const reader = res.body?.getReader();
-  if (!reader) return;
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let currentEvent = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          currentEvent = line.slice(7).trim();
-        } else if (line.startsWith("data: ")) {
-          try {
-            const parsed = JSON.parse(line.slice(6));
-            const chatId = (parsed.chat_id as string) ?? "";
-            switch (currentEvent) {
-              case "token":
-                callbacks.onToken?.(chatId, parsed.content as string);
-                break;
-              case "reasoning":
-                callbacks.onReasoning?.(chatId, parsed.content as string);
-                break;
-              case "tool_call":
-                callbacks.onToolCall?.(chatId, parsed.name as string, parsed.arguments, parsed.description as string | undefined);
-                break;
-              case "tool_result":
-                callbacks.onToolResult?.(chatId, parsed.name as string, parsed.success as boolean, parsed.summary as string | undefined);
-                break;
-              case "entity_updated":
-                callbacks.onEntityUpdated?.(chatId, parsed.table as string, parsed.record_id as string, parsed.fields as Record<string, unknown>);
-                break;
-              case "retry":
-                callbacks.onRetry?.(chatId, parsed.retry_after_secs as number, parsed.reason as string);
-                break;
-              case "inference_done":
-                callbacks.onInferenceDone?.(chatId, parsed.message as MessageResponse);
-                break;
-              case "inference_cancelled":
-                callbacks.onInferenceCancelled?.(chatId, parsed.reason as string);
-                break;
-              case "inference_error":
-                callbacks.onInferenceError?.(chatId, parsed.error as string);
-                break;
-              case "tool_message":
-                callbacks.onToolMessage?.(chatId, parsed.message as MessageResponse);
-                break;
-              case "tool_resolved":
-                callbacks.onToolResolved?.(chatId, parsed.message as MessageResponse);
-                break;
-              case "title":
-                callbacks.onTitle?.(chatId, parsed.title as string);
-                break;
-              case "chat_message":
-                callbacks.onChatMessage?.(chatId, parsed.message as MessageResponse);
-                break;
-              case "task_update":
-                callbacks.onTaskUpdate?.(
-                  parsed.task_id as string,
-                  parsed.status as string,
-                  parsed.source_chat_id as string | null,
-                  parsed.title as string,
-                  parsed.chat_id as string | null,
-                  parsed.result_summary as string | null,
-                );
-                break;
-              case "inference_count":
-                callbacks.onInferenceCount?.(parsed.count as number);
-                break;
-              case "notification":
-                callbacks.onNotification?.(parsed.notification as Notification);
-                break;
-            }
-          } catch {
-            // skip malformed JSON
-          }
-          currentEvent = "";
-        }
-      }
-    }
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") return;
-    throw err;
-  }
-}
-
-export async function streamSession(
-  callbacks: StreamSessionCallbacks,
-  signal?: AbortSignal,
-): Promise<void> {
-  const ctrl = new AbortController();
-  if (signal) {
-    signal.addEventListener("abort", () => ctrl.abort());
-  }
-
-  let delay = 1000;
-  const maxDelay = 30000;
-
-  while (!ctrl.signal.aborted) {
-    try {
-      await connectStream(callbacks, ctrl.signal);
-      delay = 1000;
-    } catch {
-      if (ctrl.signal.aborted) return;
-    }
-    if (ctrl.signal.aborted) return;
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay * 2, maxDelay);
-  }
 }
 
 export async function cancelGeneration(chatId: string): Promise<void> {
