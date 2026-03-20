@@ -56,7 +56,7 @@ export function TaskItem({ task }: TaskItemProps) {
     setShowDeleteDialog(false);
     await deleteTask(task.id);
     if (isActive) {
-      router.push(next ?? "/chat?agent=system");
+      router.push(next ?? "/chat");
     }
   };
 

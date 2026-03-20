@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import {
   FolderPlusIcon,
+  FolderIcon,
   PlusIcon,
   ArchiveBoxIcon,
   ChevronDownIcon,
@@ -28,16 +29,21 @@ export function ChatsTab() {
     unarchiveChat,
     deleteChat,
   } = useNavigation();
-  const { activeChatId } = useSession();
+  const { activeChatId, activeChat, setActiveChat } = useSession();
+  const selectedChatId = activeChatId ?? activeChat?.id ?? null;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeSpaceId = searchParams.get("space");
+  const pathname = usePathname();
+  const activeSpaceId = pathname === "/space"
+    ? searchParams.get("id")
+    : activeChat?.space_id ?? null;
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [spaceName, setSpaceName] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const handleNewChat = () => {
-    router.push("/chat?agent=system");
+    setActiveChat(null);
+    if (activeChatId) router.push("/chat");
   };
 
   const handleCreateSpace = async (e: React.FormEvent) => {
@@ -52,8 +58,8 @@ export function ChatsTab() {
 
   const handleArchive = async (chatId: string) => {
     await archiveChat(chatId);
-    if (activeChatId === chatId) {
-      router.push("/chat?agent=system");
+    if (selectedChatId === chatId) {
+      router.push("/chat");
     }
   };
 
@@ -63,14 +69,14 @@ export function ChatsTab() {
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
-    const wasActive = activeChatId === deleteTarget;
+    const wasActive = selectedChatId === deleteTarget;
     const next =
       neighborRoute(standaloneChats, deleteTarget, (id) => `/chat?id=${id}`) ??
       neighborRoute(archivedChats, deleteTarget, (id) => `/chat?id=${id}`);
     await deleteChat(deleteTarget);
     setDeleteTarget(null);
     if (wasActive) {
-      router.push(next ?? "/chat?agent=system");
+      router.push(next ?? "/chat");
     }
   };
 
@@ -107,13 +113,14 @@ export function ChatsTab() {
       {spaces.map((space) => (
         <button
           key={space.id}
-          onClick={() => router.push(`/chat?space=${space.id}`)}
-          className={`flex w-full items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
+          onClick={() => router.push(`/space?id=${space.id}`)}
+          className={`flex w-full items-center gap-1 rounded-lg px-3 py-2 text-sm font-medium transition ${
             activeSpaceId === space.id
               ? "bg-surface-tertiary text-text-primary"
               : "text-text-primary hover:bg-surface-secondary"
           }`}
         >
+          <FolderIcon className="h-4 w-4 shrink-0 text-text-tertiary" />
           <span className="truncate">{space.name}</span>
           <span className="ml-auto text-[10px] text-text-tertiary">
             {space.chats.length}
@@ -139,7 +146,7 @@ export function ChatsTab() {
             <div
               key={chat.id}
               className={`group flex items-center rounded-lg pr-1 transition ${
-                activeChatId === chat.id
+                selectedChatId === chat.id
                   ? "bg-surface-tertiary text-text-primary"
                   : "text-text-secondary hover:bg-surface-secondary"
               }`}
@@ -179,7 +186,7 @@ export function ChatsTab() {
             <div
               key={chat.id}
               className={`group flex items-center rounded-lg pr-1 transition ${
-                activeChatId === chat.id
+                selectedChatId === chat.id
                   ? "bg-surface-tertiary text-text-primary"
                   : "text-text-secondary hover:bg-surface-secondary"
               }`}

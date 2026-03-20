@@ -17,12 +17,13 @@ export function TopBar() {
   const router = useRouter();
   const pathname = usePathname();
   const { user, logout } = useAuth();
-  const { inferring } = useSession();
+  const { inferring, setActiveChat } = useSession();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const activeTab = topTabs.find((t) => pathname.startsWith(t.href))?.id ?? null;
+  const isChatRelated = pathname.startsWith("/chat") || pathname.startsWith("/home") || pathname.startsWith("/space");
+  const activeTab = isChatRelated ? "chat" : (topTabs.find((t) => pathname.startsWith(t.href))?.id ?? null);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -47,7 +48,7 @@ export function TopBar() {
       {/* Left: Logo + brand — matches nav panel width */}
       <div className="flex items-center justify-center shrink-0" style={{ width: 288 }}>
         <button
-          onClick={() => router.push("/chat")}
+          onClick={() => { setActiveChat(null); router.push("/home"); }}
           className="flex items-center gap-1 cursor-pointer"
         >
           <Logo size={68} animate={inferring} />

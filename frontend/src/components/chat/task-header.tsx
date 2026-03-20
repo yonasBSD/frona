@@ -73,7 +73,7 @@ export function TaskHeader() {
     const next = neighborRoute(tasks, activeTask.id, (id) => `/chat?task=${id}`);
     setShowDeleteDialog(false);
     await deleteTask(activeTask.id);
-    router.push(next ?? "/chat?agent=system");
+    router.push(next ?? "/chat");
   };
 
   return (
