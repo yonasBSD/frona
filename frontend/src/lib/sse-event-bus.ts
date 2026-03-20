@@ -1,0 +1,288 @@
+import { ensureAccessToken, API_URL } from "./api-client";
+import type { MessageResponse, Notification } from "./types";
+
+// --- Chat-scoped events ---
+
+export type ChatSSEEvent =
+  | { type: "token"; content: string }
+  | { type: "reasoning"; content: string }
+  | { type: "tool_call"; id: string; name: string; arguments: unknown; description?: string }
+  | { type: "tool_result"; name: string; success: boolean; summary?: string }
+  | { type: "tool_message"; message: MessageResponse }
+  | { type: "tool_resolved"; message: MessageResponse }
+  | { type: "chat_message"; message: MessageResponse }
+  | { type: "retry"; retryAfterSecs: number; reason: string }
+  | { type: "inference_done"; message: MessageResponse }
+  | { type: "inference_cancelled"; reason: string }
+  | { type: "inference_error"; error: string };
+
+// --- Global events ---
+
+export type GlobalSSEEvent =
+  | { type: "title"; chatId: string; title: string }
+  | { type: "entity_updated"; chatId: string; table: string; recordId: string; fields: Record<string, unknown> }
+  | { type: "task_update"; taskId: string; status: string; sourceChatId: string | null; title: string; chatId: string | null; resultSummary: string | null }
+  | { type: "inference_count"; count: number }
+  | { type: "notification"; notification: Notification };
+
+// --- Internal subscriber types ---
+
+interface ChatSubscriber {
+  chatId: string;
+  push: (event: ChatSSEEvent) => void;
+  close: () => void;
+}
+
+type GlobalListener = (event: GlobalSSEEvent) => void;
+
+class SSEEventBus {
+  private chatSubscribers = new Map<string, Set<ChatSubscriber>>();
+  private globalListeners = new Set<GlobalListener>();
+  private activeSignal: AbortSignal | null = null;
+
+  connect(signal: AbortSignal): void {
+    // Already connected with a live signal — skip
+    if (this.activeSignal && !this.activeSignal.aborted) return;
+    this.activeSignal = signal;
+    this.runLoop(signal);
+  }
+
+  subscribe(chatId: string, signal: AbortSignal): AsyncIterable<ChatSSEEvent> {
+    const bus = this;
+    return {
+      [Symbol.asyncIterator]() {
+        const queue: ChatSSEEvent[] = [];
+        let resolve: ((value: IteratorResult<ChatSSEEvent>) => void) | null = null;
+        let done = false;
+
+        const subscriber: ChatSubscriber = {
+          chatId,
+          push(event) {
+            if (done) return;
+            if (resolve) {
+              const r = resolve;
+              resolve = null;
+              r({ value: event, done: false });
+            } else {
+              queue.push(event);
+            }
+          },
+          close() {
+            done = true;
+            if (resolve) {
+              const r = resolve;
+              resolve = null;
+              r({ value: undefined as unknown as ChatSSEEvent, done: true });
+            }
+          },
+        };
+
+        let subs = bus.chatSubscribers.get(chatId);
+        if (!subs) {
+          subs = new Set();
+          bus.chatSubscribers.set(chatId, subs);
+        }
+        subs.add(subscriber);
+
+        const cleanup = () => {
+          subscriber.close();
+          subs!.delete(subscriber);
+          if (subs!.size === 0) bus.chatSubscribers.delete(chatId);
+        };
+
+        signal.addEventListener("abort", cleanup);
+
+        return {
+          next(): Promise<IteratorResult<ChatSSEEvent>> {
+            if (queue.length > 0) {
+              return Promise.resolve({ value: queue.shift()!, done: false });
+            }
+            if (done) {
+              return Promise.resolve({ value: undefined as unknown as ChatSSEEvent, done: true });
+            }
+            return new Promise((r) => { resolve = r; });
+          },
+          return(): Promise<IteratorResult<ChatSSEEvent>> {
+            cleanup();
+            return Promise.resolve({ value: undefined as unknown as ChatSSEEvent, done: true });
+          },
+        };
+      },
+    };
+  }
+
+  onGlobal(callback: GlobalListener): () => void {
+    this.globalListeners.add(callback);
+    return () => this.globalListeners.delete(callback);
+  }
+
+  private dispatchChat(chatId: string, event: ChatSSEEvent) {
+    const subs = this.chatSubscribers.get(chatId);
+    if (!subs) return;
+    for (const sub of subs) {
+      sub.push(event);
+    }
+  }
+
+  private dispatchGlobal(event: GlobalSSEEvent) {
+    for (const listener of this.globalListeners) {
+      listener(event);
+    }
+  }
+
+  private async runLoop(signal: AbortSignal) {
+    let delay = 1000;
+    const maxDelay = 30000;
+
+    while (!signal.aborted) {
+      try {
+        await this.connectStream(signal);
+        delay = 1000;
+      } catch {
+        if (signal.aborted) return;
+      }
+      if (signal.aborted) return;
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay * 2, maxDelay);
+    }
+    if (this.activeSignal === signal) {
+      this.activeSignal = null;
+    }
+  }
+
+  private async connectStream(signal: AbortSignal): Promise<void> {
+    const token = await ensureAccessToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}/api/stream`, { headers, signal });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      throw err;
+    }
+
+    if (!res.ok) throw new Error(`Stream connection failed: ${res.status}`);
+
+    const reader = res.body?.getReader();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let currentEvent = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            try {
+              const parsed = JSON.parse(line.slice(6));
+              const chatId = (parsed.chat_id as string) ?? "";
+              this.routeEvent(currentEvent, chatId, parsed);
+            } catch {
+              // skip malformed JSON
+            }
+            currentEvent = "";
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      throw err;
+    }
+  }
+
+  private routeEvent(eventType: string, chatId: string, parsed: Record<string, unknown>) {
+    switch (eventType) {
+      case "token":
+        this.dispatchChat(chatId, { type: "token", content: parsed.content as string });
+        break;
+      case "reasoning":
+        this.dispatchChat(chatId, { type: "reasoning", content: parsed.content as string });
+        break;
+      case "tool_call":
+        this.dispatchChat(chatId, {
+          type: "tool_call",
+          id: parsed.id as string,
+          name: parsed.name as string,
+          arguments: parsed.arguments,
+          description: parsed.description as string | undefined,
+        });
+        break;
+      case "tool_result":
+        this.dispatchChat(chatId, {
+          type: "tool_result",
+          name: parsed.name as string,
+          success: parsed.success as boolean,
+          summary: parsed.summary as string | undefined,
+        });
+        break;
+      case "tool_message":
+        this.dispatchChat(chatId, { type: "tool_message", message: parsed.message as MessageResponse });
+        break;
+      case "tool_resolved":
+        this.dispatchChat(chatId, { type: "tool_resolved", message: parsed.message as MessageResponse });
+        break;
+      case "chat_message":
+        this.dispatchChat(chatId, { type: "chat_message", message: parsed.message as MessageResponse });
+        break;
+      case "retry":
+        this.dispatchChat(chatId, {
+          type: "retry",
+          retryAfterSecs: parsed.retry_after_secs as number,
+          reason: parsed.reason as string,
+        });
+        break;
+      case "inference_done":
+        this.dispatchChat(chatId, { type: "inference_done", message: parsed.message as MessageResponse });
+        break;
+      case "inference_cancelled":
+        this.dispatchChat(chatId, { type: "inference_cancelled", reason: parsed.reason as string });
+        break;
+      case "inference_error":
+        this.dispatchChat(chatId, { type: "inference_error", error: parsed.error as string });
+        break;
+      case "title":
+        this.dispatchGlobal({ type: "title", chatId, title: parsed.title as string });
+        break;
+      case "entity_updated":
+        this.dispatchGlobal({
+          type: "entity_updated",
+          chatId,
+          table: parsed.table as string,
+          recordId: parsed.record_id as string,
+          fields: parsed.fields as Record<string, unknown>,
+        });
+        break;
+      case "task_update":
+        this.dispatchGlobal({
+          type: "task_update",
+          taskId: parsed.task_id as string,
+          status: parsed.status as string,
+          sourceChatId: parsed.source_chat_id as string | null,
+          title: parsed.title as string,
+          chatId: parsed.chat_id as string | null,
+          resultSummary: parsed.result_summary as string | null,
+        });
+        break;
+      case "inference_count":
+        this.dispatchGlobal({ type: "inference_count", count: parsed.count as number });
+        break;
+      case "notification":
+        this.dispatchGlobal({ type: "notification", notification: parsed.notification as Notification });
+        break;
+    }
+  }
+}
+
+export const sseBus = new SSEEventBus();
