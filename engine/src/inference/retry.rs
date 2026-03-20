@@ -237,7 +237,11 @@ pub async fn stream_with_retry_and_fallback(
                     chat_history.last(),
                     Some(RigMessage::User { content }) if content.iter().any(|c| matches!(c, UserContent::ToolResult(_)))
                 );
-                if last_is_tool_result {
+                let last_is_assistant = matches!(
+                    chat_history.last(),
+                    Some(RigMessage::Assistant { .. })
+                );
+                if last_is_tool_result || last_is_assistant {
                     metrics::record_inference_request(
                         metrics_ctx, model_id, provider_name, duration, None, "success",
                     );

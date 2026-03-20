@@ -80,6 +80,28 @@ pub enum MessageTool {
     },
 }
 
+impl MessageTool {
+    pub fn tool_status(&self) -> Option<&ToolStatus> {
+        match self {
+            Self::HumanInTheLoop { status, .. }
+            | Self::Question { status, .. }
+            | Self::VaultApproval { status, .. }
+            | Self::ServiceApproval { status, .. } => Some(status),
+            Self::TaskCompletion { .. } | Self::TaskDeferred { .. } => None,
+        }
+    }
+
+    pub fn tool_response(&self) -> Option<&str> {
+        match self {
+            Self::HumanInTheLoop { response, .. }
+            | Self::Question { response, .. }
+            | Self::VaultApproval { response, .. }
+            | Self::ServiceApproval { response, .. } => response.as_deref(),
+            Self::TaskCompletion { .. } | Self::TaskDeferred { .. } => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]
 #[entity(table = "message")]

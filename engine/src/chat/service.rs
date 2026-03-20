@@ -32,6 +32,19 @@ use super::message::repository::MessageRepository;
 use super::models::Chat;
 use super::repository::ChatRepository;
 
+pub enum ToolResolveResult {
+    Changed(MessageResponse),
+    AlreadyResolved(MessageResponse),
+}
+
+impl ToolResolveResult {
+    pub fn into_message(self) -> MessageResponse {
+        match self {
+            Self::Changed(msg) | Self::AlreadyResolved(msg) => msg,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ChatService {
     chat_repo: SurrealChatRepo,
@@ -400,72 +413,109 @@ impl ChatService {
         &self,
         message_id: &str,
         response: Option<String>,
-    ) -> Result<MessageResponse, AppError> {
+    ) -> Result<ToolResolveResult, AppError> {
         let mut message = self
             .message_repo
             .find_by_id(message_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
 
-        let response_text = response.clone()
+        let tool = message.tool.as_ref()
+            .ok_or_else(|| AppError::Validation("Message has no resolvable tool".into()))?;
+
+        if let Some(current_status) = tool.tool_status() {
+            match current_status {
+                ToolStatus::Resolved => {
+                    let existing = tool.tool_response().unwrap_or_default();
+                    let incoming = response.as_deref()
+                        .unwrap_or("Human resolved the request.");
+                    if existing == incoming {
+                        return Ok(ToolResolveResult::AlreadyResolved(message.into()));
+                    }
+                    return Err(AppError::Http {
+                        status: 409,
+                        message: "Tool message is already resolved with a different response".into(),
+                    });
+                }
+                ToolStatus::Denied => {
+                    return Err(AppError::Http {
+                        status: 409,
+                        message: "Tool message has already been denied".into(),
+                    });
+                }
+                ToolStatus::Pending => {}
+            }
+        } else {
+            return Err(AppError::Validation("Message has no resolvable tool".into()));
+        }
+
+        let response_text = response
             .unwrap_or_else(|| "Human resolved the request.".to_string());
 
         match &mut message.tool {
-            Some(MessageTool::HumanInTheLoop { status, response: resp, .. }) => {
+            Some(MessageTool::HumanInTheLoop { status, response: resp, .. })
+            | Some(MessageTool::Question { status, response: resp, .. })
+            | Some(MessageTool::VaultApproval { status, response: resp, .. })
+            | Some(MessageTool::ServiceApproval { status, response: resp, .. }) => {
                 *status = ToolStatus::Resolved;
                 *resp = Some(response_text.clone());
             }
-            Some(MessageTool::Question { status, response: resp, .. }) => {
-                *status = ToolStatus::Resolved;
-                *resp = Some(response_text.clone());
-            }
-            Some(MessageTool::VaultApproval { status, response: resp, .. }) => {
-                *status = ToolStatus::Resolved;
-                *resp = Some(response_text.clone());
-            }
-            Some(MessageTool::ServiceApproval { status, response: resp, .. }) => {
-                *status = ToolStatus::Resolved;
-                *resp = Some(response_text.clone());
-            }
-            _ => return Err(AppError::Validation("Message has no resolvable tool".into())),
+            _ => unreachable!(),
         }
 
         message.content = response_text;
 
         let updated = self.message_repo.update(&message).await?;
-        Ok(updated.into())
+        Ok(ToolResolveResult::Changed(updated.into()))
     }
 
     pub async fn deny_tool_message(
         &self,
         message_id: &str,
         response: Option<String>,
-    ) -> Result<MessageResponse, AppError> {
+    ) -> Result<ToolResolveResult, AppError> {
         let mut message = self
             .message_repo
             .find_by_id(message_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
 
+        let tool = message.tool.as_ref()
+            .ok_or_else(|| AppError::Validation("Message has no deniable tool".into()))?;
+
+        if let Some(current_status) = tool.tool_status() {
+            match current_status {
+                ToolStatus::Denied => {
+                    return Ok(ToolResolveResult::AlreadyResolved(message.into()));
+                }
+                ToolStatus::Resolved => {
+                    return Err(AppError::Http {
+                        status: 409,
+                        message: "Tool message has already been resolved".into(),
+                    });
+                }
+                ToolStatus::Pending => {}
+            }
+        } else {
+            return Err(AppError::Validation("Message has no deniable tool".into()));
+        }
+
         let response_text = response
             .unwrap_or_else(|| "User denied the request.".to_string());
 
         match &mut message.tool {
-            Some(MessageTool::VaultApproval { status, response: resp, .. }) => {
+            Some(MessageTool::VaultApproval { status, response: resp, .. })
+            | Some(MessageTool::ServiceApproval { status, response: resp, .. }) => {
                 *status = ToolStatus::Denied;
                 *resp = Some(response_text.clone());
             }
-            Some(MessageTool::ServiceApproval { status, response: resp, .. }) => {
-                *status = ToolStatus::Denied;
-                *resp = Some(response_text.clone());
-            }
-            _ => return Err(AppError::Validation("Message has no deniable tool".into())),
+            _ => unreachable!(),
         }
 
         message.content = response_text;
 
         let updated = self.message_repo.update(&message).await?;
-        Ok(updated.into())
+        Ok(ToolResolveResult::Changed(updated.into()))
     }
 
     pub async fn save_task_completion_message(

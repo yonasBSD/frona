@@ -88,26 +88,31 @@ async fn resolve_tool_message(
     Path((chat_id, message_id)): Path<(String, String)>,
     Json(req): Json<ResolveToolRequest>,
 ) -> Result<Json<MessageResponse>, ApiError> {
+    use crate::chat::service::ToolResolveResult;
+
     state
         .chat_service
         .get_chat(&auth.user_id, &chat_id)
         .await
         .map_err(ApiError::from)?;
 
-    let updated = state
+    let result = state
         .chat_service
         .resolve_tool_message(&message_id, req.response.clone())
         .await
         .map_err(ApiError::from)?;
 
-    let user_id = auth.user_id.clone();
-    let state = state.clone();
-
-    tokio::spawn(async move {
-        crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id).await;
-    });
-
-    Ok(Json(updated))
+    match result {
+        ToolResolveResult::Changed(msg) => {
+            let user_id = auth.user_id.clone();
+            let state = state.clone();
+            tokio::spawn(async move {
+                crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id).await;
+            });
+            Ok(Json(msg))
+        }
+        ToolResolveResult::AlreadyResolved(msg) => Ok(Json(msg)),
+    }
 }
 
 async fn event_stream(

@@ -29,6 +29,7 @@ pub enum InferenceEventKind {
     Text(String),
     Reasoning(String),
     ToolCall {
+        id: String,
         name: String,
         arguments: serde_json::Value,
         description: Option<String>,
@@ -134,6 +135,7 @@ async fn process_model_response(
                 .and_then(|v| v.as_str().map(String::from));
             event_tx.send(InferenceEvent {
                     kind: InferenceEventKind::ToolCall {
+                        id: tool_call.id.clone(),
                         name: tool_call.function.name.clone(),
                         arguments: args,
                         description,
@@ -250,15 +252,6 @@ async fn execute_tool_calls(
             }
         };
 
-        let success = tool_output.as_ref().is_some_and(|o| o.is_success());
-        event_tx.send(InferenceEvent {
-                kind: InferenceEventKind::ToolResult {
-                    name: tool_name.clone(),
-                    result: text.clone(),
-                    success,
-                },
-            });
-
         let td = tool_output.as_ref().and_then(|o| o.tool_data().cloned());
         let sp = tool_output.as_ref().and_then(|o| o.system_prompt().map(str::to_string));
 
@@ -282,6 +275,14 @@ async fn execute_tool_calls(
             result.has_external = true;
             result.external_tool_result = Some(tool_call_result);
         } else {
+            let success = tool_output.as_ref().is_some_and(|o| o.is_success());
+            event_tx.send(InferenceEvent {
+                kind: InferenceEventKind::ToolResult {
+                    name: tool_name.clone(),
+                    result: text.clone(),
+                    success,
+                },
+            });
             if let Some(sp_value) = sp {
                 result.accumulated_system_prompts.push(sp_value);
             }

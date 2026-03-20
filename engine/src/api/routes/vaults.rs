@@ -242,21 +242,22 @@ async fn approve_request(
             .chat_service
             .resolve_tool_message(&pending_msg.id, Some(result_text.clone()))
             .await
-            .map_err(ApiError::from)?;
+            .map_err(ApiError::from)?
+            .into_message();
 
         state.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
             user_id: auth.user_id.clone(),
             chat_id: Some(req.chat_id.clone()),
             kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: resolved },
         });
-    }
 
-    let user_id = auth.user_id.clone();
-    let chat_id = req.chat_id.clone();
-    let state_clone = state.clone();
-    tokio::spawn(async move {
-        crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
-    });
+        let user_id = auth.user_id.clone();
+        let chat_id = req.chat_id.clone();
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
+        });
+    }
 
     Ok(Json(serde_json::json!({ "approved": true })))
 }
@@ -289,21 +290,22 @@ async fn deny_request(
                 Some("User denied the credential request.".to_string()),
             )
             .await
-            .map_err(ApiError::from)?;
+            .map_err(ApiError::from)?
+            .into_message();
 
         state.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
             user_id: auth.user_id.clone(),
             chat_id: Some(req.chat_id.clone()),
             kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: denied },
         });
-    }
 
-    let user_id = auth.user_id.clone();
-    let chat_id = req.chat_id.clone();
-    let state_clone = state.clone();
-    tokio::spawn(async move {
-        crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
-    });
+        let user_id = auth.user_id.clone();
+        let chat_id = req.chat_id.clone();
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
+        });
+    }
 
     Ok(Json(serde_json::json!({ "denied": true })))
 }

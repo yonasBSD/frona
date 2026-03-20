@@ -138,7 +138,8 @@ async fn approve_service(
         .chat_service
         .resolve_tool_message(&pending_msg_id, Some("Deploying...".to_string()))
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApiError::from)?
+        .into_message();
 
     state.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
         user_id: auth.user_id.clone(),
@@ -179,7 +180,7 @@ async fn approve_service(
             ),
         };
 
-        if let Ok(msg) = state_clone
+        if let Ok(result) = state_clone
             .chat_service
             .resolve_tool_message(&pending_msg_id, Some(result_text))
             .await
@@ -187,7 +188,9 @@ async fn approve_service(
             state_clone.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
                 user_id: user_id.clone(),
                 chat_id: Some(chat_id.clone()),
-                kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: msg },
+                kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved {
+                    message: result.into_message(),
+                },
             });
         }
 
@@ -243,7 +246,8 @@ async fn deny_service(
                 Some("User denied the service deployment.".to_string()),
             )
             .await
-            .map_err(ApiError::from)?;
+            .map_err(ApiError::from)?
+            .into_message();
 
         state.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
             user_id: auth.user_id.clone(),

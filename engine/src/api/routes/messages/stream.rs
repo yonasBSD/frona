@@ -183,7 +183,8 @@ pub(crate) async fn stream_message(
             .chat_service
             .resolve_tool_message(&pending_id, Some(user_content))
             .await
-            .map_err(ApiError::from)?;
+            .map_err(ApiError::from)?
+            .into_message();
 
         let pending_conv_builder = DefaultConversationBuilder {
             user_service: state.user_service.clone(),
