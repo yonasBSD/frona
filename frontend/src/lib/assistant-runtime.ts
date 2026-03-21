@@ -49,7 +49,7 @@ function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
     };
   }
 
-  if (msg.role === "agent" || msg.role === "taskcompletion" || (msg.role === "toolresult" && msg.tool)) {
+  if (msg.role === "agent" || msg.role === "taskcompletion" || (msg.role === "toolresult" && msg.tool) || (msg.role === "system" && msg.tool)) {
     const content: Array<
       | { type: "text"; text: string }
       | { type: "reasoning"; text: string }
@@ -109,10 +109,14 @@ function mergeConsecutive(messages: ThreadMessageLike[]): ThreadMessageLike[] {
   const result: ThreadMessageLike[] = [];
   for (const msg of messages) {
     const prev = result[result.length - 1];
+    const prevAgentId = (prev?.metadata as Record<string, any>)?.custom?.agentId;
+    const msgAgentId = (msg.metadata as Record<string, any>)?.custom?.agentId;
+    const msgOriginalRole = (msg.metadata as Record<string, any>)?.custom?.originalRole;
     if (
       prev &&
       prev.role === msg.role &&
       msg.role === "assistant" &&
+      (prevAgentId === msgAgentId || msgOriginalRole === "system") &&
       prev.status?.type !== "requires-action"
     ) {
       // Merge content parts into the previous message

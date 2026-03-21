@@ -141,7 +141,7 @@ export type MessageTool =
 export interface MessageResponse {
   id: string;
   chat_id: string;
-  role: "user" | "agent" | "toolresult" | "taskcompletion" | "contact" | "livecall";
+  role: "user" | "agent" | "toolresult" | "taskcompletion" | "contact" | "livecall" | "system";
   content: string;
   agent_id?: string;
   tool_calls?: unknown[];

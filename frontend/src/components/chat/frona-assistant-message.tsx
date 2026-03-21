@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { MessagePrimitive } from "@assistant-ui/react";
+import { MessagePrimitive, useMessage } from "@assistant-ui/react";
 import { useThreadIsRunning } from "@assistant-ui/core/react";
 import { MarkdownText } from "./markdown-text";
 import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/16/solid";
@@ -133,7 +133,9 @@ function RetryBadge() {
 
 export function FronaAssistantMessage() {
   const { agentId: sessionAgentId } = useSession();
-  const agentId = sessionAgentId ?? undefined;
+  const message = useMessage();
+  const messageAgentId = (message.metadata as Record<string, any>)?.custom?.agentId;
+  const agentId = messageAgentId ?? sessionAgentId ?? undefined;
   const { agents } = useNavigation();
 
   const agent = agents.find((a) => a.id === agentId);

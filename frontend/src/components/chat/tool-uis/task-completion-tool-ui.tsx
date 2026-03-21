@@ -1,6 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { makeAssistantToolUI } from "@assistant-ui/react";
+import { useSession } from "@/lib/session-context";
+import { ArrowUpRightIcon, CheckCircleIcon, XCircleIcon } from "lucide-react";
 
 interface TaskCompletionArgs {
   task_id: string;
@@ -8,24 +11,37 @@ interface TaskCompletionArgs {
   status: string;
 }
 
+function TaskCompletionContent({ args }: { args: TaskCompletionArgs }) {
+  const { activeTaskId } = useSession();
+  const router = useRouter();
+  const isTaskView = activeTaskId === args.task_id;
+  const isError = args.status === "failed";
+
+  if (!isTaskView && !isError) {
+    return (
+      <button
+        onClick={() => router.push(`/chat?task=${args.task_id}`)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-secondary px-4 py-2 text-sm text-text-secondary my-2 cursor-pointer hover:bg-surface-tertiary transition-colors"
+      >
+        Ask Follow-up Questions
+        <ArrowUpRightIcon className="h-3.5 w-3.5" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 mt-2 text-sm text-text-tertiary">
+      {isError ? (
+        <XCircleIcon className="h-3.5 w-3.5 text-danger" />
+      ) : (
+        <CheckCircleIcon className="h-3.5 w-3.5 text-success" />
+      )}
+      <span>Marked the task as {isError ? "failed" : "completed"}.</span>
+    </div>
+  );
+}
+
 export const TaskCompletionToolUI = makeAssistantToolUI<TaskCompletionArgs, string>({
   toolName: "TaskCompletion",
-  render: ({ args }) => {
-    const isError = args.status === "failed";
-    const displayContent = isError
-      ? "Task marked as failed."
-      : "Task marked as complete.";
-
-    return (
-      <div
-        className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-base my-2 ${
-          isError
-            ? "border-danger/30 bg-danger-bg text-danger-text"
-            : "border-success/30 bg-success-bg text-success-text"
-        }`}
-      >
-        <span className="flex-1">{displayContent}</span>
-      </div>
-    );
-  },
+  render: ({ args }) => <TaskCompletionContent args={args} />,
 });
