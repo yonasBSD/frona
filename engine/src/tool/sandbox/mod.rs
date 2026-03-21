@@ -45,6 +45,7 @@ impl SandboxManager {
             skill_dirs: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: self.shared_read_paths.clone(),
+            shared_write_paths: Vec::new(),
         }
     }
 }
@@ -57,6 +58,7 @@ pub struct Sandbox {
     skill_dirs: Vec<(String, String)>,
     extra_env_vars: Vec<(String, String)>,
     shared_read_paths: Vec<String>,
+    shared_write_paths: Vec<String>,
 }
 
 impl Sandbox {
@@ -72,6 +74,11 @@ impl Sandbox {
 
     pub fn with_read_paths(mut self, paths: Vec<String>) -> Self {
         self.shared_read_paths.extend(paths);
+        self
+    }
+
+    pub fn with_write_paths(mut self, paths: Vec<String>) -> Self {
+        self.shared_write_paths.extend(paths);
         self
     }
 }
@@ -153,6 +160,7 @@ impl Sandbox {
             network_access: self.network_access,
             allowed_network_destinations: self.allowed_network_destinations.clone(),
             additional_read_paths: self.shared_read_paths.clone(),
+            additional_write_paths: self.shared_write_paths.clone(),
             additional_path_dirs,
             env_vars,
             ..Default::default()
@@ -283,6 +291,7 @@ mod tests {
             skill_dirs: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
+            shared_write_paths: Vec::new(),
         }
     }
 
@@ -323,6 +332,7 @@ mod tests {
             skill_dirs: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
+            shared_write_paths: Vec::new(),
         };
         ws.setup().unwrap();
 

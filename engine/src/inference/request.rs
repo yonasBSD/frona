@@ -26,6 +26,8 @@ pub struct InferenceContext {
     pub task: Option<Task>,
     pub event_tx: EventSender,
     pub vault_env_vars: Arc<RwLock<Vec<(String, String)>>>,
+    /// Resolved filesystem paths for files shared in this chat (from message attachments).
+    pub file_paths: Vec<String>,
 }
 
 impl InferenceContext {
@@ -42,6 +44,7 @@ impl InferenceContext {
             task: None,
             event_tx,
             vault_env_vars: Arc::new(RwLock::new(Vec::new())),
+            file_paths: Vec::new(),
         }
     }
 

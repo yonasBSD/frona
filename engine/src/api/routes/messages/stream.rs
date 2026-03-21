@@ -165,7 +165,7 @@ pub(crate) async fn stream_message(
 
     let crate::chat::session::ChatSessionContext {
         system_prompt, model_group, rig_history, registry, tool_registry,
-        tool_ctx, cancel_token, ..
+        mut tool_ctx, cancel_token, ..
     } = ctx;
 
     let event_sender = tool_ctx.event_tx.clone();
@@ -237,6 +237,16 @@ pub(crate) async fn stream_message(
         Ok(Json(user_response))
     } else {
         let attachments = req.attachments.clone();
+
+        // Add new message's attachment paths to the sandbox allowlist
+        for att in &attachments {
+            let resolved = crate::inference::conversation::resolve_attachment_path(
+                att, &state.user_service, &state.storage_service,
+            ).await;
+            if !tool_ctx.file_paths.contains(&resolved) {
+                tool_ctx.file_paths.push(resolved);
+            }
+        }
 
         let mut user_response = state
             .chat_service

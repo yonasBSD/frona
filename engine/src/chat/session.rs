@@ -7,7 +7,7 @@ use crate::chat::service::AgentConfig;
 use crate::core::error::AppError;
 use crate::core::state::AppState;
 use crate::inference::config::ModelGroup;
-use crate::inference::conversation::{ConversationBuilder, ConversationContext, DefaultConversationBuilder, TaskConversationBuilder};
+use crate::inference::conversation::{ConversationBuilder, ConversationContext, DefaultConversationBuilder, TaskConversationBuilder, resolve_attachment_path};
 use crate::inference::ModelProviderRegistry;
 use crate::tool::registry::AgentToolRegistry;
 use crate::tool::InferenceContext;
@@ -155,7 +155,19 @@ impl ChatSessionContext {
             .find_by_id(&chat.agent_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
+        // Collect resolved file paths from all chat attachments for sandbox access
+        let mut file_paths = Vec::new();
+        for msg in &stored_messages {
+            for att in &msg.attachments {
+                let resolved = resolve_attachment_path(att, &state.user_service, &state.storage_service).await;
+                if !file_paths.contains(&resolved) {
+                    file_paths.push(resolved);
+                }
+            }
+        }
+
         let mut tool_ctx = InferenceContext::new(user, agent, chat.clone(), event_sender);
+        tool_ctx.file_paths = file_paths;
         tool_ctx.task = task;
 
         let vault_env = state

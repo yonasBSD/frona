@@ -126,22 +126,26 @@ impl AgentTool for CliTool {
             })
             .collect();
 
-        let mut workspace = self.sandbox_manager.get_sandbox(
+        let mut sandbox = self.sandbox_manager.get_sandbox(
             agent_id,
             defaults.network_access,
             defaults.allowed_network_destinations,
         ).with_skill_dirs(skill_dirs);
 
+        if !ctx.file_paths.is_empty() {
+            sandbox = sandbox.with_write_paths(ctx.file_paths.clone());
+        }
+
         {
             let vault_vars = ctx.vault_env_vars.read().await;
             if !vault_vars.is_empty() {
-                workspace = workspace.with_extra_env_vars(vault_vars.clone());
+                sandbox = sandbox.with_extra_env_vars(vault_vars.clone());
             }
         }
 
         let timeout = self.config.timeout_secs.unwrap_or(30);
 
-        let output = workspace
+        let output = sandbox
             .execute(
                 &self.config.program,
                 &args_refs,

@@ -179,6 +179,10 @@ impl SandboxDriver for MacosDriver {
             builder = builder.read_subpath(path);
         }
 
+        for path in &config.additional_write_paths {
+            builder = builder.write_subpath(path);
+        }
+
         let profile = builder.build();
 
         let mut cmd = Command::new("sandbox-exec");
