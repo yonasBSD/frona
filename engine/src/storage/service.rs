@@ -40,17 +40,26 @@ impl StorageService {
     }
 
     pub fn resolve(&self, path: &VirtualPath) -> Result<PathBuf, AppError> {
-        match &path.namespace {
+        let resolved = match &path.namespace {
             Namespace::User(name) => {
                 let resolved = self.files_path.join(name).join(&path.relative);
                 validate_no_traversal(&resolved, self.files_path.to_str().unwrap_or(""))?;
-                Ok(resolved)
+                resolved
             }
             Namespace::Agent(name) => {
                 let resolved = self.workspaces_path.join(name).join(&path.relative);
                 validate_no_traversal(&resolved, self.workspaces_path.to_str().unwrap_or(""))?;
-                Ok(resolved)
+                resolved
             }
+        };
+
+        // Return absolute path so agents can access files regardless of working directory
+        if resolved.is_absolute() {
+            Ok(resolved)
+        } else {
+            Ok(std::env::current_dir()
+                .map(|cwd| cwd.join(&resolved))
+                .unwrap_or(resolved))
         }
     }
 
@@ -209,7 +218,8 @@ mod tests {
         let svc = test_service();
         let vp = VirtualPath::user("uid-123", "report.pdf");
         let result = svc.resolve(&vp).unwrap();
-        assert_eq!(result, PathBuf::from("data/files/uid-123/report.pdf"));
+        assert!(result.is_absolute());
+        assert!(result.ends_with("data/files/uid-123/report.pdf"));
     }
 
     #[test]
@@ -217,7 +227,8 @@ mod tests {
         let svc = test_service();
         let vp = VirtualPath::agent("dev", "output.csv");
         let result = svc.resolve(&vp).unwrap();
-        assert_eq!(result, PathBuf::from("data/workspaces/dev/output.csv"));
+        assert!(result.is_absolute());
+        assert!(result.ends_with("data/workspaces/dev/output.csv"));
     }
 
     #[test]
@@ -225,10 +236,8 @@ mod tests {
         let svc = test_service();
         let vp = VirtualPath::agent("dev", "subdir/nested/file.txt");
         let result = svc.resolve(&vp).unwrap();
-        assert_eq!(
-            result,
-            PathBuf::from("data/workspaces/dev/subdir/nested/file.txt")
-        );
+        assert!(result.is_absolute());
+        assert!(result.ends_with("data/workspaces/dev/subdir/nested/file.txt"));
     }
 
     #[test]
