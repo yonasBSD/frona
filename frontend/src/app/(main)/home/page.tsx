@@ -7,9 +7,8 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { api, API_URL } from "@/lib/api-client";
 import { useFronaRuntime } from "@/lib/assistant-runtime";
 import { useNavigation } from "@/lib/navigation-context";
-import { useSession } from "@/lib/session-context";
 import { FronaComposer } from "@/components/chat/frona-composer";
-import type { AppResponse, Attachment, ChatResponse } from "@/lib/types";
+import type { AppResponse, ChatResponse } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
   running: "bg-success",
@@ -129,21 +128,17 @@ function AppCard({
 function HomeComposer() {
   const router = useRouter();
   const { addStandaloneChat } = useNavigation();
-  const { setPendingMessage } = useSession();
 
-  const { runtime } = useFronaRuntime({ agentId: "system" });
+  const onChatCreated = useCallback((chat: ChatResponse) => {
+    addStandaloneChat(chat);
+    router.push(`/chat?id=${chat.id}`);
+  }, [addStandaloneChat, router]);
 
-  const handleSend = useCallback((content: string, attachments?: Attachment[]) => {
-    api.post<ChatResponse>("/api/chats", { agent_id: "system" }).then((chat) => {
-      addStandaloneChat(chat);
-      setPendingMessage(content, attachments);
-      router.push(`/chat?id=${chat.id}`);
-    });
-  }, [addStandaloneChat, setPendingMessage, router]);
+  const { runtime } = useFronaRuntime({ agentId: "system", onChatCreated });
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <FronaComposer placeholder="What's on your mind?" onSend={handleSend} />
+      <FronaComposer placeholder="What's on your mind?" />
     </AssistantRuntimeProvider>
   );
 }

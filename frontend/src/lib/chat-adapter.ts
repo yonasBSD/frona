@@ -95,6 +95,17 @@ function buildParts(
   return parts;
 }
 
+/** Only cancel generation when the user explicitly clicks Stop, not on component unmount. */
+function onUserCancel(abortSignal: AbortSignal, chatId: string): () => void {
+  return () => {
+    const reason = abortSignal.reason;
+    // assistant-ui's detach() passes AbortError with detach=true on unmount;
+    // cancelRun() passes detach=false on explicit user cancel.
+    if (reason && typeof reason === "object" && "detach" in reason && reason.detach) return;
+    cancelGeneration(chatId).catch(() => {});
+  };
+}
+
 export interface ChatAdapterOptions {
   chatId?: string;
   agentId: string;
@@ -167,15 +178,17 @@ class ChatEventQueue {
 
 export interface ChatAdapterHandle {
   adapter: ChatModelAdapter;
-  /** Signal that the next run() is an explicit user send (not a continuation). */
-  send: () => void;
+  /** Sync last sent message ID after loading history (prevents re-sends). */
+  syncLastSentMessageId: (messages: { id?: string; role: string }[]) => void;
   chatId: () => string | null;
+  /** Tear down the SSE subscription. Call when the chat is permanently unmounted. */
+  destroy: () => void;
 }
 
 export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandle {
   let currentChatId = options.chatId ?? null;
   let eventQueue: ChatEventQueue | null = null;
-  let outgoingMessage = false;
+  let lastSentMessageId: string | null = null;
 
   function ensureQueue(chatId: string): ChatEventQueue {
     if (eventQueue) return eventQueue;
@@ -183,32 +196,30 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
     return eventQueue;
   }
 
-  function send() {
-    outgoingMessage = true;
+  /** Can this adapter send? Only if a chat exists or onChatCreated can create one. */
+  function canSend(): boolean {
+    return currentChatId != null || options.onChatCreated != null;
   }
 
   const adapter: ChatModelAdapter = {
     async *run({ messages, abortSignal }: ChatModelRunOptions) {
-      const toSend = outgoingMessage;
-      outgoingMessage = false;
+      const lastMsg = messages[messages.length - 1];
+      const isNewUserMessage =
+        canSend() &&
+        lastMsg?.role === "user" &&
+        lastMsg.id !== lastSentMessageId;
 
-      if (toSend) {
-        // Extract content and attachments from the last user message
-        const lastMsg = messages[messages.length - 1];
-        const content = lastMsg?.role === "user"
-          ? lastMsg.content
-              .filter((p): p is { type: "text"; text: string } => p.type === "text")
-              .map((p) => p.text)
-              .join("")
-          : "";
+      if (isNewUserMessage) {
+        const content = lastMsg.content
+          .filter((p): p is { type: "text"; text: string } => p.type === "text")
+          .map((p) => p.text)
+          .join("");
 
         const attachments: BackendAttachment[] = [];
-        if (lastMsg?.role === "user") {
-          for (const att of lastMsg.attachments) {
-            const backend = backendAttachmentRegistry.get(att.id);
-            if (backend) {
-              attachments.push(backend);
-            }
+        for (const att of lastMsg.attachments) {
+          const backend = backendAttachmentRegistry.get(att.id);
+          if (backend) {
+            attachments.push(backend);
           }
         }
 
@@ -222,7 +233,7 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
 
         const chatId = currentChatId;
         const queue = ensureQueue(chatId);
-        const onAbort = () => { cancelGeneration(chatId).catch(() => {}); };
+        const onAbort = onUserCancel(abortSignal, chatId);
         abortSignal.addEventListener("abort", onAbort);
 
         const body = attachments.length
@@ -230,6 +241,7 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
           : { content };
 
         await apiSendMessage(chatId, body);
+        lastSentMessageId = lastMsg.id ?? null;
 
         yield* streamEvents(queue.drain(abortSignal), abortSignal, onAbort);
         return;
@@ -241,7 +253,7 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
 
       const chatId = currentChatId;
       const queue = ensureQueue(chatId);
-      const onAbort = () => { cancelGeneration(chatId).catch(() => {}); };
+      const onAbort = onUserCancel(abortSignal, chatId);
       abortSignal.addEventListener("abort", onAbort);
 
       yield { content: [{ type: "text" as const, text: "" }] };
@@ -251,8 +263,19 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
 
   return {
     adapter,
-    send,
+    syncLastSentMessageId(messages) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "user" && messages[i].id) {
+          lastSentMessageId = messages[i].id!;
+          return;
+        }
+      }
+    },
     chatId: () => currentChatId,
+    destroy() {
+      eventQueue?.destroy();
+      eventQueue = null;
+    },
   };
 }
 
@@ -332,7 +355,7 @@ function handleEvent(
         args,
         argsText: typeof event.arguments === "string" ? event.arguments : JSON.stringify(event.arguments ?? {}),
       });
-      return { text, reasoning, toolCallCounter: toolCallCounter + 1, yield: false, done: false };
+      return { text, reasoning, toolCallCounter: toolCallCounter + 1, yield: true, done: false };
     }
 
     case "tool_result": {

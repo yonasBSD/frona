@@ -4,6 +4,7 @@ import { useMemo, useState, useEffect, useCallback } from "react";
 import { useLocalRuntime } from "@assistant-ui/react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
 import { createChatAdapter, fronaAttachmentAdapter, registerBackendAttachment } from "./chat-adapter";
+import { sseBus } from "./sse-event-bus";
 import { api, fileDownloadUrl } from "./api-client";
 import type { MessageResponse, ChatResponse, Attachment } from "./types";
 import type { CompleteAttachment } from "@assistant-ui/react";
@@ -155,6 +156,11 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
     },
   });
 
+  // Clean up SSE subscription when the chat adapter is permanently unmounted (LRU eviction)
+  useEffect(() => {
+    return () => handle.destroy();
+  }, [handle]);
+
   // Load messages for existing chats and reset the runtime with them
   const [loaded, setLoaded] = useState(!chatId);
 
@@ -168,6 +174,7 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
       .then((msgs) => {
         if (cancelled) return;
         const converted = mergeConsecutive(msgs.map(convertMessage).filter(Boolean) as ThreadMessageLike[]);
+        handle.syncLastSentMessageId(converted);
         runtime.thread.reset(converted);
         setLoaded(true);
       })
@@ -175,27 +182,21 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
         if (!cancelled) setLoaded(true);
       });
     return () => { cancelled = true; };
-  }, [chatId, runtime]);
+  }, [chatId, handle, runtime]);
 
-  /** Set the outgoing flag only — used by the composer's onSubmit (runtime handles append). */
-  const send = useCallback(() => {
-    handle.send();
-  }, [handle]);
-
-  /** Set flag + append to thread — used for programmatic sends (pending messages). */
+  /** Append to thread — used for programmatic sends (pending messages). */
   const sendMessage = useCallback((content: string, attachments?: Attachment[]) => {
     if (attachments?.length) {
       for (const att of attachments) {
         registerBackendAttachment(att.path, att);
       }
     }
-    handle.send();
     runtime.thread.append({
       role: "user",
       content: [{ type: "text", text: content }],
       attachments: attachments?.map(convertBackendAttachment),
     });
-  }, [handle, runtime]);
+  }, [runtime]);
 
-  return { runtime, loaded, send, sendMessage };
+  return { runtime, loaded, sendMessage };
 }

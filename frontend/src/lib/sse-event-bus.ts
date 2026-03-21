@@ -37,6 +37,7 @@ type GlobalListener = (event: GlobalSSEEvent) => void;
 
 class SSEEventBus {
   private chatSubscribers = new Map<string, Set<ChatSubscriber>>();
+  private chatBuffers = new Map<string, ChatSSEEvent[]>();
   private globalListeners = new Set<GlobalListener>();
   private activeSignal: AbortSignal | null = null;
 
@@ -51,7 +52,11 @@ class SSEEventBus {
     const bus = this;
     return {
       [Symbol.asyncIterator]() {
-        const queue: ChatSSEEvent[] = [];
+        // Drain any buffered events that arrived before this subscriber existed
+        const buffered = bus.chatBuffers.get(chatId);
+        const queue: ChatSSEEvent[] = buffered ? buffered.splice(0) : [];
+        if (buffered && buffered.length === 0) bus.chatBuffers.delete(chatId);
+
         let resolve: ((value: IteratorResult<ChatSSEEvent>) => void) | null = null;
         let done = false;
 
@@ -118,10 +123,19 @@ class SSEEventBus {
 
   private dispatchChat(chatId: string, event: ChatSSEEvent) {
     const subs = this.chatSubscribers.get(chatId);
-    if (!subs) return;
-    for (const sub of subs) {
-      sub.push(event);
+    if (subs) {
+      for (const sub of subs) {
+        sub.push(event);
+      }
+      return;
     }
+    // No subscribers yet — buffer the event for later pickup
+    let buffer = this.chatBuffers.get(chatId);
+    if (!buffer) {
+      buffer = [];
+      this.chatBuffers.set(chatId, buffer);
+    }
+    buffer.push(event);
   }
 
   private dispatchGlobal(event: GlobalSSEEvent) {

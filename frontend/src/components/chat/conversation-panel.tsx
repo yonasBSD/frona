@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
@@ -12,7 +13,15 @@ import { AssistantThread } from "./assistant-thread";
 import { ToolUIRegistry } from "./tool-uis";
 import type { ChatResponse } from "@/lib/types";
 
-function ChatView({ chatId, agentId }: { chatId?: string; agentId: string }) {
+function ChatView({
+  chatId,
+  agentId,
+  onChatPromoted,
+}: {
+  chatId?: string;
+  agentId: string;
+  onChatPromoted?: (chatId: string) => void;
+}) {
   const { setActiveChat, getPendingMessage } = useSession();
   const { addStandaloneChat } = useNavigation();
   const [currentChatId, setCurrentChatId] = useState<string | null>(chatId ?? null);
@@ -21,9 +30,10 @@ function ChatView({ chatId, agentId }: { chatId?: string; agentId: string }) {
     setCurrentChatId(chat.id);
     addStandaloneChat(chat);
     setActiveChat(chat);
-  }, [addStandaloneChat, setActiveChat]);
+    onChatPromoted?.(chat.id);
+  }, [addStandaloneChat, setActiveChat, onChatPromoted]);
 
-  const { runtime, loaded, send, sendMessage } = useFronaRuntime({ chatId, agentId, onChatCreated });
+  const { runtime, loaded, sendMessage } = useFronaRuntime({ chatId, agentId, onChatCreated });
 
   const pendingHandled = useRef(false);
   useEffect(() => {
@@ -38,7 +48,7 @@ function ChatView({ chatId, agentId }: { chatId?: string; agentId: string }) {
   const content = (
     <>
       <ToolUIRegistry />
-      {loaded ? <AssistantThread onSend={send} /> : <div className="flex-1" />}
+      {loaded ? <AssistantThread /> : <div className="flex-1" />}
     </>
   );
 
@@ -55,11 +65,32 @@ function ChatView({ chatId, agentId }: { chatId?: string; agentId: string }) {
   );
 }
 
+const MAX_MOUNTED_CHATS = 20;
+
+/**
+ * Each slot has a stable `slotId` used as the React key so that a pending
+ * ChatView can be promoted to a real chat without remounting the component.
+ * `chatId` starts null for pending slots and is filled when the adapter
+ * creates the chat on first message.
+ */
+interface ChatSlot {
+  slotId: string;
+  chatId: string | null;
+  agentId: string;
+  lastActiveAt: number;
+}
+
 export function ConversationPanel() {
+  const router = useRouter();
   const { activeChatId, activeChat, activeTask, agentId } = useSession();
 
   const [pendingSessionId, setPendingSessionId] = useState(0);
   const [prevActiveChat, setPrevActiveChat] = useState(activeChat);
+  const [slots, setSlots] = useState<ChatSlot[]>(() =>
+    activeChatId
+      ? [{ slotId: activeChatId, chatId: activeChatId, agentId: agentId ?? "system", lastActiveAt: Date.now() }]
+      : [],
+  );
 
   if (activeChat !== prevActiveChat) {
     setPrevActiveChat(activeChat);
@@ -68,8 +99,46 @@ export function ConversationPanel() {
     }
   }
 
-  const chatViewKey = activeChatId ?? `pending-${pendingSessionId}`;
   const effectiveAgentId = agentId ?? "system";
+
+  // Ensure active chat is in the slot set with LRU tracking
+  const [prevActiveChatId, setPrevActiveChatId] = useState(activeChatId);
+  if (activeChatId !== prevActiveChatId) {
+    setPrevActiveChatId(activeChatId);
+    if (activeChatId) {
+      setSlots((prev) => {
+        // Already tracked (either as a promoted pending slot or a previously visited chat)
+        const existing = prev.find((c) => c.chatId === activeChatId);
+        if (existing) {
+          return prev.map((c) =>
+            c.chatId === activeChatId ? { ...c, lastActiveAt: Date.now() } : c,
+          );
+        }
+        let next = [...prev, { slotId: activeChatId, chatId: activeChatId, agentId: effectiveAgentId, lastActiveAt: Date.now() }];
+        if (next.length > MAX_MOUNTED_CHATS) {
+          next = next
+            .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+            .filter((c, i) => i < MAX_MOUNTED_CHATS || c.chatId === activeChatId);
+        }
+        return next;
+      });
+    }
+  }
+
+  // Ensure a pending slot exists when there is no active chat
+  const pendingSlotId = !activeChatId ? `pending-${pendingSessionId}` : null;
+  if (pendingSlotId && !slots.some((s) => s.slotId === pendingSlotId)) {
+    setSlots((prev) => [...prev, { slotId: pendingSlotId, chatId: null, agentId: effectiveAgentId, lastActiveAt: Date.now() }]);
+  }
+
+  // Called by the pending ChatView when the adapter creates a real chat.
+  // Updates the slot's chatId in place (no remount) and navigates to the chat URL.
+  const promotePendingSlot = useCallback((slotId: string, chatId: string) => {
+    setSlots((prev) => prev.map((s) =>
+      s.slotId === slotId ? { ...s, chatId, lastActiveAt: Date.now() } : s,
+    ));
+    router.replace(`/chat?id=${chatId}`, { scroll: false });
+  }, [router]);
 
   if (activeTask) {
     return (
@@ -88,16 +157,35 @@ export function ConversationPanel() {
     );
   }
 
+  // A slot is visible when it matches the active chat,
+  // or when it's the pending slot and there's no active chat.
+  const isActive = (s: ChatSlot) =>
+    (s.chatId != null && s.chatId === activeChatId) ||
+    (s.chatId == null && !activeChatId && s.slotId === pendingSlotId);
+
   return (
     <div className="flex-1 overflow-hidden bg-surface flex flex-col">
       <div className="mx-auto w-full max-w-3xl">
         <ChatHeader />
       </div>
-      <ChatView
-        key={chatViewKey}
-        chatId={activeChatId ?? undefined}
-        agentId={effectiveAgentId}
-      />
+      <div className="relative flex flex-1 flex-col min-h-0">
+        {slots.map((s) => (
+          <div
+            key={s.slotId}
+            className={
+              isActive(s)
+                ? "flex flex-1 flex-col min-h-0"
+                : "absolute inset-0 flex flex-col invisible"
+            }
+          >
+            <ChatView
+              chatId={s.slotId.startsWith("pending-") ? undefined : (s.chatId ?? undefined)}
+              agentId={s.agentId}
+              onChatPromoted={s.chatId == null ? (chatId) => promotePendingSlot(s.slotId, chatId) : undefined}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

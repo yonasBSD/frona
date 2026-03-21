@@ -4,9 +4,8 @@ import { ThreadPrimitive } from "@assistant-ui/react";
 import { FronaUserMessage } from "./frona-user-message";
 import { FronaAssistantMessage } from "./frona-assistant-message";
 import { FronaComposer } from "./frona-composer";
-import type { Attachment } from "@/lib/types";
 
-export function AssistantThread({ onSend }: { onSend: (content: string, attachments?: Attachment[]) => void }) {
+export function AssistantThread() {
   return (
     <ThreadPrimitive.Root className="flex flex-1 flex-col min-h-0">
       <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto min-h-0">
@@ -31,7 +30,7 @@ export function AssistantThread({ onSend }: { onSend: (content: string, attachme
           </button>
         </ThreadPrimitive.ScrollToBottom>
         <div className="mx-auto w-full max-w-3xl px-6 pb-4">
-          <FronaComposer onSend={onSend} />
+          <FronaComposer />
         </div>
       </ThreadPrimitive.ViewportFooter>
     </ThreadPrimitive.Root>

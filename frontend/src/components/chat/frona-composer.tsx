@@ -28,7 +28,7 @@ export function FronaComposer({
   onSend,
 }: {
   placeholder?: string;
-  /** Called on form submit to set the outgoing flag before the runtime calls adapter.run(). */
+  /** Called on form submit for custom send handling (e.g. HomeComposer navigation). */
   onSend?: (content: string, attachments?: Attachment[]) => void;
 }) {
   const composerRuntime = useComposerRuntime();

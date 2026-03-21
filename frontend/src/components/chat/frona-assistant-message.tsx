@@ -10,6 +10,7 @@ import { useNavigation } from "@/lib/navigation-context";
 import { useRetryState } from "@/lib/retry-state";
 import { agentDisplayName } from "@/lib/types";
 import { DefaultToolCallUI } from "./tool-uis/default-tool-call-ui";
+import { ToolTimelineProvider } from "./tool-uis/tool-timeline-context";
 
 function ReasoningPart({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -151,17 +152,19 @@ export function FronaAssistantMessage() {
           </MessagePrimitive.If>
         </div>
         <div className="pl-[42px] text-base text-text-primary">
-          <MessagePrimitive.Parts
-            unstable_showEmptyOnNonTextEnd={false}
-            components={{
-              Text: SmoothMarkdownText,
-              Reasoning: ReasoningPart,
-              Empty: StreamingIndicator,
-              tools: {
-                Fallback: DefaultToolCallUI,
-              },
-            }}
-          />
+          <ToolTimelineProvider>
+            <MessagePrimitive.Parts
+              unstable_showEmptyOnNonTextEnd={false}
+              components={{
+                Text: SmoothMarkdownText,
+                Reasoning: ReasoningPart,
+                Empty: StreamingIndicator,
+                tools: {
+                  Fallback: DefaultToolCallUI,
+                },
+              }}
+            />
+          </ToolTimelineProvider>
         </div>
       </div>
     </MessagePrimitive.Root>
