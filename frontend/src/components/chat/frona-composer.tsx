@@ -1,21 +1,26 @@
 "use client";
 
 import { useRef, useState, useEffect, useCallback } from "react";
-import { ComposerPrimitive, ThreadPrimitive, useComposerRuntime } from "@assistant-ui/react";
+import { ComposerPrimitive, ThreadPrimitive, AttachmentPrimitive, useComposerRuntime } from "@assistant-ui/react";
 import { PaperAirplaneIcon, StopIcon, PlusIcon, XMarkIcon } from "@heroicons/react/24/solid";
 import { ArrowUpTrayIcon, CloudIcon, FolderOpenIcon } from "@heroicons/react/24/outline";
 import { FileBrowserModal } from "@/components/chat/file-browser-modal";
+import { registerBackendAttachment, getBackendAttachment } from "@/lib/chat-adapter";
 import type { Attachment } from "@/lib/types";
 
-interface PendingFile {
-  file: File;
-  relativePath?: string;
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+function ComposerAttachmentBadge() {
+  return (
+    <AttachmentPrimitive.Root className="inline-flex items-center gap-1 rounded-md bg-surface-tertiary px-2 py-1 text-xs text-text-secondary">
+      <span className="max-w-[200px] truncate">
+        <AttachmentPrimitive.Name />
+      </span>
+      <AttachmentPrimitive.Remove asChild>
+        <button type="button" className="ml-0.5 hover:text-text-primary">
+          <XMarkIcon className="h-3 w-3" />
+        </button>
+      </AttachmentPrimitive.Remove>
+    </AttachmentPrimitive.Root>
+  );
 }
 
 export function FronaComposer({
@@ -27,12 +32,8 @@ export function FronaComposer({
   onSend?: (content: string, attachments?: Attachment[]) => void;
 }) {
   const composerRuntime = useComposerRuntime();
-  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
-  const [serverAttachments, setServerAttachments] = useState<Attachment[]>([]);
-  const [uploading, setUploading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [browseOpen, setBrowseOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -50,78 +51,41 @@ export function FronaComposer({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuOpen]);
 
-  const handleFilesSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    const newFiles: PendingFile[] = Array.from(files).map((file) => ({
-      file,
-      relativePath: file.webkitRelativePath || undefined,
-    }));
-    setPendingFiles((prev) => [...prev, ...newFiles]);
-    e.target.value = "";
-  }, []);
-
-  const removePendingFile = (index: number) => {
-    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const removeServerAttachment = (index: number) => {
-    setServerAttachments((prev) => prev.filter((_, i) => i !== index));
-  };
+  const handleBrowseSelect = useCallback(
+    (files: Attachment[]) => {
+      for (const file of files) {
+        registerBackendAttachment(file.path, file);
+        composerRuntime.addAttachment({
+          id: file.path,
+          type: "file",
+          name: file.filename,
+          contentType: file.content_type,
+          content: [{ type: "text", text: `[file: ${file.filename}]` }],
+        });
+      }
+    },
+    [composerRuntime],
+  );
 
   return (
     <div>
-      {(pendingFiles.length > 0 || serverAttachments.length > 0) && (
-        <div className="flex flex-wrap gap-1.5 mb-2 px-1">
-          {pendingFiles.map((pf, i) => (
-            <span
-              key={`local-${i}`}
-              className="inline-flex items-center gap-1 rounded-md bg-surface-tertiary px-2 py-1 text-xs text-text-secondary"
-            >
-              <span className="max-w-[200px] truncate">{pf.relativePath || pf.file.name}</span>
-              <span className="text-text-tertiary">({formatFileSize(pf.file.size)})</span>
-              <button
-                type="button"
-                onClick={() => removePendingFile(i)}
-                className="ml-0.5 hover:text-text-primary"
-              >
-                <XMarkIcon className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-          {serverAttachments.map((att, i) => (
-            <span
-              key={`server-${i}`}
-              className="inline-flex items-center gap-1 rounded-md bg-surface-tertiary px-2 py-1 text-xs text-text-secondary"
-            >
-              <span className="max-w-[200px] truncate">{att.filename}</span>
-              <span className="text-text-tertiary">({formatFileSize(att.size_bytes)})</span>
-              <button
-                type="button"
-                onClick={() => removeServerAttachment(i)}
-                className="ml-0.5 hover:text-text-primary"
-              >
-                <XMarkIcon className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
       <ComposerPrimitive.Root
         className="rounded-2xl border border-border bg-surface-secondary p-4 focus-within:border-accent transition-colors"
         {...(onSend ? { onSubmit: () => {
-          const composer = composerRuntime.getState();
-          const text = composer.text.trim();
-          if (text) onSend(text, serverAttachments.length > 0 ? serverAttachments : undefined);
+          const state = composerRuntime.getState();
+          const text = state.text.trim();
+          if (!text && !state.attachments.length) return;
+          const backendAttachments = state.attachments
+            .map((a) => getBackendAttachment(a.id))
+            .filter((a): a is Attachment => a != null);
+          onSend(text, backendAttachments.length > 0 ? backendAttachments : undefined);
         }} : {})}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={handleFilesSelected}
-        />
+        <div className="flex flex-wrap gap-1.5 empty:hidden">
+          <ComposerPrimitive.Attachments
+            components={{ Attachment: ComposerAttachmentBadge }}
+          />
+        </div>
         <ComposerPrimitive.Input
           autoFocus
           placeholder={placeholder}
@@ -134,8 +98,7 @@ export function FronaComposer({
               ref={menuButtonRef}
               type="button"
               onClick={() => setMenuOpen((v) => !v)}
-              disabled={uploading}
-              className="rounded-lg p-1 text-text-tertiary hover:text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 transition"
+              className="rounded-lg p-1 text-text-tertiary hover:text-text-secondary hover:bg-surface-tertiary transition"
               title="Attach"
             >
               <PlusIcon className="h-5 w-5" />
@@ -145,17 +108,16 @@ export function FronaComposer({
                 ref={menuRef}
                 className="absolute bottom-full left-0 mb-1 w-max rounded-lg border border-border bg-surface-secondary py-1 shadow-lg"
               >
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-surface-tertiary transition-colors"
-                  onClick={() => {
-                    fileInputRef.current?.click();
-                    setMenuOpen(false);
-                  }}
-                >
-                  <ArrowUpTrayIcon className="h-4 w-4" />
-                  Upload files
-                </button>
+                <ComposerPrimitive.AddAttachment asChild multiple>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-surface-tertiary transition-colors"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <ArrowUpTrayIcon className="h-4 w-4" />
+                    Upload files
+                  </button>
+                </ComposerPrimitive.AddAttachment>
                 <button
                   type="button"
                   className="flex w-full items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-surface-tertiary transition-colors"
@@ -193,8 +155,7 @@ export function FronaComposer({
               <ComposerPrimitive.Send asChild>
                 <button
                   type="button"
-                  disabled={uploading}
-                  className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary disabled:opacity-30 transition"
+                  className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary transition"
                 >
                   <PaperAirplaneIcon className="h-5 w-5" />
                 </button>
@@ -206,9 +167,8 @@ export function FronaComposer({
       <FileBrowserModal
         open={browseOpen}
         onClose={() => setBrowseOpen(false)}
-        onSelect={(attachments) => setServerAttachments((prev) => [...prev, ...attachments])}
+        onSelect={handleBrowseSelect}
       />
     </div>
   );
 }
-

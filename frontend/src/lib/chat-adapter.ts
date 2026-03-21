@@ -1,8 +1,52 @@
-import type { ChatModelAdapter, ChatModelRunOptions } from "@assistant-ui/react";
-import { sendMessage as apiSendMessage, cancelGeneration, api } from "./api-client";
+import type { ChatModelAdapter, ChatModelRunOptions, AttachmentAdapter, PendingAttachment, CompleteAttachment } from "@assistant-ui/react";
+import { sendMessage as apiSendMessage, cancelGeneration, api, uploadFile } from "./api-client";
 import { sseBus, type ChatSSEEvent } from "./sse-event-bus";
 import { setRetryState, clearRetryState } from "./retry-state";
-import type { Attachment, ChatResponse } from "./types";
+import type { Attachment as BackendAttachment, ChatResponse } from "./types";
+
+// Registry for mapping attachment IDs to backend Attachment objects
+const backendAttachmentRegistry = new Map<string, BackendAttachment>();
+
+export function registerBackendAttachment(id: string, attachment: BackendAttachment) {
+  backendAttachmentRegistry.set(id, attachment);
+}
+
+export function getBackendAttachment(id: string): BackendAttachment | undefined {
+  return backendAttachmentRegistry.get(id);
+}
+
+export const fronaAttachmentAdapter: AttachmentAdapter = {
+  accept: "*/*",
+
+  async add({ file }): Promise<PendingAttachment> {
+    const uploaded = await uploadFile(file);
+    backendAttachmentRegistry.set(uploaded.path, uploaded);
+    return {
+      id: uploaded.path,
+      type: "file",
+      name: uploaded.filename,
+      contentType: uploaded.content_type,
+      status: { type: "requires-action", reason: "composer-send" },
+      content: [],
+      file,
+    };
+  },
+
+  async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
+    const isImage = attachment.contentType?.startsWith("image/");
+    return {
+      ...attachment,
+      status: { type: "complete" },
+      content: isImage && attachment.file
+        ? [{ type: "image", image: URL.createObjectURL(attachment.file) }]
+        : [{ type: "text", text: `[file: ${attachment.name}]` }],
+    };
+  },
+
+  async remove(attachment) {
+    backendAttachmentRegistry.delete(attachment.id);
+  },
+};
 
 function tryParseJson(value: unknown): Record<string, string | number | boolean | null> {
   if (typeof value === "string") {
@@ -123,15 +167,15 @@ class ChatEventQueue {
 
 export interface ChatAdapterHandle {
   adapter: ChatModelAdapter;
-  /** Queue a message to be sent on the next run(). Call before runtime.thread.append(). */
-  send: (content: string, attachments?: Attachment[]) => void;
+  /** Signal that the next run() is an explicit user send (not a continuation). */
+  send: () => void;
   chatId: () => string | null;
 }
 
 export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandle {
   let currentChatId = options.chatId ?? null;
   let eventQueue: ChatEventQueue | null = null;
-  let outgoingMessage: { content: string; attachments?: Attachment[] } | null = null;
+  let outgoingMessage = false;
 
   function ensureQueue(chatId: string): ChatEventQueue {
     if (eventQueue) return eventQueue;
@@ -139,17 +183,35 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
     return eventQueue;
   }
 
-  function send(content: string, attachments?: Attachment[]) {
-    outgoingMessage = { content, attachments };
+  function send() {
+    outgoingMessage = true;
   }
 
   const adapter: ChatModelAdapter = {
-    async *run({ abortSignal }: ChatModelRunOptions) {
+    async *run({ messages, abortSignal }: ChatModelRunOptions) {
       const toSend = outgoingMessage;
-      outgoingMessage = null;
+      outgoingMessage = false;
 
       if (toSend) {
-        // Explicit send — user typed a message
+        // Extract content and attachments from the last user message
+        const lastMsg = messages[messages.length - 1];
+        const content = lastMsg?.role === "user"
+          ? lastMsg.content
+              .filter((p): p is { type: "text"; text: string } => p.type === "text")
+              .map((p) => p.text)
+              .join("")
+          : "";
+
+        const attachments: BackendAttachment[] = [];
+        if (lastMsg?.role === "user") {
+          for (const att of lastMsg.attachments) {
+            const backend = backendAttachmentRegistry.get(att.id);
+            if (backend) {
+              attachments.push(backend);
+            }
+          }
+        }
+
         if (!currentChatId) {
           const chat = await api.post<ChatResponse>("/api/chats", {
             agent_id: options.agentId,
@@ -163,9 +225,9 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
         const onAbort = () => { cancelGeneration(chatId).catch(() => {}); };
         abortSignal.addEventListener("abort", onAbort);
 
-        const body = toSend.attachments?.length
-          ? { content: toSend.content, attachments: toSend.attachments }
-          : { content: toSend.content };
+        const body = attachments.length
+          ? { content, attachments }
+          : { content };
 
         await apiSendMessage(chatId, body);
 

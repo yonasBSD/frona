@@ -13,13 +13,18 @@ import { api, getTask } from "./api-client";
 import { sseBus, type GlobalSSEEvent } from "./sse-event-bus";
 import { useNavigation } from "./navigation-context";
 import { useNotifications } from "./notification-context";
-import type { ChatResponse, CreateChatRequest, TaskResponse } from "./types";
+import type { Attachment, ChatResponse, CreateChatRequest, TaskResponse } from "./types";
 
 // --- Module-level state ---
 
+interface PendingMessage {
+  content: string;
+  attachments?: Attachment[];
+}
+
 const sessionStore = {
   activeTaskId: null as string | null,
-  pendingMessage: null as string | null,
+  pendingMessage: null as PendingMessage | null,
 };
 
 // --- Context ---
@@ -33,8 +38,8 @@ interface SessionContextValue {
   agentId: string | null;
   inferring: boolean;
   createChat: (req: CreateChatRequest) => Promise<ChatResponse>;
-  setPendingMessage: (message: string) => void;
-  getPendingMessage: () => string | null;
+  setPendingMessage: (message: string, attachments?: Attachment[]) => void;
+  getPendingMessage: () => PendingMessage | null;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -156,8 +161,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
   }, [updateChatTitle, updateAgent, updateTaskInList, addNotification]);
 
-  const setPendingMessage = useCallback((message: string) => {
-    sessionStore.pendingMessage = message;
+  const setPendingMessage = useCallback((message: string, attachments?: Attachment[]) => {
+    sessionStore.pendingMessage = { content: message, attachments };
   }, []);
 
   const getPendingMessage = useCallback(() => {

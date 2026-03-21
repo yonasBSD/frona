@@ -31,7 +31,7 @@ function ChatView({ chatId, agentId }: { chatId?: string; agentId: string }) {
     pendingHandled.current = true;
     const pending = getPendingMessage();
     if (pending) {
-      sendMessage(pending);
+      sendMessage(pending.content, pending.attachments);
     }
   }, [loaded, sendMessage, getPendingMessage]);
 

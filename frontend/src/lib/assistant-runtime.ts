@@ -3,20 +3,42 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useLocalRuntime } from "@assistant-ui/react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
-import { createChatAdapter } from "./chat-adapter";
-import { api } from "./api-client";
+import { createChatAdapter, fronaAttachmentAdapter, registerBackendAttachment } from "./chat-adapter";
+import { api, fileDownloadUrl } from "./api-client";
 import type { MessageResponse, ChatResponse, Attachment } from "./types";
+import type { CompleteAttachment } from "@assistant-ui/react";
+
+function convertBackendAttachment(att: Attachment): CompleteAttachment {
+  const username = att.owner.startsWith("user:") ? att.owner.substring(5) : "";
+  const url = fileDownloadUrl(att, username);
+  const isImage = att.content_type.startsWith("image/");
+
+  registerBackendAttachment(att.path, att);
+
+  return {
+    id: att.path,
+    type: isImage ? "image" : "file",
+    name: att.filename,
+    contentType: att.content_type,
+    status: { type: "complete" },
+    content: isImage
+      ? [{ type: "image", image: url }]
+      : [{ type: "text", text: `[file: ${att.filename}]` }],
+  };
+}
 
 function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
   if (msg.role === "toolresult" && !msg.tool) return null;
   if (msg.role === "agent" && !msg.content && msg.tool_calls) return null;
 
   if (msg.role === "user" || msg.role === "contact" || msg.role === "livecall") {
+    const attachments = msg.attachments?.map(convertBackendAttachment);
     return {
       id: msg.id,
       role: "user" as const,
       content: [{ type: "text" as const, text: msg.content || "" }],
       createdAt: new Date(msg.created_at),
+      ...(attachments?.length ? { attachments } : {}),
       metadata: {
         custom: {
           originalRole: msg.role,
@@ -128,6 +150,9 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
       "ServiceApproval",
       "TaskCompletion",
     ],
+    adapters: {
+      attachments: fronaAttachmentAdapter,
+    },
   });
 
   // Load messages for existing chats and reset the runtime with them
@@ -153,14 +178,23 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
   }, [chatId, runtime]);
 
   /** Set the outgoing flag only — used by the composer's onSubmit (runtime handles append). */
-  const send = useCallback((content: string, attachments?: Attachment[]) => {
-    handle.send(content, attachments);
+  const send = useCallback(() => {
+    handle.send();
   }, [handle]);
 
   /** Set flag + append to thread — used for programmatic sends (pending messages). */
   const sendMessage = useCallback((content: string, attachments?: Attachment[]) => {
-    handle.send(content, attachments);
-    runtime.thread.append(content);
+    if (attachments?.length) {
+      for (const att of attachments) {
+        registerBackendAttachment(att.path, att);
+      }
+    }
+    handle.send();
+    runtime.thread.append({
+      role: "user",
+      content: [{ type: "text", text: content }],
+      attachments: attachments?.map(convertBackendAttachment),
+    });
   }, [handle, runtime]);
 
   return { runtime, loaded, send, sendMessage };

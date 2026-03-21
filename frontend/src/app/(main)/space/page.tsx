@@ -8,7 +8,7 @@ import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
 import { useFronaRuntime } from "@/lib/assistant-runtime";
 import { FronaComposer } from "@/components/chat/frona-composer";
-import type { ChatResponse, Attachment } from "@/lib/types";
+import type { Attachment, ChatResponse } from "@/lib/types";
 
 function SpaceComposer({ spaceId }: { spaceId: string }) {
   const router = useRouter();
@@ -16,10 +16,10 @@ function SpaceComposer({ spaceId }: { spaceId: string }) {
   const { setPendingMessage } = useSession();
   const { runtime } = useFronaRuntime({ agentId: "system" });
 
-  const handleSend = useCallback((content: string, _attachments?: Attachment[]) => {
+  const handleSend = useCallback((content: string, attachments?: Attachment[]) => {
     api.post<ChatResponse>("/api/chats", { space_id: spaceId, agent_id: "system" }).then((chat) => {
       refresh();
-      setPendingMessage(content);
+      setPendingMessage(content, attachments);
       router.push(`/chat?id=${chat.id}`);
     });
   }, [spaceId, refresh, setPendingMessage, router]);
