@@ -21,6 +21,11 @@ async fn all_protected_endpoints_reject_no_auth() {
         ("POST", "/api/spaces"),
         ("GET", "/api/tasks"),
         ("POST", "/api/tasks"),
+        ("GET", "/api/notifications"),
+        ("POST", "/api/notifications/read-all"),
+        ("GET", "/api/apps"),
+        ("GET", "/api/system/version"),
+        ("POST", "/api/system/restart"),
     ];
 
     for (method, uri) in cases {

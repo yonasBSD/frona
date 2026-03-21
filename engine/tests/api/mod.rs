@@ -1,4 +1,5 @@
 mod agents;
+mod apps;
 mod auth;
 mod chats;
 mod contacts;
@@ -6,6 +7,7 @@ mod files;
 mod messages;
 mod misc;
 mod navigation;
+mod notifications;
 mod security;
 mod spaces;
 mod tasks;
@@ -73,6 +75,9 @@ fn build_app(state: AppState) -> Router {
         .merge(routes::well_known::router())
         .merge(routes::metrics::router())
         .merge(routes::config::router())
+        .merge(routes::notifications::router())
+        .merge(routes::apps::router())
+        .merge(routes::system::router())
         .with_state(state)
 }
 

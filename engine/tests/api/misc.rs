@@ -105,6 +105,44 @@ async fn metrics_returns_text() {
 }
 
 // ---------------------------------------------------------------------------
+// System
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn system_version_returns_json() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, _) =
+        register_user(&state, "sys-ver", "sysver@example.com", "password123").await;
+
+    let app = build_app(state);
+    let resp = app
+        .oneshot(auth_get("/api/system/version", &token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert!(json["version"].is_string(), "Expected 'version' key in response");
+}
+
+#[tokio::test]
+async fn system_version_without_auth_returns_401() {
+    let (state, _tmp) = test_app_state().await;
+
+    let app = build_app(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/system/version")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 
