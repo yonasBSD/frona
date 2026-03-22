@@ -208,9 +208,6 @@ impl TaskExecutor {
                             .await;
 
                         if let Some(event) = lifecycle_event {
-                            let _ = self.app_state.chat_service
-                                .save_system_event(&chat_id, event.clone())
-                                .await;
                             let action = self.lifecycle_action_from_event(
                                 event,
                                 &text,
