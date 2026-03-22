@@ -1,10 +1,13 @@
 use async_trait::async_trait;
 use base64::Engine;
-use rig::completion::message::{DocumentSourceKind, ImageMediaType, MimeType, UserContent};
+use rig::completion::message::{DocumentSourceKind, ImageMediaType, MimeType, ToolResult, ToolResultContent, UserContent};
 use rig::completion::{AssistantContent, Message as RigMessage};
 
+use std::collections::HashMap;
+
 use crate::auth::UserService;
-use crate::chat::message::models::{Message, MessageRole};
+use crate::chat::message::models::{Message, MessageRole, MessageStatus};
+use crate::inference::tool_execution::ToolExecution;
 use crate::storage::{Attachment, StorageService, VirtualPath, is_image_content_type};
 
 use super::ModelRef;
@@ -17,7 +20,12 @@ pub struct ConversationContext {
 
 #[async_trait]
 pub trait ConversationBuilder: Send + Sync {
-    async fn build(&self, messages: &[Message], ctx: &ConversationContext) -> Vec<RigMessage>;
+    async fn build(
+        &self,
+        messages: &[Message],
+        tool_executions: &[ToolExecution],
+        ctx: &ConversationContext,
+    ) -> Vec<RigMessage>;
 }
 
 pub struct DefaultConversationBuilder {
@@ -28,12 +36,18 @@ pub struct DefaultConversationBuilder {
 #[async_trait]
 impl ConversationBuilder for DefaultConversationBuilder {
     // NOTE: fallback models reuse this history — messages are not rebuilt per model.
-    async fn build(&self, messages: &[Message], ctx: &ConversationContext) -> Vec<RigMessage> {
+    async fn build(
+        &self,
+        messages: &[Message],
+        tool_executions: &[ToolExecution],
+        ctx: &ConversationContext,
+    ) -> Vec<RigMessage> {
+        let te_map = group_tool_executions_by_message(tool_executions);
         let mut result = Vec::with_capacity(messages.len());
         for msg in messages {
-            let converted = match msg.role {
+            match msg.role {
                 MessageRole::User | MessageRole::TaskCompletion | MessageRole::Contact => {
-                    Some(
+                    result.push(
                         build_user_message(
                             &msg.content,
                             &msg.attachments,
@@ -41,11 +55,11 @@ impl ConversationBuilder for DefaultConversationBuilder {
                             &self.storage_service,
                         )
                         .await,
-                    )
+                    );
                 }
                 MessageRole::LiveCall => {
                     let content = format!("[LIVE_CALL] {}", msg.content);
-                    Some(
+                    result.push(
                         build_user_message(
                             &content,
                             &msg.attachments,
@@ -53,21 +67,26 @@ impl ConversationBuilder for DefaultConversationBuilder {
                             &self.storage_service,
                         )
                         .await,
-                    )
+                    );
                 }
-                MessageRole::Agent => convert_agent_message(msg, &ctx.agent_id),
-                MessageRole::ToolResult => convert_tool_result(msg),
+                MessageRole::Agent => {
+                    if let Some(tes) = te_map.get(&msg.id) {
+                        convert_agent_with_tool_executions(msg, tes, &ctx.agent_id, &mut result);
+                    } else if let Some(m) = convert_agent_message(msg, &ctx.agent_id) {
+                        result.push(m);
+                    }
+                }
+                MessageRole::ToolResult => {
+                    if let Some(m) = convert_tool_result(msg) {
+                        result.push(m);
+                    }
+                }
                 MessageRole::System => {
-                    if msg.content.is_empty() {
-                        None
-                    } else {
-                        Some(RigMessage::user(&msg.content))
+                    if !msg.content.is_empty() {
+                        result.push(RigMessage::user(&msg.content));
                     }
                 }
             };
-            if let Some(m) = converted {
-                result.push(m);
-            }
         }
         result
     }
@@ -80,13 +99,19 @@ pub struct TaskConversationBuilder {
 
 #[async_trait]
 impl ConversationBuilder for TaskConversationBuilder {
-    async fn build(&self, messages: &[Message], ctx: &ConversationContext) -> Vec<RigMessage> {
+    async fn build(
+        &self,
+        messages: &[Message],
+        tool_executions: &[ToolExecution],
+        ctx: &ConversationContext,
+    ) -> Vec<RigMessage> {
+        let te_map = group_tool_executions_by_message(tool_executions);
         let mut result = Vec::with_capacity(messages.len());
         let mut instruction_wrapped = false;
         for msg in messages {
-            let converted = match msg.role {
+            match msg.role {
                 MessageRole::User | MessageRole::TaskCompletion | MessageRole::Contact => {
-                    Some(
+                    result.push(
                         build_user_message(
                             &msg.content,
                             &msg.attachments,
@@ -94,11 +119,11 @@ impl ConversationBuilder for TaskConversationBuilder {
                             &self.storage_service,
                         )
                         .await,
-                    )
+                    );
                 }
                 MessageRole::LiveCall => {
                     let content = format!("[LIVE_CALL] {}", msg.content);
-                    Some(
+                    result.push(
                         build_user_message(
                             &content,
                             &msg.attachments,
@@ -106,35 +131,119 @@ impl ConversationBuilder for TaskConversationBuilder {
                             &self.storage_service,
                         )
                         .await,
-                    )
+                    );
                 }
                 MessageRole::Agent => {
                     let is_other_agent = msg.agent_id.as_deref() != Some(&ctx.agent_id);
                     if !instruction_wrapped && is_other_agent {
                         instruction_wrapped = true;
-                        let content = format!(
-                            "<task>\n{}\n</task>",
-                            msg.content,
-                        );
-                        Some(RigMessage::user(&content))
-                    } else {
-                        convert_agent_message(msg, &ctx.agent_id)
+                        let content = format!("<task>\n{}\n</task>", msg.content);
+                        result.push(RigMessage::user(&content));
+                    } else if let Some(tes) = te_map.get(&msg.id) {
+                        convert_agent_with_tool_executions(msg, tes, &ctx.agent_id, &mut result);
+                    } else if let Some(m) = convert_agent_message(msg, &ctx.agent_id) {
+                        result.push(m);
                     }
                 }
-                MessageRole::ToolResult => convert_tool_result(msg),
+                MessageRole::ToolResult => {
+                    if let Some(m) = convert_tool_result(msg) {
+                        result.push(m);
+                    }
+                }
                 MessageRole::System => {
-                    if msg.content.is_empty() {
-                        None
-                    } else {
-                        Some(RigMessage::user(&msg.content))
+                    if !msg.content.is_empty() {
+                        result.push(RigMessage::user(&msg.content));
                     }
                 }
             };
-            if let Some(m) = converted {
-                result.push(m);
-            }
         }
         result
+    }
+}
+
+// --- ToolExecution → RigMessage conversion ---
+
+fn group_tool_executions_by_message(
+    tool_executions: &[ToolExecution],
+) -> HashMap<String, Vec<&ToolExecution>> {
+    let mut map: HashMap<String, Vec<&ToolExecution>> = HashMap::new();
+    for te in tool_executions {
+        map.entry(te.message_id.clone()).or_default().push(te);
+    }
+    // Each group is already ordered by created_at ASC from the DB query
+    map
+}
+
+/// Convert an agent message that has linked ToolExecution records into RigMessages.
+/// Emits: for each turn, an Assistant message with tool calls + a User message with tool results.
+/// After all turns, emits the agent's final text (if status is Completed).
+fn convert_agent_with_tool_executions(
+    msg: &Message,
+    tool_executions: &[&ToolExecution],
+    agent_id: &str,
+    result: &mut Vec<RigMessage>,
+) {
+    let is_self = msg.agent_id.as_deref() == Some(agent_id);
+    if !is_self {
+        // Other agent's message — treat as user message
+        result.push(RigMessage::user(&msg.content));
+        return;
+    }
+
+    // Group tool executions by turn
+    let mut turns: std::collections::BTreeMap<u32, Vec<&ToolExecution>> =
+        std::collections::BTreeMap::new();
+    for te in tool_executions {
+        turns.entry(te.turn).or_default().push(te);
+    }
+
+    // Emit tool call/result pairs for each turn
+    for tes in turns.values() {
+        // Assistant message with turn text (if any) + tool calls
+        let mut assistant_items: Vec<AssistantContent> = Vec::new();
+        if let Some(text) = tes.iter().find_map(|te| te.turn_text.as_deref())
+            && !text.is_empty()
+        {
+            assistant_items.push(AssistantContent::text(text));
+        }
+        for te in tes {
+            assistant_items.push(AssistantContent::tool_call(&te.tool_call_id, &te.name, te.arguments.clone()));
+        }
+        if let Ok(content) = rig::OneOrMany::many(assistant_items) {
+            result.push(RigMessage::Assistant { id: None, content });
+        }
+
+        // User message with tool results
+        let tool_results: Vec<UserContent> = tes
+            .iter()
+            .map(|te| {
+                UserContent::ToolResult(ToolResult {
+                    id: te.tool_call_id.clone(),
+                    call_id: None,
+                    content: rig::OneOrMany::one(ToolResultContent::text(&te.result)),
+                })
+            })
+            .collect();
+        if let Ok(content) = rig::OneOrMany::many(tool_results) {
+            result.push(RigMessage::User { content });
+        }
+    }
+
+    // Emit final text if the message is completed and has content
+    let is_completed = msg.status.as_ref() == Some(&MessageStatus::Completed);
+    if is_completed && !msg.content.is_empty() {
+        let mut items: Vec<AssistantContent> = Vec::new();
+        if let Some(r) = &msg.reasoning {
+            items.push(AssistantContent::Reasoning(
+                rig::completion::message::Reasoning::new(&r.content)
+                    .optional_id(r.id.clone())
+                    .with_signature(r.signature.clone()),
+            ));
+        }
+        items.push(AssistantContent::text(&msg.content));
+        if let Ok(content) = rig::OneOrMany::many(items) {
+            result.push(RigMessage::Assistant { id: None, content });
+        }
     }
 }
 
@@ -330,6 +439,7 @@ mod tests {
             tool: None,
             attachments: vec![],
             contact_id: None,
+            status: None,
             system_prompt: None,
             reasoning: None,
             created_at: Utc::now(),
