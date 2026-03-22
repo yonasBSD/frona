@@ -137,9 +137,11 @@ class ChatEventQueue {
         // arrives after the streaming flow has exited. Deliver via callback
         // instead of the drain queue which may have no active consumer.
         if (event.type === "chat_message" && onChatMessage) {
+          console.log("[chat-adapter] queue: chat_message bypassed to callback");
           onChatMessage(event.message);
           continue;
         }
+        console.log("[chat-adapter] queue: event", event.type, self.waiter ? "(has waiter)" : `(buffered, size=${self.buffer.length})`);
         if (self.waiter) {
           const resolve = self.waiter;
           self.waiter = null;
@@ -219,6 +221,14 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
         lastMsg?.role === "user" &&
         lastMsg.id !== lastSentMessageId;
 
+      console.log("[chat-adapter] run() called", {
+        isNewUserMessage,
+        lastMsgRole: lastMsg?.role,
+        lastMsgId: lastMsg?.id,
+        lastSentMessageId,
+        chatId: currentChatId,
+      });
+
       if (isNewUserMessage) {
         const content = lastMsg.content
           .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -259,14 +269,17 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
 
       // Continuation (addResult, etc.) — just stream SSE events.
       // The backend already resumed via resume_or_notify.
-      if (!currentChatId) return;
+      if (!currentChatId) {
+        console.log("[chat-adapter] continuation: no chatId, returning");
+        return;
+      }
 
+      console.log("[chat-adapter] continuation: starting drain for", currentChatId);
       const chatId = currentChatId;
       const queue = ensureQueue(chatId);
       const onAbort = onUserCancel(abortSignal, chatId);
       abortSignal.addEventListener("abort", onAbort);
 
-      yield { content: [{ type: "text" as const, text: "" }] };
       yield* streamEvents(queue.drain(abortSignal), abortSignal, onAbort);
     },
   };
@@ -303,6 +316,7 @@ async function* streamEvents(
 
   try {
     for await (const event of events) {
+      console.log("[chat-adapter] event:", event.type, event);
       const result = handleEvent(event, text, reasoning, toolCalls, toolResults, toolCallCounter);
       // Capture text segment that arrived before this tool call
       if (event.type === "tool_call" && result.text.length > lastTextSnapshot) {
@@ -336,7 +350,10 @@ async function* streamEvents(
         }
         yield update;
       }
-      if (result.done) return;
+      if (result.done) {
+        console.log("[chat-adapter] stream done", { requiresAction: result.requiresAction });
+        return;
+      }
     }
   } finally {
     abortSignal.removeEventListener("abort", onAbort);
@@ -404,25 +421,15 @@ function handleEvent(
       if (event.tool_execution) {
         const te = event.tool_execution;
         const toolName = te.tool_data?.type ?? te.name;
+        // Remove the original tool_call entry (keyed by Anthropic tool_call_id)
+        // so we don't show both the timeline item and the custom UI
+        toolCalls.delete(te.tool_call_id);
         toolCalls.set(te.id, {
           type: "tool-call",
           toolCallId: te.id,
           toolName,
           args: (te.tool_data?.data ?? te.arguments) as Record<string, string | number | boolean | null>,
           argsText: JSON.stringify(te.tool_data?.data ?? te.arguments),
-        });
-      } else if (event.message) {
-        const msg = event.message;
-        const toolName = msg.tool!.type;
-        if (msg.tool_call_id) {
-          toolCalls.delete(msg.tool_call_id);
-        }
-        toolCalls.set(msg.id, {
-          type: "tool-call",
-          toolCallId: msg.id,
-          toolName,
-          args: msg.tool!.data as Record<string, string | number | boolean | null>,
-          argsText: JSON.stringify(msg.tool!.data),
         });
       }
       return { text, reasoning, toolCallCounter, yield: true, done: true, requiresAction: true };

@@ -138,6 +138,10 @@ export type MessageTool =
   | { type: "VaultApproval"; data: { query: string; reason: string; env_var_prefix: string | null; status: MessageToolStatus; response: string | null } }
   | { type: "ServiceApproval"; data: { action: string; manifest: Record<string, unknown>; previous_manifest: Record<string, unknown> | null; status: MessageToolStatus; response: string | null } };
 
+export type MessageEvent =
+  | { type: "TaskCompletion"; data: { task_id: string; chat_id: string | null; status: string; summary?: string } }
+  | { type: "TaskDeferred"; data: { task_id: string; delay_minutes: number; reason: string } };
+
 export type MessageStatus = "executing" | "completed" | "failed";
 
 export interface ToolExecution {
@@ -160,12 +164,10 @@ export interface ToolExecution {
 export interface MessageResponse {
   id: string;
   chat_id: string;
-  role: "user" | "agent" | "toolresult" | "taskcompletion" | "contact" | "livecall" | "system";
+  role: "user" | "agent" | "taskcompletion" | "contact" | "livecall" | "system";
   content: string;
   agent_id?: string;
-  tool_calls?: unknown[];
-  tool_call_id?: string;
-  tool?: MessageTool;
+  event?: MessageEvent;
   attachments?: Attachment[];
   contact_id?: string;
   status?: MessageStatus;

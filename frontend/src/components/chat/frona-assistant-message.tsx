@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { MessagePrimitive, useMessage } from "@assistant-ui/react";
+import { MessagePrimitive, useMessage, useMessagePartText } from "@assistant-ui/react";
 import { useThreadIsRunning } from "@assistant-ui/core/react";
 import { MarkdownText } from "./markdown-text";
 import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/16/solid";
@@ -40,7 +40,7 @@ function ReasoningPart({ text }: { text: string }) {
 
 function StreamingIndicator() {
   return (
-    <span className="inline-flex items-center gap-1 py-1">
+    <span className="inline-flex items-center gap-1 py-1 -order-1">
       <span className="h-1 w-1 rounded-full bg-text-tertiary animate-[wave_1.4s_ease-in-out_infinite]" />
       <span className="h-1 w-1 rounded-full bg-text-tertiary animate-[wave_1.4s_ease-in-out_0.2s_infinite]" />
       <span className="h-1 w-1 rounded-full bg-text-tertiary animate-[wave_1.4s_ease-in-out_0.4s_infinite]" />
@@ -153,7 +153,7 @@ export function FronaAssistantMessage() {
             <RetryBadge />
           </MessagePrimitive.If>
         </div>
-        <div className="pl-[42px] text-base text-text-primary">
+        <div className="pl-[42px] text-base text-text-primary flex flex-col items-start">
           <ToolTimelineProvider>
             <MessagePrimitive.Parts
               unstable_showEmptyOnNonTextEnd={false}
@@ -174,12 +174,10 @@ export function FronaAssistantMessage() {
 }
 
 function SmoothMarkdownText() {
-  const message = useMessage();
+  const { text } = useMessagePartText();
   const isRunning = useThreadIsRunning();
-  const hasText = message.content.some(
-    (p) => p.type === "text" && p.text.length > 0,
-  );
 
-  if (!hasText && isRunning) return <StreamingIndicator />;
-  return <MarkdownText smooth />;
+  if (!text && isRunning) return <StreamingIndicator />;
+  if (!text) return null;
+  return <span className="-order-1 w-full"><MarkdownText smooth /></span>;
 }

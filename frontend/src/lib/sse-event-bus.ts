@@ -8,7 +8,7 @@ export type ChatSSEEvent =
   | { type: "reasoning"; content: string }
   | { type: "tool_call"; id: string; name: string; arguments: unknown; description?: string }
   | { type: "tool_result"; name: string; success: boolean; summary?: string }
-  | { type: "tool_message"; message?: MessageResponse; tool_execution?: ToolExecution }
+  | { type: "tool_message"; tool_execution?: ToolExecution }
   | { type: "tool_resolved"; message?: MessageResponse; tool_execution?: ToolExecution }
   | { type: "chat_message"; message: MessageResponse }
   | { type: "retry"; retryAfterSecs: number; reason: string }
@@ -122,6 +122,7 @@ class SSEEventBus {
   }
 
   private dispatchChat(chatId: string, event: ChatSSEEvent) {
+    console.log("[sse-bus] dispatchChat", event.type, chatId);
     const subs = this.chatSubscribers.get(chatId);
     if (subs) {
       for (const sub of subs) {
@@ -244,7 +245,6 @@ class SSEEventBus {
       case "tool_message":
         this.dispatchChat(chatId, {
           type: "tool_message",
-          message: parsed.message as MessageResponse | undefined,
           tool_execution: parsed.tool_execution as ToolExecution | undefined,
         });
         break;

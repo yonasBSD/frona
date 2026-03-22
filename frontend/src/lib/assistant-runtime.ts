@@ -29,9 +29,6 @@ function convertBackendAttachment(att: Attachment): CompleteAttachment {
 }
 
 function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
-  if (msg.role === "toolresult" && !msg.tool) return null;
-  if (msg.role === "agent" && !msg.content && msg.tool_calls) return null;
-
   if (msg.role === "user" || msg.role === "contact" || msg.role === "livecall") {
     const attachments = msg.attachments?.map(convertBackendAttachment);
     return {
@@ -49,7 +46,7 @@ function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
     };
   }
 
-  if (msg.role === "agent" || msg.role === "taskcompletion" || (msg.role === "toolresult" && msg.tool) || (msg.role === "system" && msg.tool)) {
+  if (msg.role === "agent" || msg.role === "taskcompletion" || (msg.role === "system" && msg.event)) {
     const content: Array<
       | { type: "text"; text: string }
       | { type: "reasoning"; text: string }
@@ -60,11 +57,11 @@ function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
       content.push({ type: "reasoning" as const, text: msg.reasoning });
     }
 
-    if (msg.content && !(msg.role === "toolresult" && msg.tool)) {
+    if (msg.content) {
       content.push({ type: "text" as const, text: msg.content });
     }
 
-    if (!msg.content && !msg.reasoning && !msg.tool) {
+    if (!msg.content && !msg.reasoning && !msg.event) {
       content.push({ type: "text" as const, text: "" });
     }
 
@@ -102,20 +99,6 @@ function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
           });
         }
       }
-    } else if (msg.tool) {
-      const toolName = msg.tool.type;
-      const resolved = msg.tool.data.status === "resolved" || msg.tool.data.status === "denied";
-      const toolData = msg.tool.data as Record<string, string | number | boolean | null>;
-      const response = "response" in msg.tool.data ? (msg.tool.data as { response?: string | null }).response : null;
-      content.push({
-        type: "tool-call" as const,
-        toolCallId: msg.id,
-        toolName,
-        args: toolData,
-        argsText: JSON.stringify(toolData),
-        ...(resolved && response != null ? { result: response } : {}),
-        ...(resolved && response == null ? { result: String(msg.tool.data.status) } : {}),
-      });
     }
 
     return {
@@ -123,8 +106,7 @@ function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
       role: "assistant" as const,
       content,
       createdAt: new Date(msg.created_at),
-      status: (msg.tool && msg.tool.data.status === "pending")
-        || msg.tool_executions?.some(te => te.tool_data && te.tool_data.data.status === "pending")
+      status: msg.tool_executions?.some(te => te.tool_data && te.tool_data.data.status === "pending")
         || msg.status === "executing"
         ? { type: "requires-action" as const, reason: "tool-calls" as const }
         : { type: "complete" as const, reason: "stop" as const },
