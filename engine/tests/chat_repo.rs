@@ -62,6 +62,7 @@ fn test_message(chat_id: &str, content: &str) -> Message {
         tool: None,
         attachments: vec![],
         contact_id: None,
+        status: None,
         system_prompt: None,
         reasoning: None,
         created_at: Utc::now(),

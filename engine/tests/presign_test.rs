@@ -74,7 +74,9 @@ fn make_message_response(attachments: Vec<Attachment>) -> MessageResponse {
         tool: None,
         attachments,
         contact_id: None,
+        status: None,
         reasoning: None,
+        tool_executions: vec![],
         created_at: Utc::now(),
     }
 }

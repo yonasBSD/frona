@@ -153,45 +153,19 @@ async fn save_initial_message_skips_on_resume() {
 }
 
 #[tokio::test]
-async fn handle_cancelled_saves_partial_text() {
+async fn handle_cancelled_marks_task_cancelled() {
     let (state, _tmp) = test_app_state().await;
     let executor = make_executor(&state);
     let mut task = make_task(TaskKind::Direct);
-    let chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
+    let _chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
 
     let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
     repo.create(&task).await.unwrap();
 
     executor
-        .handle_cancelled(&task, &chat_id, "partial output".to_string())
+        .handle_cancelled(&task)
         .await
         .unwrap();
-
-    let messages = state.chat_service.get_stored_messages(&chat_id).await;
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].content, "partial output");
-
-    let updated = repo.find_by_id(&task.id).await.unwrap().unwrap();
-    assert_eq!(updated.status, TaskStatus::Cancelled);
-}
-
-#[tokio::test]
-async fn handle_cancelled_skips_empty_text() {
-    let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
-    let mut task = make_task(TaskKind::Direct);
-    let chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
-
-    let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
-    repo.create(&task).await.unwrap();
-
-    executor
-        .handle_cancelled(&task, &chat_id, String::new())
-        .await
-        .unwrap();
-
-    let messages = state.chat_service.get_stored_messages(&chat_id).await;
-    assert!(messages.is_empty());
 
     let updated = repo.find_by_id(&task.id).await.unwrap().unwrap();
     assert_eq!(updated.status, TaskStatus::Cancelled);

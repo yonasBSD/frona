@@ -412,6 +412,64 @@ pub async fn drain_sse_frames(
     frames
 }
 
+/// Create a minimal ChatService backed by an in-memory SurrealDB for tool loop tests.
+pub async fn test_chat_service() -> frona::chat::service::ChatService {
+    use frona::db::repo::generic::SurrealRepo;
+    use surrealdb::engine::local::Mem;
+    use surrealdb::Surreal;
+
+    let db = Surreal::new::<Mem>(()).await.unwrap();
+    frona::db::init::setup_schema(&db).await.unwrap();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().to_string_lossy().to_string();
+
+    let config = frona::core::config::Config {
+        storage: frona::core::config::StorageConfig {
+            workspaces_path: format!("{base}/workspaces"),
+            files_path: format!("{base}/files"),
+            shared_config_dir: format!("{base}/config"),
+        },
+        ..Default::default()
+    };
+
+    let storage = frona::storage::StorageService::new(&config);
+    let agent_service = frona::agent::service::AgentService::new(
+        SurrealRepo::new(db.clone()),
+        &config.cache,
+        std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+    );
+    let provider_registry = frona::inference::registry::ModelProviderRegistry::for_testing(
+        HashMap::new(),
+        HashMap::new(),
+    );
+    let user_service = frona::auth::UserService::new(
+        SurrealRepo::new(db.clone()),
+        &config.cache,
+    );
+
+    let memory_service = frona::memory::service::MemoryService::new(
+        SurrealRepo::new(db.clone()),
+        SurrealRepo::new(db.clone()),
+        SurrealRepo::new(db.clone()),
+        std::sync::Arc::new(provider_registry.clone()),
+        frona::agent::prompt::PromptLoader::new(&base),
+        storage.clone(),
+    );
+
+    frona::chat::service::ChatService::new(
+        SurrealRepo::new(db.clone()),
+        SurrealRepo::new(db.clone()),
+        SurrealRepo::new(db.clone()),
+        agent_service,
+        provider_registry,
+        storage,
+        user_service,
+        memory_service,
+        frona::agent::prompt::PromptLoader::new(&base),
+    )
+}
+
 /// Create an `EventSender` backed by a real `BroadcastService` with a
 /// registered SSE session, returning both the sender and the SSE receiver.
 /// This exercises the full production path: serialize → dispatch → fan-out.

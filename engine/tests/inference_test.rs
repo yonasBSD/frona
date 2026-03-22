@@ -30,6 +30,7 @@ async fn test_tool_loop_simple_text_response() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -41,6 +42,8 @@ async fn test_tool_loop_simple_text_response() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
@@ -84,6 +87,7 @@ async fn test_tool_loop_single_tool_call() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -95,6 +99,8 @@ async fn test_tool_loop_single_tool_call() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
@@ -149,6 +155,7 @@ async fn test_tool_loop_multi_turn() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -160,6 +167,8 @@ async fn test_tool_loop_multi_turn() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
@@ -187,6 +196,7 @@ async fn test_tool_loop_external_tool_returns_pending() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -198,13 +208,15 @@ async fn test_tool_loop_external_tool_returns_pending() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
 
     match outcome {
-        ToolLoopOutcome::ExternalToolPending { external_tool, .. } => {
-            assert_eq!(external_tool.tool_name, "ext_tool");
+        ToolLoopOutcome::ExternalToolPending { tool_execution, .. } => {
+            assert_eq!(tool_execution.name, "ext_tool");
         }
         other => panic!("Expected ExternalToolPending, got {other:?}"),
     }
@@ -230,6 +242,7 @@ async fn test_tool_loop_mixed_internal_external() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -241,19 +254,18 @@ async fn test_tool_loop_mixed_internal_external() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
 
     match outcome {
         ToolLoopOutcome::ExternalToolPending {
-            external_tool,
-            tool_results,
+            tool_execution,
             ..
         } => {
-            assert_eq!(external_tool.tool_name, "external");
-            assert_eq!(tool_results.len(), 1);
-            assert_eq!(tool_results[0].tool_name, "internal");
+            assert_eq!(tool_execution.name, "external");
         }
         other => panic!("Expected ExternalToolPending, got {other:?}"),
     }
@@ -274,6 +286,7 @@ async fn test_tool_loop_cancellation_before_inference() {
     cancel.cancel();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -285,6 +298,8 @@ async fn test_tool_loop_cancellation_before_inference() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
@@ -310,6 +325,7 @@ async fn test_tool_loop_rate_limit_retry() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -321,6 +337,8 @@ async fn test_tool_loop_rate_limit_retry() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
@@ -361,6 +379,7 @@ async fn test_tool_loop_rate_limit_exhausted() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let result = run_tool_loop(
         &registry,
@@ -372,6 +391,8 @@ async fn test_tool_loop_rate_limit_exhausted() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await;
 
@@ -404,6 +425,7 @@ async fn test_tool_loop_tool_execution_failure() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -415,6 +437,8 @@ async fn test_tool_loop_tool_execution_failure() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
@@ -447,6 +471,7 @@ async fn test_tool_loop_provider_error() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let result = run_tool_loop(
         &registry,
@@ -458,6 +483,8 @@ async fn test_tool_loop_provider_error() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await;
 
@@ -793,6 +820,7 @@ async fn test_streaming_tokens_arrive_individually() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let handle = tokio::spawn(async move {
         run_tool_loop(
@@ -805,6 +833,8 @@ async fn test_streaming_tokens_arrive_individually() {
             cancel,
             &ctx,
             &metrics,
+            &chat_service,
+            "test-msg",
         )
         .await
     });
@@ -895,6 +925,7 @@ async fn test_tool_loop_reasoning_in_completed_outcome() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -906,6 +937,8 @@ async fn test_tool_loop_reasoning_in_completed_outcome() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
@@ -959,6 +992,7 @@ async fn test_tool_loop_reasoning_with_tool_calls() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -970,6 +1004,8 @@ async fn test_tool_loop_reasoning_with_tool_calls() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
@@ -1004,6 +1040,7 @@ async fn test_tool_loop_no_reasoning_when_absent() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let outcome = run_tool_loop(
         &registry,
@@ -1015,6 +1052,8 @@ async fn test_tool_loop_no_reasoning_when_absent() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
@@ -1055,6 +1094,7 @@ async fn test_tool_result_sse_includes_summary() {
     let cancel = CancellationToken::new();
     let ctx = mock_context();
     let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
 
     let _outcome = run_tool_loop(
         &registry,
@@ -1066,6 +1106,8 @@ async fn test_tool_result_sse_includes_summary() {
         cancel,
         &ctx,
         &metrics,
+        &chat_service,
+        "test-msg",
     )
     .await
     .unwrap();
