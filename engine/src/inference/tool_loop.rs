@@ -241,7 +241,7 @@ async fn execute_tool_calls(
         } else {
             None
         };
-        let te_record = chat_service
+        let mut te_record = chat_service
             .begin_tool_execution(
                 &ctx.chat.id,
                 message_id,
@@ -305,6 +305,13 @@ async fn execute_tool_calls(
                 sp.clone(),
             )
             .await?;
+
+        // Update in-memory record with finished fields so the SSE response is complete
+        te_record.result = text.clone();
+        te_record.success = success;
+        te_record.duration_ms = duration_ms;
+        te_record.tool_data = td.clone();
+        te_record.system_prompt = sp.clone();
 
         let te_response: crate::inference::tool_execution::ToolExecutionResponse = te_record.into();
 
