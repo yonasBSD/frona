@@ -83,7 +83,9 @@ function buildParts(
 ): ContentPart[] {
   const parts: ContentPart[] = [];
   if (reasoning) parts.push({ type: "reasoning", text: reasoning });
-  if (text) parts.push({ type: "text", text });
+  // Always include text part when tool calls exist so the UI can show
+  // a streaming indicator while tools are executing.
+  if (text || toolCalls.size > 0) parts.push({ type: "text", text });
   for (const tc of toolCalls.values()) {
     const res = toolResults.get(tc.toolCallId);
     if (res) {
@@ -289,10 +291,20 @@ async function* streamEvents(
   const toolCalls = new Map<string, ToolCallPart>();
   const toolResults = new Map<string, { result: string; isError: boolean }>();
   let toolCallCounter = 0;
+  let lastTextSnapshot = 0;
 
   try {
     for await (const event of events) {
       const result = handleEvent(event, text, reasoning, toolCalls, toolResults, toolCallCounter);
+      // Capture text segment that arrived before this tool call
+      if (event.type === "tool_call" && result.text.length > lastTextSnapshot) {
+        const turnText = result.text.slice(lastTextSnapshot).trim();
+        if (turnText) {
+          const tc = toolCalls.get((event as { id: string }).id);
+          if (tc) tc.args = { ...tc.args, turnText: turnText };
+        }
+        lastTextSnapshot = result.text.length;
+      }
       text = result.text;
       reasoning = result.reasoning;
       toolCallCounter = result.toolCallCounter;
@@ -303,8 +315,13 @@ async function* streamEvents(
         clearRetryState();
       }
       if (result.yield) {
+        // Only show text from the current turn (after the last tool call).
+        // Earlier turn text is already captured as turnText bubbles on tool calls.
+        const displayText = lastTextSnapshot > 0
+          ? text.slice(lastTextSnapshot)
+          : text;
         const update: Record<string, unknown> = {
-          content: buildParts(text, reasoning, toolCalls, toolResults),
+          content: buildParts(displayText, reasoning, toolCalls, toolResults),
         };
         if (result.done && result.requiresAction) {
           update.status = { type: "requires-action", reason: "tool-calls" };
@@ -376,18 +393,30 @@ function handleEvent(
     }
 
     case "tool_message": {
-      const msg = event.message;
-      const toolName = msg.tool!.type;
-      if (msg.tool_call_id) {
-        toolCalls.delete(msg.tool_call_id);
+      if (event.tool_execution) {
+        const te = event.tool_execution;
+        const toolName = te.tool_data?.type ?? te.name;
+        toolCalls.set(te.id, {
+          type: "tool-call",
+          toolCallId: te.id,
+          toolName,
+          args: (te.tool_data?.data ?? te.arguments) as Record<string, string | number | boolean | null>,
+          argsText: JSON.stringify(te.tool_data?.data ?? te.arguments),
+        });
+      } else if (event.message) {
+        const msg = event.message;
+        const toolName = msg.tool!.type;
+        if (msg.tool_call_id) {
+          toolCalls.delete(msg.tool_call_id);
+        }
+        toolCalls.set(msg.id, {
+          type: "tool-call",
+          toolCallId: msg.id,
+          toolName,
+          args: msg.tool!.data as Record<string, string | number | boolean | null>,
+          argsText: JSON.stringify(msg.tool!.data),
+        });
       }
-      toolCalls.set(msg.id, {
-        type: "tool-call",
-        toolCallId: msg.id,
-        toolName,
-        args: msg.tool!.data as Record<string, string | number | boolean | null>,
-        argsText: JSON.stringify(msg.tool!.data),
-      });
       return { text, reasoning, toolCallCounter, yield: true, done: true, requiresAction: true };
     }
 

@@ -68,7 +68,41 @@ function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
       content.push({ type: "text" as const, text: "" });
     }
 
-    if (msg.tool) {
+    if (msg.tool_executions?.length) {
+      for (const te of msg.tool_executions) {
+        if (te.tool_data) {
+          const toolName = te.tool_data.type;
+          const status = te.tool_data.data.status;
+          const resolved = status === "resolved" || status === "denied";
+          const toolData = te.tool_data.data as Record<string, string | number | boolean | null>;
+          const response = "response" in te.tool_data.data
+            ? (te.tool_data.data as { response?: string | null }).response
+            : null;
+          content.push({
+            type: "tool-call" as const,
+            toolCallId: te.id,
+            toolName,
+            args: toolData,
+            argsText: JSON.stringify(toolData),
+            ...(resolved && response != null ? { result: response } : {}),
+            ...(resolved && response == null ? { result: String(status) } : {}),
+          });
+        } else {
+          content.push({
+            type: "tool-call" as const,
+            toolCallId: te.tool_call_id,
+            toolName: te.name,
+            args: {
+              description: te.name,
+              ...te.arguments,
+              ...(te.turn_text ? { turnText: te.turn_text } : {}),
+            } as Record<string, string | number | boolean | null>,
+            argsText: JSON.stringify(te.arguments || {}),
+            result: te.result,
+          });
+        }
+      }
+    } else if (msg.tool) {
       const toolName = msg.tool.type;
       const resolved = msg.tool.data.status === "resolved" || msg.tool.data.status === "denied";
       const toolData = msg.tool.data as Record<string, string | number | boolean | null>;
@@ -89,7 +123,9 @@ function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
       role: "assistant" as const,
       content,
       createdAt: new Date(msg.created_at),
-      status: msg.tool && msg.tool.data.status === "pending"
+      status: (msg.tool && msg.tool.data.status === "pending")
+        || msg.tool_executions?.some(te => te.tool_data && te.tool_data.data.status === "pending")
+        || msg.status === "executing"
         ? { type: "requires-action" as const, reason: "tool-calls" as const }
         : { type: "complete" as const, reason: "stop" as const },
       metadata: {

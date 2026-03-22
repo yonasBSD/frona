@@ -52,9 +52,13 @@ function HumanInTheLoopRenderer({
     if (acted.current) return;
     acted.current = true;
     setLoading(true);
-    await api.post(`/api/chats/${chatId}/messages/${toolCallId}/resolve`, {
+    await api.post(`/api/chats/${chatId}/tool-executions/${toolCallId}/resolve`, {
       response: "resumed",
-    });
+    }).catch(() =>
+      api.post(`/api/chats/${chatId}/messages/${toolCallId}/resolve`, {
+        response: "resumed",
+      })
+    );
     addResult("resumed");
   };
 

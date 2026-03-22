@@ -121,6 +121,8 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
     status?.type === "incomplete" && status.reason === "cancelled";
   const description =
     typeof args?.description === "string" ? args.description : null;
+  const turnText =
+    typeof args?.turnText === "string" ? args.turnText : null;
   const statusType = status?.type ?? "complete";
   const isLast = timeline ? timeline.isLastVisible(toolCallId) : false;
   const isFirst = timeline ? timeline.isFirstVisible(toolCallId) : false;
@@ -149,6 +151,14 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
           </span>
         </div>
       )}
+      {turnText && (
+        <div className={cn("relative pb-3 flex items-start", isFirst && hiddenCount === 0 && "mt-3")}>
+          <div className="absolute left-[11px] top-0 bottom-0 w-px bg-border" />
+          <span className="inline-block rounded-r-full bg-surface-tertiary pl-4 pr-3 py-1.5 text-xs text-text-secondary leading-none" style={{ marginLeft: "11px" }}>
+            {turnText}
+          </span>
+        </div>
+      )}
       <motion.div
       initial={{ opacity: 0, height: 0 }}
       animate={{ opacity: 1, height: "auto" }}
@@ -156,12 +166,11 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
       transition={{ duration: 0.25, ease: "easeInOut" }}
       className={cn(
         "relative pl-8 pb-3",
-        isFirst && hiddenCount === 0 && "mt-3",
+        isFirst && hiddenCount === 0 && !turnText && "mt-3",
         isLast && "pb-0",
         isCancelled && "opacity-60",
       )}
     >
-      {/* Timeline connector line */}
       {!isLast && (
         <div className="absolute left-[11px] top-[21px] bottom-0 w-px bg-border" />
       )}

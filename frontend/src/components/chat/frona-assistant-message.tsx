@@ -174,5 +174,12 @@ export function FronaAssistantMessage() {
 }
 
 function SmoothMarkdownText() {
+  const message = useMessage();
+  const isRunning = useThreadIsRunning();
+  const hasText = message.content.some(
+    (p) => p.type === "text" && p.text.length > 0,
+  );
+
+  if (!hasText && isRunning) return <StreamingIndicator />;
   return <MarkdownText smooth />;
 }

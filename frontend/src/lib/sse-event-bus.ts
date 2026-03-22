@@ -1,5 +1,5 @@
 import { ensureAccessToken, API_URL } from "./api-client";
-import type { MessageResponse, Notification } from "./types";
+import type { MessageResponse, Notification, ToolExecution } from "./types";
 
 // --- Chat-scoped events ---
 
@@ -8,8 +8,8 @@ export type ChatSSEEvent =
   | { type: "reasoning"; content: string }
   | { type: "tool_call"; id: string; name: string; arguments: unknown; description?: string }
   | { type: "tool_result"; name: string; success: boolean; summary?: string }
-  | { type: "tool_message"; message: MessageResponse }
-  | { type: "tool_resolved"; message: MessageResponse }
+  | { type: "tool_message"; message?: MessageResponse; tool_execution?: ToolExecution }
+  | { type: "tool_resolved"; message?: MessageResponse; tool_execution?: ToolExecution }
   | { type: "chat_message"; message: MessageResponse }
   | { type: "retry"; retryAfterSecs: number; reason: string }
   | { type: "inference_done"; message: MessageResponse }
@@ -242,10 +242,18 @@ class SSEEventBus {
         });
         break;
       case "tool_message":
-        this.dispatchChat(chatId, { type: "tool_message", message: parsed.message as MessageResponse });
+        this.dispatchChat(chatId, {
+          type: "tool_message",
+          message: parsed.message as MessageResponse | undefined,
+          tool_execution: parsed.tool_execution as ToolExecution | undefined,
+        });
         break;
       case "tool_resolved":
-        this.dispatchChat(chatId, { type: "tool_resolved", message: parsed.message as MessageResponse });
+        this.dispatchChat(chatId, {
+          type: "tool_resolved",
+          message: parsed.message as MessageResponse | undefined,
+          tool_execution: parsed.tool_execution as ToolExecution | undefined,
+        });
         break;
       case "chat_message":
         this.dispatchChat(chatId, { type: "chat_message", message: parsed.message as MessageResponse });
