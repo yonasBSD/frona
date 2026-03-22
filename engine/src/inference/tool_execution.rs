@@ -3,7 +3,81 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
 use crate::Entity;
-use crate::chat::message::models::MessageTool;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SurrealValue)]
+#[serde(rename_all = "lowercase")]
+#[surreal(crate = "surrealdb::types", lowercase)]
+pub enum ToolStatus {
+    Pending,
+    Resolved,
+    Denied,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+#[serde(tag = "type", content = "data")]
+#[surreal(crate = "surrealdb::types", tag = "type", content = "data")]
+pub enum MessageTool {
+    HumanInTheLoop {
+        reason: String,
+        debugger_url: String,
+        status: ToolStatus,
+        response: Option<String>,
+    },
+    Question {
+        question: String,
+        options: Vec<String>,
+        status: ToolStatus,
+        response: Option<String>,
+    },
+    TaskCompletion {
+        task_id: String,
+        chat_id: Option<String>,
+        status: crate::agent::task::models::TaskStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
+    TaskDeferred {
+        task_id: String,
+        delay_minutes: u32,
+        reason: String,
+    },
+    VaultApproval {
+        query: String,
+        reason: String,
+        env_var_prefix: Option<String>,
+        status: ToolStatus,
+        response: Option<String>,
+    },
+    ServiceApproval {
+        action: String,
+        manifest: serde_json::Value,
+        previous_manifest: Option<serde_json::Value>,
+        status: ToolStatus,
+        response: Option<String>,
+    },
+}
+
+impl MessageTool {
+    pub fn tool_status(&self) -> Option<&ToolStatus> {
+        match self {
+            Self::HumanInTheLoop { status, .. }
+            | Self::Question { status, .. }
+            | Self::VaultApproval { status, .. }
+            | Self::ServiceApproval { status, .. } => Some(status),
+            Self::TaskCompletion { .. } | Self::TaskDeferred { .. } => None,
+        }
+    }
+
+    pub fn tool_response(&self) -> Option<&str> {
+        match self {
+            Self::HumanInTheLoop { response, .. }
+            | Self::Question { response, .. }
+            | Self::VaultApproval { response, .. }
+            | Self::ServiceApproval { response, .. } => response.as_deref(),
+            Self::TaskCompletion { .. } | Self::TaskDeferred { .. } => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]

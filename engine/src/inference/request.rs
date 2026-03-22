@@ -13,7 +13,7 @@ use crate::tool::registry::AgentToolRegistry;
 
 use super::config::ModelGroup;
 use super::registry::ModelProviderRegistry;
-use crate::chat::message::models::MessageTool;
+use super::tool_execution::MessageTool;
 
 use crate::chat::message::models::Reasoning;
 

@@ -67,7 +67,7 @@ pub struct ToolOutput {
     text: String,
     images: Vec<ImageData>,
     attachments: Vec<crate::storage::Attachment>,
-    tool_data: Option<crate::chat::message::models::MessageTool>,
+    tool_data: Option<crate::inference::tool_execution::MessageTool>,
     system_prompt: Option<String>,
     pending_external: bool,
     success: bool,
@@ -115,7 +115,7 @@ impl ToolOutput {
         self
     }
 
-    pub fn with_tool_data(mut self, td: crate::chat::message::models::MessageTool) -> Self {
+    pub fn with_tool_data(mut self, td: crate::inference::tool_execution::MessageTool) -> Self {
         self.tool_data = Some(td);
         self
     }
@@ -137,7 +137,7 @@ impl ToolOutput {
         &self.attachments
     }
 
-    pub fn tool_data(&self) -> Option<&crate::chat::message::models::MessageTool> {
+    pub fn tool_data(&self) -> Option<&crate::inference::tool_execution::MessageTool> {
         self.tool_data.as_ref()
     }
 

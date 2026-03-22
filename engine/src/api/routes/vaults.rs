@@ -156,26 +156,23 @@ async fn approve_request(
         .get_secret(&auth.user_id, &req.connection_id, &req.vault_item_id)
         .await?;
 
-    let stored_messages = state.chat_service.get_stored_messages(&req.chat_id).await;
+    let pending_te = state.chat_service
+        .find_pending_tool_execution(&req.chat_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    let (original_query, original_reason) = pending_te.as_ref()
+        .and_then(|te| te.tool_data.as_ref())
+        .map(|td| match td {
+            crate::inference::tool_execution::MessageTool::VaultApproval { query, reason, .. } => {
+                (query.clone(), reason.clone())
+            }
+            _ => (String::new(), String::new()),
+        })
+        .unwrap_or_default();
 
     {
         let agent_id = &chat.agent_id;
-
-        let original_query = stored_messages.iter().rev().find_map(|m| {
-            if let Some(crate::chat::message::models::MessageTool::VaultApproval { ref query, .. }) = m.tool {
-                Some(query.clone())
-            } else {
-                None
-            }
-        }).unwrap_or_default();
-
-        let original_reason = stored_messages.iter().rev().find_map(|m| {
-            if let Some(crate::chat::message::models::MessageTool::VaultApproval { ref reason, .. }) = m.tool {
-                Some(reason.clone())
-            } else {
-                None
-            }
-        }).unwrap_or_default();
 
         if !matches!(req.grant_duration, GrantDuration::Once) {
             state
@@ -229,18 +226,11 @@ async fn approve_request(
         parts.join("\n")
     };
 
-    if let Some(pending_msg) = stored_messages.iter().rev().find(|m| {
-        matches!(
-            &m.tool,
-            Some(crate::chat::message::models::MessageTool::VaultApproval {
-                status: crate::chat::message::models::ToolStatus::Pending,
-                ..
-            })
-        )
-    }) {
+    if let Some(te) = pending_te {
+        let message_id = te.message_id.clone();
         let resolved = state
             .chat_service
-            .resolve_tool_message(&pending_msg.id, Some(result_text.clone()))
+            .resolve_tool_execution(&te.id, Some(result_text.clone()))
             .await
             .map_err(ApiError::from)?
             .into_message();
@@ -255,7 +245,7 @@ async fn approve_request(
         let chat_id = req.chat_id.clone();
         let state_clone = state.clone();
         tokio::spawn(async move {
-            crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
+            crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id, &message_id).await;
         });
     }
 
@@ -273,20 +263,17 @@ async fn deny_request(
         .await
         .map_err(ApiError::from)?;
 
-    let stored_messages = state.chat_service.get_stored_messages(&req.chat_id).await;
-    if let Some(pending_msg) = stored_messages.iter().rev().find(|m| {
-        matches!(
-            &m.tool,
-            Some(crate::chat::message::models::MessageTool::VaultApproval {
-                status: crate::chat::message::models::ToolStatus::Pending,
-                ..
-            })
-        )
-    }) {
+    let pending_te = state.chat_service
+        .find_pending_tool_execution(&req.chat_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    if let Some(te) = pending_te {
+        let message_id = te.message_id.clone();
         let denied = state
             .chat_service
-            .deny_tool_message(
-                &pending_msg.id,
+            .deny_tool_execution(
+                &te.id,
                 Some("User denied the credential request.".to_string()),
             )
             .await
@@ -303,7 +290,7 @@ async fn deny_request(
         let chat_id = req.chat_id.clone();
         let state_clone = state.clone();
         tokio::spawn(async move {
-            crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
+            crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id, &message_id).await;
         });
     }
 

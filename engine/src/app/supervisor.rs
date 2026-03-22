@@ -194,14 +194,28 @@ async fn attempt_fix_app_on_crash(state: &AppState, app: &super::models::App) {
 
     let _ = state
         .chat_service
-        .save_system_message(&app.chat_id, crash_msg, false)
+        .save_system_message(&app.chat_id, crash_msg)
         .await;
 
     let state = state.clone();
     let user_id = app.user_id.clone();
     let chat_id = app.chat_id.clone();
     tokio::spawn(async move {
-        crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id).await;
+        let message_id = match state.chat_service
+            .find_executing_message_for_chat(&chat_id)
+            .await
+        {
+            Ok(Some(msg)) => msg.id,
+            Ok(None) => {
+                tracing::warn!(chat_id = %chat_id, "No executing message found for crash fix resume");
+                return;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, chat_id = %chat_id, "Failed to find executing message");
+                return;
+            }
+        };
+        crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id, &message_id).await;
     });
 }
 

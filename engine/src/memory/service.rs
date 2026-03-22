@@ -15,7 +15,7 @@ use crate::core::metrics::InferenceMetricsContext;
 use crate::inference::config::ModelGroup;
 use crate::inference::context::{estimate_tokens, resolve_context_window};
 use crate::inference::conversation::{
-    convert_agent_message, convert_tool_result, format_files_block_simple,
+    convert_agent_message, format_files_block_simple,
 };
 use crate::inference::text_inference;
 use crate::inference::ModelProviderRegistry;
@@ -98,7 +98,6 @@ impl MemoryService {
                 crate::chat::message::models::MessageRole::Agent => {
                     convert_agent_message(msg, chat_agent_id)
                 }
-                crate::chat::message::models::MessageRole::ToolResult => convert_tool_result(msg),
                 crate::chat::message::models::MessageRole::System => None,
             })
             .collect();
@@ -152,7 +151,6 @@ impl MemoryService {
             let role_str = match msg.role {
                 crate::chat::message::models::MessageRole::User => "User",
                 crate::chat::message::models::MessageRole::Agent => "Agent",
-                crate::chat::message::models::MessageRole::ToolResult => "Tool",
                 crate::chat::message::models::MessageRole::TaskCompletion => "System",
                 crate::chat::message::models::MessageRole::Contact => "Contact",
                 crate::chat::message::models::MessageRole::LiveCall => "Caller",

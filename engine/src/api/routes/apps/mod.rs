@@ -99,30 +99,28 @@ async fn approve_service(
         .await
         .map_err(ApiError::from)?;
 
-    let stored_messages = state.chat_service.get_stored_messages(&req.chat_id).await;
+    let pending_te = state
+        .chat_service
+        .find_pending_tool_execution(&req.chat_id)
+        .await
+        .map_err(ApiError::from)?;
 
-    let pending_msg = stored_messages.iter().rev().find(|m| {
-        matches!(
-            &m.tool,
-            Some(crate::chat::message::models::MessageTool::ServiceApproval {
-                status: crate::chat::message::models::ToolStatus::Pending,
-                ..
-            })
-        )
-    });
-
-    let Some(pending_msg) = pending_msg else {
-        return Err(ApiError::from(crate::core::error::AppError::NotFound(
+    let pending_te = pending_te.ok_or_else(|| {
+        ApiError::from(crate::core::error::AppError::NotFound(
             "No pending service approval found".into(),
-        )));
-    };
+        ))
+    })?;
 
-    let manifest_value = match &pending_msg.tool {
-        Some(crate::chat::message::models::MessageTool::ServiceApproval {
+    let manifest_value = match &pending_te.tool_data {
+        Some(crate::inference::tool_execution::MessageTool::ServiceApproval {
             manifest,
             ..
         }) => manifest.clone(),
-        _ => unreachable!(),
+        _ => {
+            return Err(ApiError::from(crate::core::error::AppError::NotFound(
+                "No pending service approval found".into(),
+            )));
+        }
     };
 
     let manifest: crate::app::models::AppManifest =
@@ -132,11 +130,12 @@ async fn approve_service(
             )))
         })?;
 
-    let pending_msg_id = pending_msg.id.clone();
+    let te_id = pending_te.id.clone();
+    let te_message_id = pending_te.message_id.clone();
 
     let resolved = state
         .chat_service
-        .resolve_tool_message(&pending_msg_id, Some("Deploying...".to_string()))
+        .resolve_tool_execution(&te_id, Some("Deploying...".to_string()))
         .await
         .map_err(ApiError::from)?
         .into_message();
@@ -182,7 +181,7 @@ async fn approve_service(
 
         if let Ok(result) = state_clone
             .chat_service
-            .resolve_tool_message(&pending_msg_id, Some(result_text))
+            .resolve_tool_execution(&te_id, Some(result_text))
             .await
         {
             state_clone.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
@@ -211,7 +210,7 @@ async fn approve_service(
             state_clone.broadcast_service.send_notification(&user_id, notification);
         }
 
-        crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
+        crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id, &te_message_id).await;
     });
 
     Ok(Json(serde_json::json!({ "approved": true })))
@@ -228,21 +227,18 @@ async fn deny_service(
         .await
         .map_err(ApiError::from)?;
 
-    let stored_messages = state.chat_service.get_stored_messages(&req.chat_id).await;
+    let pending_te = state
+        .chat_service
+        .find_pending_tool_execution(&req.chat_id)
+        .await
+        .map_err(ApiError::from)?;
 
-    if let Some(pending_msg) = stored_messages.iter().rev().find(|m| {
-        matches!(
-            &m.tool,
-            Some(crate::chat::message::models::MessageTool::ServiceApproval {
-                status: crate::chat::message::models::ToolStatus::Pending,
-                ..
-            })
-        )
-    }) {
+    if let Some(te) = pending_te {
+        let message_id = te.message_id.clone();
         let denied = state
             .chat_service
-            .deny_tool_message(
-                &pending_msg.id,
+            .deny_tool_execution(
+                &te.id,
                 Some("User denied the service deployment.".to_string()),
             )
             .await
@@ -254,14 +250,14 @@ async fn deny_service(
             chat_id: Some(req.chat_id.clone()),
             kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: denied },
         });
-    }
 
-    let user_id = auth.user_id.clone();
-    let chat_id = req.chat_id.clone();
-    let state_clone = state.clone();
-    tokio::spawn(async move {
-        crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id).await;
-    });
+        let user_id = auth.user_id.clone();
+        let chat_id = req.chat_id.clone();
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id, &message_id).await;
+        });
+    }
 
     Ok(Json(serde_json::json!({ "denied": true })))
 }

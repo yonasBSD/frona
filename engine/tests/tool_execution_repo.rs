@@ -1,5 +1,5 @@
 use chrono::Utc;
-use frona::chat::message::models::{MessageTool, ToolStatus};
+use frona::inference::tool_execution::{MessageTool, ToolStatus};
 use frona::core::repository::Repository;
 use frona::db::init as db;
 use frona::db::repo::generic::SurrealRepo;

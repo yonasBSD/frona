@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
 use crate::agent::task::models::TaskStatus;
-use crate::chat::message::models::MessageTool;
+use crate::inference::tool_execution::MessageTool;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 

@@ -103,8 +103,8 @@ impl ChatSessionContext {
             system_prompt.push_str(&task_prompt);
         }
 
-        for msg in &stored_messages {
-            if let Some(sp) = &msg.system_prompt {
+        for te in &tool_executions {
+            if let Some(sp) = &te.system_prompt {
                 system_prompt.push_str("\n\n");
                 system_prompt.push_str(sp);
             }

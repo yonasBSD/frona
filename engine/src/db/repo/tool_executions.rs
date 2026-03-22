@@ -63,7 +63,7 @@ impl ToolExecutionRepository for SurrealRepo<ToolExecution> {
                 te.tool_data
                     .as_ref()
                     .and_then(|t| t.tool_status())
-                    .is_some_and(|s| matches!(s, crate::chat::message::models::ToolStatus::Pending))
+                    .is_some_and(|s| matches!(s, crate::inference::tool_execution::ToolStatus::Pending))
             }))
     }
 }

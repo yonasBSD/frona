@@ -29,7 +29,6 @@ pub enum MessageStatus {
 pub enum MessageRole {
     User,
     Agent,
-    ToolResult,
     TaskCompletion,
     Contact,
     LiveCall,
@@ -37,30 +36,9 @@ pub enum MessageRole {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-#[serde(rename_all = "lowercase")]
-#[surreal(crate = "surrealdb::types", lowercase)]
-pub enum ToolStatus {
-    Pending,
-    Resolved,
-    Denied,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[serde(tag = "type", content = "data")]
 #[surreal(crate = "surrealdb::types", tag = "type", content = "data")]
-pub enum MessageTool {
-    HumanInTheLoop {
-        reason: String,
-        debugger_url: String,
-        status: ToolStatus,
-        response: Option<String>,
-    },
-    Question {
-        question: String,
-        options: Vec<String>,
-        status: ToolStatus,
-        response: Option<String>,
-    },
+pub enum MessageEvent {
     TaskCompletion {
         task_id: String,
         chat_id: Option<String>,
@@ -73,42 +51,6 @@ pub enum MessageTool {
         delay_minutes: u32,
         reason: String,
     },
-    VaultApproval {
-        query: String,
-        reason: String,
-        env_var_prefix: Option<String>,
-        status: ToolStatus,
-        response: Option<String>,
-    },
-    ServiceApproval {
-        action: String,
-        manifest: serde_json::Value,
-        previous_manifest: Option<serde_json::Value>,
-        status: ToolStatus,
-        response: Option<String>,
-    },
-}
-
-impl MessageTool {
-    pub fn tool_status(&self) -> Option<&ToolStatus> {
-        match self {
-            Self::HumanInTheLoop { status, .. }
-            | Self::Question { status, .. }
-            | Self::VaultApproval { status, .. }
-            | Self::ServiceApproval { status, .. } => Some(status),
-            Self::TaskCompletion { .. } | Self::TaskDeferred { .. } => None,
-        }
-    }
-
-    pub fn tool_response(&self) -> Option<&str> {
-        match self {
-            Self::HumanInTheLoop { response, .. }
-            | Self::Question { response, .. }
-            | Self::VaultApproval { response, .. }
-            | Self::ServiceApproval { response, .. } => response.as_deref(),
-            Self::TaskCompletion { .. } | Self::TaskDeferred { .. } => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
@@ -120,17 +62,13 @@ pub struct Message {
     pub role: MessageRole,
     pub content: String,
     pub agent_id: Option<String>,
-    pub tool_calls: Option<serde_json::Value>,
-    pub tool_call_id: Option<String>,
-    pub tool: Option<MessageTool>,
+    pub event: Option<MessageEvent>,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<MessageStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
     pub created_at: DateTime<Utc>,
@@ -143,13 +81,10 @@ impl Message {
             role,
             content,
             agent_id: None,
-            tool_calls: None,
-            tool_call_id: None,
-            tool: None,
+            event: None,
             attachments: vec![],
             contact_id: None,
             status: None,
-            system_prompt: None,
             reasoning: None,
         }
     }
@@ -160,13 +95,10 @@ pub struct MessageBuilder {
     role: MessageRole,
     content: String,
     agent_id: Option<String>,
-    tool_calls: Option<serde_json::Value>,
-    tool_call_id: Option<String>,
-    tool: Option<MessageTool>,
+    event: Option<MessageEvent>,
     attachments: Vec<Attachment>,
     contact_id: Option<String>,
     status: Option<MessageStatus>,
-    system_prompt: Option<String>,
     reasoning: Option<Reasoning>,
 }
 
@@ -176,18 +108,8 @@ impl MessageBuilder {
         self
     }
 
-    pub fn tool_calls(mut self, tc: serde_json::Value) -> Self {
-        self.tool_calls = Some(tc);
-        self
-    }
-
-    pub fn tool_call_id(mut self, id: String) -> Self {
-        self.tool_call_id = Some(id);
-        self
-    }
-
-    pub fn tool(mut self, t: MessageTool) -> Self {
-        self.tool = Some(t);
+    pub fn event(mut self, e: MessageEvent) -> Self {
+        self.event = Some(e);
         self
     }
 
@@ -206,11 +128,6 @@ impl MessageBuilder {
         self
     }
 
-    pub fn system_prompt(mut self, sp: impl Into<String>) -> Self {
-        self.system_prompt = Some(sp.into());
-        self
-    }
-
     pub fn reasoning(mut self, r: Reasoning) -> Self {
         self.reasoning = Some(r);
         self
@@ -223,13 +140,10 @@ impl MessageBuilder {
             role: self.role,
             content: self.content,
             agent_id: self.agent_id,
-            tool_calls: self.tool_calls,
-            tool_call_id: self.tool_call_id,
-            tool: self.tool,
+            event: self.event,
             attachments: self.attachments,
             contact_id: self.contact_id,
             status: self.status,
-            system_prompt: self.system_prompt,
             reasoning: self.reasoning,
             created_at: chrono::Utc::now(),
         }
@@ -257,11 +171,7 @@ pub struct MessageResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool: Option<MessageTool>,
+    pub event: Option<MessageEvent>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -283,9 +193,7 @@ impl From<Message> for MessageResponse {
             role: msg.role,
             content: msg.content,
             agent_id: msg.agent_id,
-            tool_calls: msg.tool_calls,
-            tool_call_id: msg.tool_call_id,
-            tool: msg.tool,
+            event: msg.event,
             attachments: msg.attachments,
             contact_id: msg.contact_id,
             status: msg.status,

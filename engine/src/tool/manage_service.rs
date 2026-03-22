@@ -4,7 +4,7 @@ use crate::agent::prompt::PromptLoader;
 use crate::app::models::{App, AppManifest, AppResponse};
 use crate::app::service::AppService;
 use crate::chat::broadcast::BroadcastService;
-use crate::chat::message::models::{MessageTool, ToolStatus};
+use crate::inference::tool_execution::{MessageTool, ToolStatus};
 use crate::core::error::AppError;
 use crate::notification::models::{NotificationData, NotificationLevel};
 use crate::notification::service::NotificationService;

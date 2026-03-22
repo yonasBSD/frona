@@ -4,7 +4,8 @@ use chrono::Utc;
 use frona::agent::task::executor::TaskExecutor;
 use frona::agent::task::models::{Task, TaskKind, TaskStatus};
 use frona::agent::service::AgentService;
-use frona::chat::message::models::{MessageRole, MessageTool};
+use frona::chat::message::models::MessageRole;
+use frona::chat::message::models::MessageEvent;
 use frona::storage::StorageService;
 use frona::core::config::Config;
 use frona::db::init as db;
@@ -238,7 +239,7 @@ async fn lifecycle_complete_event_detected() {
         .chat_service
         .save_system_event(
             &source_chat.id,
-            MessageTool::TaskCompletion {
+            MessageEvent::TaskCompletion {
                 task_id: "task-1".to_string(),
                 chat_id: Some(source_chat.id.clone()),
                 status: TaskStatus::Completed,
@@ -256,8 +257,8 @@ async fn lifecycle_complete_event_detected() {
         .collect();
     assert_eq!(system_msgs.len(), 1);
     assert!(matches!(
-        &system_msgs[0].tool,
-        Some(MessageTool::TaskCompletion {
+        &system_msgs[0].event,
+        Some(MessageEvent::TaskCompletion {
             status: TaskStatus::Completed,
             summary: Some(s),
             ..
@@ -288,7 +289,7 @@ async fn lifecycle_defer_event_detected() {
         .chat_service
         .save_system_event(
             &task_chat.id,
-            MessageTool::TaskDeferred {
+            MessageEvent::TaskDeferred {
                 task_id: "task-2".to_string(),
                 delay_minutes: 30,
                 reason: "Waiting for external API".to_string(),
@@ -304,8 +305,8 @@ async fn lifecycle_defer_event_detected() {
         .collect();
     assert_eq!(system_msgs.len(), 1);
     assert!(matches!(
-        &system_msgs[0].tool,
-        Some(MessageTool::TaskDeferred {
+        &system_msgs[0].event,
+        Some(MessageEvent::TaskDeferred {
             delay_minutes: 30,
             reason,
             ..
@@ -455,7 +456,7 @@ async fn find_lifecycle_event_uses_last_assistant_message_as_summary() {
     // Save an assistant message (the actual answer)
     state
         .chat_service
-        .save_assistant_message(&chat.id, "The answer is 42.".to_string())
+        .save_agent_message(&chat.id, "agent-1", "The answer is 42.".to_string())
         .await
         .unwrap();
 
@@ -464,7 +465,7 @@ async fn find_lifecycle_event_uses_last_assistant_message_as_summary() {
         .chat_service
         .save_system_event(
             &chat.id,
-            MessageTool::TaskCompletion {
+            MessageEvent::TaskCompletion {
                 task_id: "task-lf".to_string(),
                 chat_id: Some(chat.id.clone()),
                 status: TaskStatus::Completed,
@@ -495,8 +496,8 @@ async fn find_lifecycle_event_uses_last_assistant_message_as_summary() {
     let system_msg = messages.iter().find(|m| m.role == MessageRole::System);
     assert!(system_msg.is_some());
     assert!(matches!(
-        &system_msg.unwrap().tool,
-        Some(MessageTool::TaskCompletion { summary: None, .. })
+        &system_msg.unwrap().event,
+        Some(MessageEvent::TaskCompletion { summary: None, .. })
     ));
 }
 
@@ -566,7 +567,7 @@ async fn lifecycle_event_saved_after_assistant_message() {
     // Simulate the executor flow: save assistant message first
     state
         .chat_service
-        .save_assistant_message(&chat.id, "Here is my answer.".to_string())
+        .save_agent_message(&chat.id, "agent-1", "Here is my answer.".to_string())
         .await
         .unwrap();
 
@@ -575,7 +576,7 @@ async fn lifecycle_event_saved_after_assistant_message() {
         .chat_service
         .save_system_event(
             &chat.id,
-            MessageTool::TaskCompletion {
+            MessageEvent::TaskCompletion {
                 task_id: "task-order".to_string(),
                 chat_id: Some(chat.id.clone()),
                 status: TaskStatus::Completed,
@@ -592,7 +593,7 @@ async fn lifecycle_event_saved_after_assistant_message() {
     assert_eq!(messages[0].content, "Here is my answer.");
     assert_eq!(messages[1].role, MessageRole::System);
     assert!(matches!(
-        &messages[1].tool,
-        Some(MessageTool::TaskCompletion { status: TaskStatus::Completed, .. })
+        &messages[1].event,
+        Some(MessageEvent::TaskCompletion { status: TaskStatus::Completed, .. })
     ));
 }

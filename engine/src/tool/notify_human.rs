@@ -4,7 +4,7 @@ use crate::agent::prompt::PromptLoader;
 use crate::core::error::AppError;
 use crate::credential::vault::service::VaultService;
 
-use crate::chat::message::models::{MessageTool, ToolStatus};
+use crate::inference::tool_execution::{MessageTool, ToolStatus};
 use frona_derive::agent_tool;
 
 use super::{InferenceContext, ToolOutput};

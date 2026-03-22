@@ -76,11 +76,6 @@ impl ConversationBuilder for DefaultConversationBuilder {
                         result.push(m);
                     }
                 }
-                MessageRole::ToolResult => {
-                    if let Some(m) = convert_tool_result(msg) {
-                        result.push(m);
-                    }
-                }
                 MessageRole::System => {
                     if !msg.content.is_empty() {
                         result.push(RigMessage::user(&msg.content));
@@ -142,11 +137,6 @@ impl ConversationBuilder for TaskConversationBuilder {
                     } else if let Some(tes) = te_map.get(&msg.id) {
                         convert_agent_with_tool_executions(msg, tes, &ctx.agent_id, &mut result);
                     } else if let Some(m) = convert_agent_message(msg, &ctx.agent_id) {
-                        result.push(m);
-                    }
-                }
-                MessageRole::ToolResult => {
-                    if let Some(m) = convert_tool_result(msg) {
                         result.push(m);
                     }
                 }
@@ -269,33 +259,6 @@ pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage
     }
     let is_self = msg.agent_id.as_deref() == Some(agent_id);
     if is_self {
-        if let Some(tool_calls_val) = &msg.tool_calls
-            && let Some(calls) = tool_calls_val.as_array()
-        {
-            let mut items: Vec<AssistantContent> = Vec::new();
-            if let Some(r) = &msg.reasoning {
-                items.push(AssistantContent::Reasoning(
-                    rig::completion::message::Reasoning::new(&r.content)
-                        .optional_id(r.id.clone())
-                        .with_signature(r.signature.clone()),
-                ));
-            }
-            if !msg.content.is_empty() {
-                items.push(AssistantContent::text(&msg.content));
-            }
-            for call in calls {
-                let id = call["id"].as_str().unwrap_or_default();
-                let name = call["name"].as_str().unwrap_or_default();
-                let arguments = call.get("arguments").cloned().unwrap_or_default();
-                items.push(AssistantContent::tool_call(id, name, arguments));
-            }
-            if items.is_empty() {
-                return None;
-            }
-            if let Ok(content) = rig::OneOrMany::many(items) {
-                return Some(RigMessage::Assistant { id: None, content });
-            }
-        }
         if let Some(r) = &msg.reasoning {
             let mut items: Vec<AssistantContent> = vec![
                 AssistantContent::Reasoning(
@@ -315,11 +278,6 @@ pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage
     } else {
         Some(RigMessage::user(&msg.content))
     }
-}
-
-pub fn convert_tool_result(msg: &Message) -> Option<RigMessage> {
-    let tool_call_id = msg.tool_call_id.as_deref().unwrap_or_default();
-    Some(RigMessage::tool_result(tool_call_id, &msg.content))
 }
 
 // --- Service-dependent functions ---
@@ -429,7 +387,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use crate::agent::task::models::TaskStatus;
-    use crate::chat::message::models::{MessageRole, MessageTool};
+    use crate::chat::message::models::{MessageRole, MessageEvent};
 
     fn make_message(role: MessageRole, content: &str) -> Message {
         Message {
@@ -438,13 +396,10 @@ mod tests {
             role,
             content: content.to_string(),
             agent_id: None,
-            tool_calls: None,
-            tool_call_id: None,
-            tool: None,
+            event: None,
             attachments: vec![],
             contact_id: None,
             status: None,
-            system_prompt: None,
             reasoning: None,
             created_at: Utc::now(),
         }
@@ -471,33 +426,6 @@ mod tests {
         let result = convert_agent_message(&msg, "agent-1");
         assert!(result.is_some());
         assert!(matches!(result.unwrap(), RigMessage::User { .. }));
-    }
-
-    #[test]
-    fn agent_with_tool_calls_converts_to_assistant_with_tools() {
-        let tool_calls = serde_json::json!([{
-            "id": "tc-1",
-            "name": "web_search",
-            "arguments": {"query": "test"}
-        }]);
-        let msg = Message {
-            agent_id: Some("agent-1".to_string()),
-            tool_calls: Some(tool_calls),
-            ..make_message(MessageRole::Agent, "searching...")
-        };
-        let result = convert_agent_message(&msg, "agent-1");
-        assert!(result.is_some());
-        assert!(matches!(result.unwrap(), RigMessage::Assistant { .. }));
-    }
-
-    #[test]
-    fn tool_result_converts() {
-        let msg = Message {
-            tool_call_id: Some("tc-1".to_string()),
-            ..make_message(MessageRole::ToolResult, "result text")
-        };
-        let result = convert_tool_result(&msg);
-        assert!(result.is_some());
     }
 
     #[test]
@@ -565,7 +493,7 @@ mod tests {
     #[test]
     fn task_completion_converts_to_user_message_via_simple_format() {
         let msg = Message {
-            tool: Some(MessageTool::TaskCompletion {
+            event: Some(MessageEvent::TaskCompletion {
                 task_id: "t1".to_string(),
                 chat_id: Some("c2".to_string()),
                 status: TaskStatus::Completed,
@@ -581,7 +509,7 @@ mod tests {
     #[test]
     fn task_completion_with_attachments() {
         let msg = Message {
-            tool: Some(MessageTool::TaskCompletion {
+            event: Some(MessageEvent::TaskCompletion {
                 task_id: "t1".to_string(),
                 chat_id: None,
                 status: TaskStatus::Completed,
@@ -623,38 +551,6 @@ mod tests {
             assert!(has_reasoning, "Expected reasoning content in assistant message");
             let has_text = content.iter().any(|c| matches!(c, AssistantContent::Text(_)));
             assert!(has_text, "Expected text content in assistant message");
-        } else {
-            panic!("Expected Assistant message");
-        }
-    }
-
-    #[test]
-    fn agent_with_reasoning_and_tool_calls_includes_reasoning() {
-        use crate::chat::message::models::Reasoning;
-
-        let tool_calls = serde_json::json!([{
-            "id": "tc-1",
-            "name": "web_search",
-            "arguments": {"query": "test"}
-        }]);
-        let msg = Message {
-            agent_id: Some("agent-1".to_string()),
-            tool_calls: Some(tool_calls),
-            reasoning: Some(Reasoning {
-                id: None,
-                content: "I should search for this.".to_string(),
-                signature: None,
-            }),
-            ..make_message(MessageRole::Agent, "searching...")
-        };
-        let result = convert_agent_message(&msg, "agent-1");
-        assert!(result.is_some());
-        let rig_msg = result.unwrap();
-        if let RigMessage::Assistant { content, .. } = &rig_msg {
-            let reasoning_count = content.iter().filter(|c| matches!(c, AssistantContent::Reasoning(_))).count();
-            assert_eq!(reasoning_count, 1);
-            let tool_call_count = content.iter().filter(|c| matches!(c, AssistantContent::ToolCall(_))).count();
-            assert_eq!(tool_call_count, 1);
         } else {
             panic!("Expected Assistant message");
         }

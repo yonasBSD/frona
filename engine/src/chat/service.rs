@@ -26,13 +26,13 @@ pub struct AgentConfig {
 }
 
 use super::models::{ChatResponse, CreateChatRequest, UpdateChatRequest};
-use super::message::models::{MessageResponse, MessageStatus, SendMessageRequest};
-use super::message::models::{Message, MessageRole, MessageTool, Reasoning, ToolStatus};
+use super::message::models::{MessageResponse, MessageStatus, SendMessageRequest, MessageEvent};
+use super::message::models::{Message, MessageRole, Reasoning};
 use super::message::repository::MessageRepository;
 use super::models::Chat;
 use super::repository::ChatRepository;
 use crate::db::repo::tool_executions::ToolExecutionRepository;
-use crate::inference::tool_execution::{ToolExecution, ToolExecutionResponse};
+use crate::inference::tool_execution::{MessageTool, ToolExecution, ToolExecutionResponse, ToolStatus};
 pub enum ToolResolveResult {
     Changed(MessageResponse),
     AlreadyResolved(MessageResponse),
@@ -349,10 +349,10 @@ impl ChatService {
     pub async fn save_system_event(
         &self,
         chat_id: &str,
-        tool: MessageTool,
+        event: MessageEvent,
     ) -> Result<MessageResponse, AppError> {
         let msg = Message::builder(chat_id, MessageRole::System, String::new())
-            .tool(tool)
+            .event(event)
             .build();
         self.save_message(msg).await
     }
@@ -361,47 +361,9 @@ impl ChatService {
         &self,
         chat_id: &str,
         content: String,
-        system_prompt: bool,
     ) -> Result<MessageResponse, AppError> {
-        let msg = if system_prompt {
-            Message::builder(chat_id, MessageRole::System, String::new())
-                .system_prompt(content)
-                .build()
-        } else {
-            Message::builder(chat_id, MessageRole::System, content).build()
-        };
+        let msg = Message::builder(chat_id, MessageRole::System, content).build();
         self.save_message(msg).await
-    }
-
-    pub async fn save_assistant_message(
-        &self,
-        chat_id: &str,
-        content: String,
-    ) -> Result<MessageResponse, AppError> {
-        self.save_assistant_message_with_tool_calls(chat_id, content, None, vec![], None).await
-    }
-
-    pub async fn save_assistant_message_with_tool_calls(
-        &self,
-        chat_id: &str,
-        content: String,
-        tool_calls: Option<serde_json::Value>,
-        attachments: Vec<crate::storage::Attachment>,
-        reasoning: Option<Reasoning>,
-    ) -> Result<MessageResponse, AppError> {
-        let chat = self.chat_repo.find_by_id(chat_id).await?.ok_or_else(|| {
-            AppError::NotFound("Chat not found".into())
-        })?;
-        let mut builder = Message::builder(chat_id, MessageRole::Agent, content)
-            .agent_id(chat.agent_id)
-            .attachments(attachments);
-        if let Some(tc) = tool_calls {
-            builder = builder.tool_calls(tc);
-        }
-        if let Some(r) = reasoning {
-            builder = builder.reasoning(r);
-        }
-        self.save_message(builder.build()).await
     }
 
     pub async fn save_agent_message(
@@ -416,145 +378,17 @@ impl ChatService {
         self.save_message(msg).await
     }
 
-    pub async fn save_tool_result_message_with_tool(
-        &self,
-        chat_id: &str,
-        tool_call_id: &str,
-        content: String,
-        tool: Option<MessageTool>,
-        system_prompt: Option<String>,
-    ) -> Result<MessageResponse, AppError> {
-        let mut builder = Message::builder(chat_id, MessageRole::ToolResult, content)
-            .tool_call_id(tool_call_id.to_string());
-        if let Some(t) = tool {
-            builder = builder.tool(t);
-        }
-        if let Some(sp) = system_prompt {
-            builder = builder.system_prompt(sp);
-        }
-        self.save_message(builder.build()).await
-    }
-
-    pub async fn resolve_tool_message(
-        &self,
-        message_id: &str,
-        response: Option<String>,
-    ) -> Result<ToolResolveResult, AppError> {
-        let mut message = self
-            .message_repo
-            .find_by_id(message_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
-
-        let tool = message.tool.as_ref()
-            .ok_or_else(|| AppError::Validation("Message has no resolvable tool".into()))?;
-
-        if let Some(current_status) = tool.tool_status() {
-            match current_status {
-                ToolStatus::Resolved => {
-                    let existing = tool.tool_response().unwrap_or_default();
-                    let incoming = response.as_deref()
-                        .unwrap_or("Human resolved the request.");
-                    if existing == incoming {
-                        return Ok(ToolResolveResult::AlreadyResolved(message.into()));
-                    }
-                    return Err(AppError::Http {
-                        status: 409,
-                        message: "Tool message is already resolved with a different response".into(),
-                    });
-                }
-                ToolStatus::Denied => {
-                    return Err(AppError::Http {
-                        status: 409,
-                        message: "Tool message has already been denied".into(),
-                    });
-                }
-                ToolStatus::Pending => {}
-            }
-        } else {
-            return Err(AppError::Validation("Message has no resolvable tool".into()));
-        }
-
-        let response_text = response
-            .unwrap_or_else(|| "Human resolved the request.".to_string());
-
-        match &mut message.tool {
-            Some(MessageTool::HumanInTheLoop { status, response: resp, .. })
-            | Some(MessageTool::Question { status, response: resp, .. })
-            | Some(MessageTool::VaultApproval { status, response: resp, .. })
-            | Some(MessageTool::ServiceApproval { status, response: resp, .. }) => {
-                *status = ToolStatus::Resolved;
-                *resp = Some(response_text.clone());
-            }
-            _ => unreachable!(),
-        }
-
-        message.content = response_text;
-
-        let updated = self.message_repo.update(&message).await?;
-        Ok(ToolResolveResult::Changed(updated.into()))
-    }
-
-    pub async fn deny_tool_message(
-        &self,
-        message_id: &str,
-        response: Option<String>,
-    ) -> Result<ToolResolveResult, AppError> {
-        let mut message = self
-            .message_repo
-            .find_by_id(message_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
-
-        let tool = message.tool.as_ref()
-            .ok_or_else(|| AppError::Validation("Message has no deniable tool".into()))?;
-
-        if let Some(current_status) = tool.tool_status() {
-            match current_status {
-                ToolStatus::Denied => {
-                    return Ok(ToolResolveResult::AlreadyResolved(message.into()));
-                }
-                ToolStatus::Resolved => {
-                    return Err(AppError::Http {
-                        status: 409,
-                        message: "Tool message has already been resolved".into(),
-                    });
-                }
-                ToolStatus::Pending => {}
-            }
-        } else {
-            return Err(AppError::Validation("Message has no deniable tool".into()));
-        }
-
-        let response_text = response
-            .unwrap_or_else(|| "User denied the request.".to_string());
-
-        match &mut message.tool {
-            Some(MessageTool::VaultApproval { status, response: resp, .. })
-            | Some(MessageTool::ServiceApproval { status, response: resp, .. }) => {
-                *status = ToolStatus::Denied;
-                *resp = Some(response_text.clone());
-            }
-            _ => unreachable!(),
-        }
-
-        message.content = response_text;
-
-        let updated = self.message_repo.update(&message).await?;
-        Ok(ToolResolveResult::Changed(updated.into()))
-    }
-
     pub async fn save_task_completion_message(
         &self,
         chat_id: &str,
         agent_id: &str,
         content: String,
-        tool: MessageTool,
+        event: MessageEvent,
         attachments: Vec<crate::storage::Attachment>,
     ) -> Result<MessageResponse, AppError> {
         let msg = Message::builder(chat_id, MessageRole::TaskCompletion, content)
             .agent_id(agent_id.to_string())
-            .tool(tool)
+            .event(event)
             .attachments(attachments)
             .build();
         self.save_message(msg).await
@@ -789,6 +623,13 @@ impl ChatService {
         self.tool_execution_repo.find_pending_by_chat_id(chat_id).await
     }
 
+    pub async fn get_tool_execution(
+        &self,
+        id: &str,
+    ) -> Result<Option<ToolExecution>, AppError> {
+        self.tool_execution_repo.find_by_id(id).await
+    }
+
     pub async fn get_tool_executions(
         &self,
         chat_id: &str,
@@ -813,7 +654,7 @@ impl ChatService {
             .db()
             .query(query)
             .bind(("chat_id", chat_id.to_string()))
-            .bind(("status", "executing".to_string()))
+            .bind(("status", MessageStatus::Executing))
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -830,7 +671,7 @@ impl ChatService {
             .message_repo
             .db()
             .query(query)
-            .bind(("status", "executing".to_string()))
+            .bind(("status", MessageStatus::Executing))
             .await;
 
         match result {

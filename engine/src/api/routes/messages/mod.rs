@@ -27,10 +27,6 @@ pub fn router() -> Router<AppState> {
             post(stream::stream_message),
         )
         .route(
-            "/api/chats/{chat_id}/messages/{message_id}/resolve",
-            post(resolve_tool_message),
-        )
-        .route(
             "/api/chats/{chat_id}/tool-executions/{tool_execution_id}/resolve",
             post(resolve_tool_execution),
         )
@@ -86,39 +82,6 @@ async fn cancel_generation(
     Ok(Json(serde_json::json!({ "cancelled": cancelled })))
 }
 
-async fn resolve_tool_message(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path((chat_id, message_id)): Path<(String, String)>,
-    Json(req): Json<ResolveToolRequest>,
-) -> Result<Json<MessageResponse>, ApiError> {
-    use crate::chat::service::ToolResolveResult;
-
-    state
-        .chat_service
-        .get_chat(&auth.user_id, &chat_id)
-        .await
-        .map_err(ApiError::from)?;
-
-    let result = state
-        .chat_service
-        .resolve_tool_message(&message_id, req.response.clone())
-        .await
-        .map_err(ApiError::from)?;
-
-    match result {
-        ToolResolveResult::Changed(msg) => {
-            let user_id = auth.user_id.clone();
-            let state = state.clone();
-            tokio::spawn(async move {
-                crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id).await;
-            });
-            Ok(Json(msg))
-        }
-        ToolResolveResult::AlreadyResolved(msg) => Ok(Json(msg)),
-    }
-}
-
 async fn resolve_tool_execution(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -133,6 +96,15 @@ async fn resolve_tool_execution(
         .await
         .map_err(ApiError::from)?;
 
+    let te = state
+        .chat_service
+        .get_tool_execution(&tool_execution_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(crate::core::error::AppError::NotFound("Tool execution not found".into())))?;
+
+    let message_id = te.message_id.clone();
+
     let result = state
         .chat_service
         .resolve_tool_execution(&tool_execution_id, req.response.clone())
@@ -144,7 +116,7 @@ async fn resolve_tool_execution(
             let user_id = auth.user_id.clone();
             let state = state.clone();
             tokio::spawn(async move {
-                crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id).await;
+                crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id, &message_id).await;
             });
             Ok(Json(msg))
         }

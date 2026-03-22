@@ -9,7 +9,9 @@ use rig::completion::{AssistantContent, Message as RigMessage};
 use tokio_util::sync::CancellationToken;
 
 use crate::chat::broadcast::EventSender;
-use crate::chat::message::models::{MessageTool, Reasoning};
+use crate::chat::message::models::Reasoning;
+
+use super::tool_execution::MessageTool;
 use crate::core::error::AppError;
 use crate::core::metrics::{self, InferenceMetricsContext};
 use crate::tool::registry::AgentToolRegistry;

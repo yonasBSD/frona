@@ -7,7 +7,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::execution;
 use crate::agent::task::models::{Task, TaskKind, TaskStatus};
-use crate::chat::message::models::{MessageRole, MessageTool};
+use crate::chat::message::models::{MessageEvent, MessageRole};
+use crate::inference::tool_execution::MessageTool;
 use crate::chat::models::CreateChatRequest;
 use crate::core::error::AppError;
 use crate::core::state::AppState;
@@ -283,8 +284,8 @@ impl TaskExecutor {
             if msg.role != MessageRole::System {
                 continue;
             }
-            match &msg.tool {
-                Some(MessageTool::TaskCompletion {
+            match &msg.event {
+                Some(MessageEvent::TaskCompletion {
                     status, summary, ..
                 }) => {
                     let resolved_summary = summary
@@ -296,7 +297,7 @@ impl TaskExecutor {
                         summary: resolved_summary,
                     });
                 }
-                Some(MessageTool::TaskDeferred {
+                Some(MessageEvent::TaskDeferred {
                     delay_minutes,
                     reason,
                     ..
@@ -506,7 +507,7 @@ impl TaskExecutor {
             None => vec![],
         };
 
-        let tool = MessageTool::TaskCompletion {
+        let event = MessageEvent::TaskCompletion {
             task_id: task.id.clone(),
             chat_id: task.chat_id.clone(),
             status,
@@ -516,7 +517,7 @@ impl TaskExecutor {
         match self
             .app_state
             .chat_service
-            .save_task_completion_message(source_chat_id, &task.agent_id, text, tool, attachments)
+            .save_task_completion_message(source_chat_id, &task.agent_id, text, event, attachments)
             .await
         {
             Ok(msg) => {
@@ -586,7 +587,21 @@ impl TaskExecutor {
         let user_id = user_id.to_string();
         let chat_id = source_chat_id.to_string();
         tokio::spawn(async move {
-            resume_or_notify(&state, &user_id, &chat_id).await;
+            let message_id = match state.chat_service
+                .find_executing_message_for_chat(&chat_id)
+                .await
+            {
+                Ok(Some(msg)) => msg.id,
+                Ok(None) => {
+                    tracing::warn!(chat_id = %chat_id, "No executing message found for child task resume");
+                    return;
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, chat_id = %chat_id, "Failed to find executing message");
+                    return;
+                }
+            };
+            resume_or_notify(&state, &user_id, &chat_id, &message_id).await;
         });
     }
 
@@ -616,7 +631,7 @@ enum LifecycleAction {
 
 /// Check if a task executor is waiting for resolution on this chat's task.
 /// If so, notify it. Otherwise, fall back to `resume_agent_loop`.
-pub async fn resume_or_notify(state: &AppState, user_id: &str, chat_id: &str) {
+pub async fn resume_or_notify(state: &AppState, user_id: &str, chat_id: &str, message_id: &str) {
     // Check if this chat belongs to a task with a waiting executor
     if let Ok(Some(chat)) = state.chat_service.find_chat(chat_id).await
         && let Some(ref task_id) = chat.task_id
@@ -629,21 +644,7 @@ pub async fn resume_or_notify(state: &AppState, user_id: &str, chat_id: &str) {
     }
 
     // No waiting executor — use the interactive path
-    let message_id = match state.chat_service
-        .find_executing_message_for_chat(chat_id)
-        .await
-    {
-        Ok(Some(msg)) => msg.id,
-        Ok(None) => {
-            tracing::warn!(chat_id = %chat_id, "No executing message found for resume");
-            return;
-        }
-        Err(e) => {
-            tracing::error!(error = %e, chat_id = %chat_id, "Failed to find executing message for resume");
-            return;
-        }
-    };
-    if let Err(e) = crate::agent::execution::resume_agent_loop(state, user_id, chat_id, &message_id).await {
+    if let Err(e) = crate::agent::execution::resume_agent_loop(state, user_id, chat_id, message_id).await {
         tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume chat");
     }
 }
