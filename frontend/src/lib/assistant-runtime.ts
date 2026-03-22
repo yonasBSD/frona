@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useLocalRuntime } from "@assistant-ui/react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
 import { createChatAdapter, fronaAttachmentAdapter, registerBackendAttachment } from "./chat-adapter";
@@ -177,8 +177,21 @@ export interface FronaRuntimeOptions {
 }
 
 export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntimeOptions) {
+  const runtimeRef = useRef<ReturnType<typeof useLocalRuntime>>(null!);
+
   const handle = useMemo(
-    () => createChatAdapter({ chatId, agentId, onChatCreated }),
+    () => createChatAdapter({
+      chatId, agentId, onChatCreated,
+      onChatMessage: (msg) => {
+        const converted = convertMessage(msg);
+        if (converted) {
+          runtimeRef.current.thread.append({
+            ...converted,
+            startRun: false,
+          } as Parameters<typeof runtimeRef.current.thread.append>[0]);
+        }
+      },
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [chatId, agentId],
   );
@@ -195,6 +208,7 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
       attachments: fronaAttachmentAdapter,
     },
   });
+  runtimeRef.current = runtime;
 
   // Clean up SSE subscription when the chat adapter is permanently unmounted (LRU eviction)
   useEffect(() => {

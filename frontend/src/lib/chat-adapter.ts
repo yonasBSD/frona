@@ -2,7 +2,7 @@ import type { ChatModelAdapter, ChatModelRunOptions, AttachmentAdapter, PendingA
 import { sendMessage as apiSendMessage, cancelGeneration, api, uploadFile } from "./api-client";
 import { sseBus, type ChatSSEEvent } from "./sse-event-bus";
 import { setRetryState, clearRetryState } from "./retry-state";
-import type { Attachment as BackendAttachment, ChatResponse } from "./types";
+import type { Attachment as BackendAttachment, ChatResponse, MessageResponse } from "./types";
 
 // Registry for mapping attachment IDs to backend Attachment objects
 const backendAttachmentRegistry = new Map<string, BackendAttachment>();
@@ -112,6 +112,7 @@ export interface ChatAdapterOptions {
   chatId?: string;
   agentId: string;
   onChatCreated?: (chat: ChatResponse) => void;
+  onChatMessage?: (msg: MessageResponse) => void;
 }
 
 /**
@@ -124,7 +125,7 @@ class ChatEventQueue {
   private waiter: ((event: ChatSSEEvent) => void) | null = null;
   private controller: AbortController;
 
-  constructor(chatId: string) {
+  constructor(chatId: string, onChatMessage?: (msg: MessageResponse) => void) {
     this.controller = new AbortController();
     const self = this;
     const events = sseBus.subscribe(chatId, this.controller.signal);
@@ -132,6 +133,13 @@ class ChatEventQueue {
     // Start consuming the subscription — push events into our buffer
     (async () => {
       for await (const event of events) {
+        // chat_message is an out-of-band message (e.g. task completion) that
+        // arrives after the streaming flow has exited. Deliver via callback
+        // instead of the drain queue which may have no active consumer.
+        if (event.type === "chat_message" && onChatMessage) {
+          onChatMessage(event.message);
+          continue;
+        }
         if (self.waiter) {
           const resolve = self.waiter;
           self.waiter = null;
@@ -194,7 +202,7 @@ export function createChatAdapter(options: ChatAdapterOptions): ChatAdapterHandl
 
   function ensureQueue(chatId: string): ChatEventQueue {
     if (eventQueue) return eventQueue;
-    eventQueue = new ChatEventQueue(chatId);
+    eventQueue = new ChatEventQueue(chatId, options.onChatMessage);
     return eventQueue;
   }
 
