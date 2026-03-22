@@ -17,6 +17,15 @@ pub struct Reasoning {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SurrealValue)]
 #[serde(rename_all = "lowercase")]
 #[surreal(crate = "surrealdb::types", lowercase)]
+pub enum MessageStatus {
+    Executing,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SurrealValue)]
+#[serde(rename_all = "lowercase")]
+#[surreal(crate = "surrealdb::types", lowercase)]
 pub enum MessageRole {
     User,
     Agent,
@@ -119,6 +128,8 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<MessageStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
@@ -137,6 +148,7 @@ impl Message {
             tool: None,
             attachments: vec![],
             contact_id: None,
+            status: None,
             system_prompt: None,
             reasoning: None,
         }
@@ -153,6 +165,7 @@ pub struct MessageBuilder {
     tool: Option<MessageTool>,
     attachments: Vec<Attachment>,
     contact_id: Option<String>,
+    status: Option<MessageStatus>,
     system_prompt: Option<String>,
     reasoning: Option<Reasoning>,
 }
@@ -188,6 +201,11 @@ impl MessageBuilder {
         self
     }
 
+    pub fn status(mut self, s: MessageStatus) -> Self {
+        self.status = Some(s);
+        self
+    }
+
     pub fn system_prompt(mut self, sp: impl Into<String>) -> Self {
         self.system_prompt = Some(sp.into());
         self
@@ -210,6 +228,7 @@ impl MessageBuilder {
             tool: self.tool,
             attachments: self.attachments,
             contact_id: self.contact_id,
+            status: self.status,
             system_prompt: self.system_prompt,
             reasoning: self.reasoning,
             created_at: chrono::Utc::now(),
@@ -248,7 +267,11 @@ pub struct MessageResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<MessageStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_executions: Vec<crate::inference::tool_execution::ToolExecutionResponse>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -265,7 +288,9 @@ impl From<Message> for MessageResponse {
             tool: msg.tool,
             attachments: msg.attachments,
             contact_id: msg.contact_id,
+            status: msg.status,
             reasoning: msg.reasoning.map(|r| r.content),
+            tool_executions: vec![],
             created_at: msg.created_at,
         }
     }
