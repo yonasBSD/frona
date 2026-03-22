@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::response::sse::Event;
 use tokio::sync::{RwLock, mpsc};
 
+use crate::inference::tool_execution::ToolExecutionResponse;
 use crate::inference::tool_loop::InferenceEventKind;
 use crate::notification::models::Notification;
 
@@ -22,6 +23,8 @@ pub enum BroadcastEventKind {
     InferenceError { error: String },
     ToolMessage { message: MessageResponse },
     ToolResolved { message: MessageResponse },
+    ToolExecution { tool_execution: ToolExecutionResponse },
+    ToolExecutionResolved { tool_execution: ToolExecutionResponse },
     Title { title: String },
 
     // Notifications (user-level, not chat-scoped)
@@ -213,6 +216,20 @@ fn map_event_to_sse(event: &BroadcastEvent) -> Option<Event> {
             Some(sse_event(
                 "tool_resolved",
                 serde_json::json!({ "chat_id": chat_id, "message": message }),
+            ))
+        }
+        BroadcastEventKind::ToolExecution { tool_execution } => {
+            let chat_id = event.chat_id.as_deref().unwrap_or("");
+            Some(sse_event(
+                "tool_message",
+                serde_json::json!({ "chat_id": chat_id, "tool_execution": tool_execution }),
+            ))
+        }
+        BroadcastEventKind::ToolExecutionResolved { tool_execution } => {
+            let chat_id = event.chat_id.as_deref().unwrap_or("");
+            Some(sse_event(
+                "tool_resolved",
+                serde_json::json!({ "chat_id": chat_id, "tool_execution": tool_execution }),
             ))
         }
         BroadcastEventKind::Title { title } => {
