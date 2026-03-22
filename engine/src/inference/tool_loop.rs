@@ -54,12 +54,16 @@ pub enum InferenceEventKind {
 pub struct ToolCallResult {
     pub tool_call_id: String,
     pub tool_name: String,
+    pub arguments: serde_json::Value,
     pub result: String,
+    pub success: bool,
+    pub duration_ms: u64,
     pub tool_data: Option<MessageTool>,
     pub system_prompt: Option<String>,
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum ToolLoopOutcome {
     Completed {
         text: String,
@@ -69,10 +73,8 @@ pub enum ToolLoopOutcome {
     },
     Cancelled(String),
     ExternalToolPending {
-        accumulated_text: String,
-        tool_calls_json: serde_json::Value,
-        tool_results: Vec<ToolCallResult>,
-        external_tool: Box<ToolCallResult>,
+        turn_text: String,
+        tool_execution: crate::inference::tool_execution::ToolExecutionResponse,
         system_prompt: Option<String>,
     },
 }
@@ -104,13 +106,13 @@ fn to_rig_tool_definitions(defs: &[ToolDefinition]) -> Vec<RigToolDefinition> {
 async fn check_cancellation(
     cancel_token: &CancellationToken,
     event_tx: &EventSender,
-    accumulated_text: &str,
+    turn_text: &str,
 ) -> Option<ToolLoopOutcome> {
     if cancel_token.is_cancelled() {
         event_tx.send(InferenceEvent {
-            kind: InferenceEventKind::Cancelled(accumulated_text.to_string()),
+            kind: InferenceEventKind::Cancelled(String::new()),
         });
-        Some(ToolLoopOutcome::Cancelled(accumulated_text.to_string()))
+        Some(ToolLoopOutcome::Cancelled(turn_text.to_string()))
     } else {
         None
     }
@@ -189,26 +191,35 @@ fn build_tool_result_message(
 
 struct ToolExecutionResult {
     has_external: bool,
+    external_tool_execution: Option<crate::inference::tool_execution::ToolExecutionResponse>,
     external_tool_result: Option<ToolCallResult>,
     internal_tool_results: Vec<ToolCallResult>,
     accumulated_system_prompts: Vec<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_tool_calls(
-    contents: &[AssistantContent],
+    chat_service: &crate::chat::service::ChatService,
     tool_registry: &AgentToolRegistry,
     ctx: &InferenceContext,
     event_tx: &EventSender,
+    metrics_ctx: &InferenceMetricsContext,
     chat_history: &mut Vec<RigMessage>,
     all_attachments: &mut Vec<crate::storage::Attachment>,
-    metrics_ctx: &InferenceMetricsContext,
-) -> ToolExecutionResult {
+    contents: &[AssistantContent],
+    message_id: &str,
+    turn: u32,
+    turn_text: Option<&str>,
+) -> Result<ToolExecutionResult, AppError> {
     let mut result = ToolExecutionResult {
         has_external: false,
+        external_tool_execution: None,
         external_tool_result: None,
         internal_tool_results: Vec::new(),
         accumulated_system_prompts: Vec::new(),
     };
+
+    let mut turn_text_used = false;
 
     for content in contents {
         let AssistantContent::ToolCall(tool_call) = content else {
@@ -222,6 +233,25 @@ async fn execute_tool_calls(
         }
 
         tracing::debug!(tool = %tool_name, args = %arguments, "Executing tool");
+
+        // Persist record BEFORE execution (crash resilience)
+        let current_turn_text = if !turn_text_used {
+            turn_text_used = true;
+            turn_text.map(|s| s.to_string())
+        } else {
+            None
+        };
+        let te_record = chat_service
+            .begin_tool_execution(
+                &ctx.chat.id,
+                message_id,
+                turn,
+                &tool_call.id,
+                tool_name,
+                &arguments,
+                current_turn_text,
+            )
+            .await?;
 
         let start = Instant::now();
         let (text, tool_output) = match tool_registry.execute(tool_name, arguments, ctx).await {
@@ -261,10 +291,30 @@ async fn execute_tool_calls(
             }
         }
 
+        let success = tool_output.as_ref().is_some_and(|o| o.is_success());
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // Persist result AFTER execution
+        chat_service
+            .finish_tool_execution(
+                &te_record.id,
+                text.clone(),
+                success,
+                duration_ms,
+                td.clone(),
+                sp.clone(),
+            )
+            .await?;
+
+        let te_response: crate::inference::tool_execution::ToolExecutionResponse = te_record.into();
+
         let tool_call_result = ToolCallResult {
             tool_call_id: tool_call.id.clone(),
             tool_name: tool_name.clone(),
+            arguments: te_response.arguments.clone(),
             result: text.clone(),
+            success,
+            duration_ms,
             tool_data: td,
             system_prompt: sp.clone(),
         };
@@ -273,9 +323,9 @@ async fn execute_tool_calls(
 
         if is_pending_external {
             result.has_external = true;
+            result.external_tool_execution = Some(te_response);
             result.external_tool_result = Some(tool_call_result);
         } else {
-            let success = tool_output.as_ref().is_some_and(|o| o.is_success());
             event_tx.send(InferenceEvent {
                 kind: InferenceEventKind::ToolResult {
                     name: tool_name.clone(),
@@ -296,25 +346,7 @@ async fn execute_tool_calls(
         }
     }
 
-    result
-}
-
-fn build_tool_calls_json(contents: &[AssistantContent]) -> serde_json::Value {
-    let calls: Vec<_> = contents
-        .iter()
-        .filter_map(|c| {
-            if let AssistantContent::ToolCall(tc) = c {
-                Some(serde_json::json!({
-                    "id": tc.id,
-                    "name": tc.function.name,
-                    "arguments": tc.function.arguments,
-                }))
-            } else {
-                None
-            }
-        })
-        .collect();
-    serde_json::json!(calls)
+    Ok(result)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -328,18 +360,20 @@ pub async fn run_tool_loop(
     cancel_token: CancellationToken,
     ctx: &InferenceContext,
     metrics_ctx: &InferenceMetricsContext,
+    chat_service: &crate::chat::service::ChatService,
+    message_id: &str,
 ) -> Result<ToolLoopOutcome, AppError> {
     let tool_defs = &tool_registry.definitions;
     let rig_tools = to_rig_tool_definitions(tool_defs);
 
-    let mut accumulated_text = String::new();
     let mut all_attachments: Vec<crate::storage::Attachment> = Vec::new();
     let mut current_system_prompt = system_prompt.to_string();
     let mut last_reasoning: Option<Reasoning> = None;
+    let mut final_text = String::new();
 
     let max_tool_turns = model_group.inference.max_tool_turns;
     for turn in 0..max_tool_turns {
-        if let Some(outcome) = check_cancellation(&cancel_token, &event_tx, &accumulated_text).await {
+        if let Some(outcome) = check_cancellation(&cancel_token, &event_tx, &final_text).await {
             return Ok(outcome);
         }
 
@@ -364,6 +398,7 @@ pub async fn run_tool_loop(
             }
         }
 
+        let mut turn_text = String::new();
         let contents = match stream_with_retry_and_fallback(
             registry,
             model_group,
@@ -372,7 +407,7 @@ pub async fn run_tool_loop(
             &rig_tools,
             &event_tx,
             &cancel_token,
-            &mut accumulated_text,
+            &mut turn_text,
             metrics_ctx,
         )
         .await?
@@ -380,9 +415,9 @@ pub async fn run_tool_loop(
             StreamResult::Contents(c) => c,
             StreamResult::Cancelled => {
                 event_tx.send(InferenceEvent {
-                        kind: InferenceEventKind::Cancelled(accumulated_text.clone()),
+                        kind: InferenceEventKind::Cancelled(String::new()),
                     });
-                return Ok(ToolLoopOutcome::Cancelled(accumulated_text));
+                return Ok(ToolLoopOutcome::Cancelled(turn_text));
             }
         };
 
@@ -392,38 +427,45 @@ pub async fn run_tool_loop(
             process_model_response(&contents, &event_tx, &mut chat_history).await;
 
         if !has_tool_calls {
+            final_text = turn_text;
             event_tx.send(InferenceEvent {
-                    kind: InferenceEventKind::Done(accumulated_text.clone()),
+                    kind: InferenceEventKind::Done(String::new()),
                 });
             break;
         }
 
+        let turn_text_opt = if turn_text.is_empty() { None } else { Some(turn_text.as_str()) };
+
         let exec_result = execute_tool_calls(
-            &contents,
+            chat_service,
             tool_registry,
             ctx,
             &event_tx,
+            metrics_ctx,
             &mut chat_history,
             &mut all_attachments,
-            metrics_ctx,
+            &contents,
+            message_id,
+            turn as u32,
+            turn_text_opt,
         )
-        .await;
+        .await?;
 
-        if let Some(outcome) = check_cancellation(&cancel_token, &event_tx, &accumulated_text).await {
+        if let Some(outcome) = check_cancellation(&cancel_token, &event_tx, &turn_text).await {
             return Ok(outcome);
         }
 
         if exec_result.has_external {
             let external_tool = exec_result.external_tool_result.unwrap();
             let system_prompt_injection = external_tool.system_prompt.clone();
+            let tool_exec = exec_result.external_tool_execution.unwrap();
+
             event_tx.send(InferenceEvent {
-                    kind: InferenceEventKind::Done(accumulated_text.clone()),
+                    kind: InferenceEventKind::Done(String::new()),
                 });
             return Ok(ToolLoopOutcome::ExternalToolPending {
-                accumulated_text,
-                tool_calls_json: build_tool_calls_json(&contents),
-                tool_results: exec_result.internal_tool_results,
-                external_tool: Box::new(external_tool),
+                turn_text,
+                tool_execution: tool_exec,
                 system_prompt: system_prompt_injection,
             });
         }
@@ -440,10 +482,10 @@ pub async fn run_tool_loop(
         });
         if lifecycle_event.is_some() {
             event_tx.send(InferenceEvent {
-                kind: InferenceEventKind::Done(accumulated_text.clone()),
+                kind: InferenceEventKind::Done(String::new()),
             });
             return Ok(ToolLoopOutcome::Completed {
-                text: accumulated_text,
+                text: turn_text,
                 attachments: all_attachments,
                 lifecycle_event,
                 reasoning: last_reasoning,
@@ -465,7 +507,7 @@ pub async fn run_tool_loop(
     }
 
     Ok(ToolLoopOutcome::Completed {
-        text: accumulated_text,
+        text: final_text,
         attachments: all_attachments,
         lifecycle_event: None,
         reasoning: last_reasoning,

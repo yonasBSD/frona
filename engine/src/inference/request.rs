@@ -17,8 +17,6 @@ use crate::chat::message::models::MessageTool;
 
 use crate::chat::message::models::Reasoning;
 
-use super::tool_loop::ToolCallResult;
-
 pub struct InferenceContext {
     pub user: User,
     pub agent: Agent,
@@ -62,9 +60,12 @@ pub struct InferenceRequest {
     pub tool_registry: AgentToolRegistry,
     pub ctx: InferenceContext,
     pub cancel_token: CancellationToken,
+    pub chat_service: crate::chat::service::ChatService,
+    pub message_id: String,
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum InferenceResponse {
     Completed {
         text: String,
@@ -74,10 +75,8 @@ pub enum InferenceResponse {
     },
     Cancelled(String),
     ExternalToolPending {
-        accumulated_text: String,
-        tool_calls_json: serde_json::Value,
-        tool_results: Vec<ToolCallResult>,
-        external_tool: Box<ToolCallResult>,
+        turn_text: String,
+        tool_execution: crate::inference::tool_execution::ToolExecutionResponse,
         system_prompt: Option<String>,
     },
 }

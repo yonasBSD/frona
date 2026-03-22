@@ -6,6 +6,7 @@ pub mod provider;
 pub mod registry;
 pub mod request;
 pub mod retry;
+pub mod tool_execution;
 pub mod tool_loop;
 
 pub use error::InferenceError;
@@ -47,7 +48,7 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
             request.model_group.inference.history_truncation_pct,
         );
 
-        let mut accumulated_text = String::new();
+        let mut response_text = String::new();
         let event_tx = &request.ctx.event_tx;
         match retry::stream_with_retry_and_fallback(
             &request.registry,
@@ -57,7 +58,7 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
             &[],
             event_tx,
             &request.cancel_token,
-            &mut accumulated_text,
+            &mut response_text,
             &metrics_ctx,
         )
         .await?
@@ -65,10 +66,10 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
             retry::StreamResult::Contents(contents) => {
                 let reasoning = extract_reasoning(&contents);
                 event_tx.send(InferenceEvent {
-                    kind: InferenceEventKind::Done(accumulated_text.clone()),
+                    kind: InferenceEventKind::Done(String::new()),
                 });
                 Ok(InferenceResponse::Completed {
-                    text: accumulated_text,
+                    text: response_text,
                     attachments: vec![],
                     lifecycle_event: None,
                     reasoning,
@@ -76,9 +77,9 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
             }
             retry::StreamResult::Cancelled => {
                 event_tx.send(InferenceEvent {
-                    kind: InferenceEventKind::Cancelled(accumulated_text.clone()),
+                    kind: InferenceEventKind::Cancelled(String::new()),
                 });
-                Ok(InferenceResponse::Cancelled(accumulated_text))
+                Ok(InferenceResponse::Cancelled(response_text))
             }
         }
     } else {
@@ -93,6 +94,8 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
             request.cancel_token,
             &request.ctx,
             &metrics_ctx,
+            &request.chat_service,
+            &request.message_id,
         )
         .await?;
 
@@ -102,16 +105,12 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
             }
             tool_loop::ToolLoopOutcome::Cancelled(text) => InferenceResponse::Cancelled(text),
             tool_loop::ToolLoopOutcome::ExternalToolPending {
-                accumulated_text,
-                tool_calls_json,
-                tool_results,
-                external_tool,
+                turn_text,
+                tool_execution,
                 system_prompt,
             } => InferenceResponse::ExternalToolPending {
-                accumulated_text,
-                tool_calls_json,
-                tool_results,
-                external_tool,
+                turn_text,
+                tool_execution,
                 system_prompt,
             },
         })
