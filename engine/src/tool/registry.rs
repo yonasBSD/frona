@@ -346,6 +346,7 @@ mod tests {
                 updated_at: chrono::Utc::now(),
             },
             event_sender,
+            tokio_util::sync::CancellationToken::new(),
         )
     }
 

@@ -10,6 +10,7 @@ mod navigation;
 mod notifications;
 mod security;
 mod spaces;
+mod system;
 mod tasks;
 mod vaults;
 
@@ -23,6 +24,7 @@ use frona::agent::service::AgentService;
 use frona::db::repo::generic::SurrealRepo;
 use frona::storage::StorageService;
 use frona::db::init as db;
+use frona::api::middleware::shutdown::shutdown_gate;
 use frona::api::routes;
 use frona::core::config::Config;
 use frona::core::metrics::setup_metrics_recorder;
@@ -78,6 +80,7 @@ fn build_app(state: AppState) -> Router {
         .merge(routes::notifications::router())
         .merge(routes::apps::router())
         .merge(routes::system::router())
+        .layer(axum::middleware::from_fn_with_state(state.clone(), shutdown_gate))
         .with_state(state)
 }
 

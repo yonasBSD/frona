@@ -25,13 +25,21 @@ pub struct Scheduler {
 }
 
 macro_rules! spawn_periodic {
-    ($scheduler:expr, $interval:expr, $name:expr, $method:ident) => {{
+    ($scheduler:expr, $interval:expr, $name:expr, $method:ident, $shutdown:expr) => {{
         let s = $scheduler.clone();
+        let shutdown = $shutdown.clone();
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep($interval).await;
-                if let Err(e) = s.$method().await {
-                    tracing::warn!(error = %e, task = $name, "Scheduled task failed");
+                tokio::select! {
+                    () = tokio::time::sleep($interval) => {
+                        if let Err(e) = s.$method().await {
+                            tracing::warn!(error = %e, task = $name, "Scheduled task failed");
+                        }
+                    }
+                    () = shutdown.cancelled() => {
+                        tracing::info!(task = $name, "Scheduler loop stopping for shutdown");
+                        break;
+                    }
                 }
             }
         });
@@ -52,11 +60,12 @@ impl Scheduler {
         let insight = Duration::from_secs(cfg.scheduler.insight_compaction_secs);
         let poll = Duration::from_secs(cfg.scheduler.poll_secs);
 
-        spawn_periodic!(self, space, "space_compaction", run_space_compaction);
-        spawn_periodic!(self, insight, "insight_compaction", run_insight_compaction);
-        spawn_periodic!(self, insight, "user_insight_compaction", run_user_insight_compaction);
-        spawn_periodic!(self, poll, "poll_tasks", run_poll_tasks);
-        spawn_periodic!(self, space, "token_cleanup", run_token_cleanup);
+        let shutdown = self.app_state.shutdown_token.clone();
+        spawn_periodic!(self, space, "space_compaction", run_space_compaction, shutdown);
+        spawn_periodic!(self, insight, "insight_compaction", run_insight_compaction, shutdown);
+        spawn_periodic!(self, insight, "user_insight_compaction", run_user_insight_compaction, shutdown);
+        spawn_periodic!(self, poll, "poll_tasks", run_poll_tasks, shutdown);
+        spawn_periodic!(self, space, "token_cleanup", run_token_cleanup, shutdown);
     }
 
     async fn run_poll_tasks(&self) -> Result<(), AppError> {
@@ -66,6 +75,9 @@ impl Scheduler {
     }
 
     async fn run_cron_tasks(&self) -> Result<(), AppError> {
+        if self.app_state.is_shutting_down() {
+            return Ok(());
+        }
         let templates = self.app_state.task_service.find_due_cron_templates().await?;
         if templates.is_empty() {
             return Ok(());
@@ -116,6 +128,9 @@ impl Scheduler {
     }
 
     async fn run_deferred_tasks(&self) -> Result<(), AppError> {
+        if self.app_state.is_shutting_down() {
+            return Ok(());
+        }
         let tasks = self.app_state.task_service.find_deferred_due().await?;
         if tasks.is_empty() {
             return Ok(());
@@ -145,6 +160,9 @@ impl Scheduler {
     }
 
     async fn run_heartbeats(&self) -> Result<(), AppError> {
+        if self.app_state.is_shutting_down() {
+            return Ok(());
+        }
         let now = Utc::now();
         let agents = self.app_state.agent_service.find_due_heartbeats(now).await?;
         if agents.is_empty() {

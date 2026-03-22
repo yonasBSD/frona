@@ -170,7 +170,7 @@ impl ChatSessionContext {
             }
         }
 
-        let mut tool_ctx = InferenceContext::new(user, agent, chat.clone(), event_sender);
+        let mut tool_ctx = InferenceContext::new(user, agent, chat.clone(), event_sender, state.shutdown_token.clone());
         tool_ctx.file_paths = file_paths;
         tool_ctx.task = task;
 

@@ -63,7 +63,17 @@ pub async fn restore_and_supervise_apps(
     let hibernate_secs = state.app_service.hibernate_after_secs();
 
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        tokio::select! {
+            () = tokio::time::sleep(std::time::Duration::from_secs(10)) => {}
+            () = state.shutdown_token.cancelled() => {
+                info!("App supervisor stopping for shutdown");
+                let app_ids = state.app_service.manager().get_managed_app_ids().await;
+                for app_id in &app_ids {
+                    let _ = state.app_service.manager().stop_app(app_id).await;
+                }
+                return Ok(());
+            }
+        }
 
         let access_times = state.app_service.manager().flush_access_times().await;
         for (app_id, at) in &access_times {

@@ -37,6 +37,8 @@ pub struct ServerConfig {
     pub frontend_url: Option<String>,
     #[schemars(description = "Maximum request body size in bytes.")]
     pub max_body_size_bytes: usize,
+    #[schemars(description = "Graceful shutdown timeout in seconds. Server force-exits after this duration.")]
+    pub shutdown_timeout_secs: u64,
 }
 
 impl ServerConfig {
@@ -72,6 +74,7 @@ impl Default for ServerConfig {
             backend_url: None,
             frontend_url: None,
             max_body_size_bytes: 104_857_600,
+            shutdown_timeout_secs: 60,
         }
     }
 }

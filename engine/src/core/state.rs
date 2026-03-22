@@ -72,6 +72,10 @@ impl ActiveSessions {
     pub async fn remove(&self, chat_id: &str) {
         self.inner.lock().await.remove(chat_id);
     }
+
+    pub async fn count(&self) -> usize {
+        self.inner.lock().await.len()
+    }
 }
 
 #[derive(Clone)]
@@ -108,6 +112,7 @@ pub struct AppState {
     pub oauth_service: Option<OAuthService>,
     pub metrics_handle: PrometheusHandle,
     pub task_resolution_notifiers: Arc<Mutex<HashMap<String, Arc<Notify>>>>,
+    pub shutdown_token: CancellationToken,
 }
 
 impl AppState {
@@ -277,6 +282,7 @@ impl AppState {
             oauth_service,
             metrics_handle,
             task_resolution_notifiers: Arc::new(Mutex::new(HashMap::new())),
+            shutdown_token: CancellationToken::new(),
         }
     }
 
@@ -322,6 +328,10 @@ impl AppState {
         self.task_executor.get().cloned()
     }
 
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutdown_token.is_cancelled()
+    }
+
     pub fn compaction_model_group(&self) -> Option<crate::inference::config::ModelGroup> {
         let registry = self.chat_service.provider_registry();
         if let Ok(group) = registry.get_model_group("compaction") {
@@ -345,5 +355,57 @@ fn load_models_config(from_yaml: Option<ModelRegistryConfig>) -> ModelRegistryCo
             tracing::info!("No models in config, auto-discovering from environment");
             ModelRegistryConfig::auto_discover()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_register_and_count() {
+        let sessions = ActiveSessions::default();
+        sessions.register("chat-1").await;
+        sessions.register("chat-2").await;
+        assert_eq!(sessions.count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_remove_decrements_count() {
+        let sessions = ActiveSessions::default();
+        sessions.register("chat-1").await;
+        sessions.register("chat-2").await;
+        sessions.remove("chat-1").await;
+        assert_eq!(sessions.count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_register_cancels_previous() {
+        let sessions = ActiveSessions::default();
+        let first = sessions.register("chat-1").await;
+        let _second = sessions.register("chat-1").await;
+        assert!(first.is_cancelled());
+        assert_eq!(sessions.count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_returns_true_for_existing() {
+        let sessions = ActiveSessions::default();
+        sessions.register("chat-1").await;
+        assert!(sessions.cancel("chat-1").await);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_returns_false_for_missing() {
+        let sessions = ActiveSessions::default();
+        assert!(!sessions.cancel("nonexistent").await);
+    }
+
+    #[test]
+    fn test_is_shutting_down() {
+        let token = CancellationToken::new();
+        assert!(!token.is_cancelled());
+        token.cancel();
+        assert!(token.is_cancelled());
     }
 }

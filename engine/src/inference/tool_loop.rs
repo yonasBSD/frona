@@ -455,6 +455,19 @@ pub async fn run_tool_loop(
             return Ok(outcome);
         }
 
+        if ctx.shutdown_token.is_cancelled() {
+            tracing::info!("Server shutting down, stopping tool loop after current tool");
+            event_tx.send(InferenceEvent {
+                kind: InferenceEventKind::Done(String::new()),
+            });
+            return Ok(ToolLoopOutcome::Completed {
+                text: turn_text,
+                attachments: all_attachments,
+                lifecycle_event: None,
+                reasoning: last_reasoning,
+            });
+        }
+
         if exec_result.has_external {
             let external_tool = exec_result.external_tool_result.unwrap();
             let system_prompt_injection = external_tool.system_prompt.clone();

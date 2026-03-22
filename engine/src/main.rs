@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, HeaderValue, Method, StatusCode, Uri};
@@ -17,6 +18,7 @@ use frona::agent::service::AgentService;
 use frona::storage::StorageService;
 use frona::db::init as db;
 use frona::api::middleware::metrics::track_http_metrics;
+use frona::api::middleware::shutdown::shutdown_gate;
 use frona::api::routes;
 use frona::core::config::Config;
 use frona::core::metrics::setup_metrics_recorder;
@@ -158,7 +160,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::config::router())
         .merge(routes::provider_models::router())
         .layer(DefaultBodyLimit::max(config.server.max_body_size_bytes))
-        .layer(axum::middleware::from_fn(track_http_metrics));
+        .layer(axum::middleware::from_fn(track_http_metrics))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), shutdown_gate));
     if let Some(cors) = cors {
         api = api.layer(cors);
     }
@@ -176,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             HeaderValue::from_static("1; mode=block"),
         ))
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
+        .with_state(state.clone())
         .fallback_service(ServeDir::new(&config.server.static_dir).fallback(
             axum::routing::get({
                 let static_dir = PathBuf::from(&config.server.static_dir);
@@ -190,6 +193,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
     info!("Frona v{} starting on {addr}", env!("CARGO_PKG_VERSION"));
 
+    let shutdown_token = state.shutdown_token.clone();
+    let shutdown_signal = async move {
+        let ctrl_c = tokio::signal::ctrl_c();
+        let mut sigterm = tokio::signal::unix::signal(
+            tokio::signal::unix::SignalKind::terminate(),
+        )
+        .expect("Failed to install SIGTERM handler");
+
+        tokio::select! {
+            _ = ctrl_c => { info!("Received SIGINT"); }
+            _ = sigterm.recv() => { info!("Received SIGTERM"); }
+        }
+
+        info!("Initiating graceful shutdown...");
+        shutdown_token.cancel();
+    };
+
     let listener = tokio::net::TcpListener::bind(addr)
         .await?
         .tap_io(|tcp_stream| {
@@ -197,7 +217,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::trace!("failed to set TCP_NODELAY on incoming connection: {err:#}");
             }
         });
-    axum::serve(listener, api.into_make_service_with_connect_info::<SocketAddr>()).await?;
+    axum::serve(listener, api.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(shutdown_signal)
+        .await?;
+
+    info!("HTTP server stopped, waiting for in-flight work to drain...");
+
+    let timeout = Duration::from_secs(config.server.shutdown_timeout_secs);
+    let drain = async {
+        loop {
+            let count = state.active_sessions.count().await;
+            if count == 0 {
+                info!("All in-flight work drained");
+                break;
+            }
+            info!(active_sessions = count, "Waiting for in-flight work to complete...");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    };
+
+    match tokio::time::timeout(timeout, drain).await {
+        Ok(()) => info!("Graceful shutdown complete"),
+        Err(_) => {
+            tracing::warn!(
+                timeout_secs = config.server.shutdown_timeout_secs,
+                "Shutdown timeout reached, forcing exit"
+            );
+        }
+    }
+
+    state.browser_session_manager.kill_all_sessions().await;
 
     Ok(())
 }

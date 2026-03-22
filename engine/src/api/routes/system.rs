@@ -1,4 +1,7 @@
 use axum::Router;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde_json::json;
 
@@ -13,8 +16,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/system/restart", post(restart_handler))
 }
 
-async fn health_handler() -> axum::Json<serde_json::Value> {
-    axum::Json(json!({"status": "ok"}))
+async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
+    if state.is_shutting_down() {
+        (StatusCode::SERVICE_UNAVAILABLE, axum::Json(json!({"status": "draining"})))
+    } else {
+        (StatusCode::OK, axum::Json(json!({"status": "ok"})))
+    }
 }
 
 async fn version_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {

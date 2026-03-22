@@ -55,6 +55,11 @@ impl TaskExecutor {
     }
 
     pub async fn spawn_execution(self: &Arc<Self>, task: Task) -> Result<(), AppError> {
+        if self.app_state.is_shutting_down() {
+            tracing::info!(task_id = %task.id, "Rejecting task spawn during shutdown");
+            return Ok(());
+        }
+
         let active = self.active_tasks.lock().await;
         if active.len() >= self.app_state.max_concurrent_tasks {
             tracing::info!(
@@ -181,6 +186,7 @@ impl TaskExecutor {
                 }
             };
 
+            let session_token = self.app_state.active_sessions.register(&chat_id).await;
             let result = execution::run_agent_loop(
                 &self.app_state,
                 &task.user_id,
@@ -191,6 +197,8 @@ impl TaskExecutor {
                 continuation_prompt.as_deref(),
             )
             .await;
+            drop(session_token);
+            self.app_state.active_sessions.remove(&chat_id).await;
 
             match result {
                 Ok(execution::AgentLoopOutcome { response }) => match response {
