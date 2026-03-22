@@ -263,6 +263,10 @@ pub fn is_embeddable_image(attachment: &Attachment) -> bool {
 }
 
 pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage> {
+    // Skip placeholder messages that haven't been completed yet
+    if msg.status.as_ref() == Some(&MessageStatus::Executing) {
+        return None;
+    }
     let is_self = msg.agent_id.as_deref() == Some(agent_id);
     if is_self {
         if let Some(tool_calls_val) = &msg.tool_calls
@@ -654,6 +658,17 @@ mod tests {
         } else {
             panic!("Expected Assistant message");
         }
+    }
+
+    #[test]
+    fn executing_agent_message_is_skipped() {
+        let msg = Message {
+            agent_id: Some("agent-1".to_string()),
+            status: Some(MessageStatus::Executing),
+            ..make_message(MessageRole::Agent, "")
+        };
+        let result = convert_agent_message(&msg, "agent-1");
+        assert!(result.is_none(), "Executing messages should be skipped");
     }
 
     #[test]
