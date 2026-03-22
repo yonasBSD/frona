@@ -82,6 +82,10 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE INDEX IF NOT EXISTS idx_vault_grant_user ON TABLE vault_grant COLUMNS user_id;
         DEFINE INDEX IF NOT EXISTS idx_vault_grant_user_agent ON TABLE vault_grant COLUMNS user_id, agent_id;
 
+        DEFINE TABLE IF NOT EXISTS tool_execution SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_tool_execution_chat ON TABLE tool_execution COLUMNS chat_id;
+        DEFINE INDEX IF NOT EXISTS idx_tool_execution_message ON TABLE tool_execution COLUMNS message_id;
+
         DEFINE TABLE IF NOT EXISTS vault_access_log SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_vault_access_log_chat ON TABLE vault_access_log COLUMNS chat_id;
         DEFINE INDEX IF NOT EXISTS idx_vault_access_log_user ON TABLE vault_access_log COLUMNS user_id;
@@ -95,6 +99,10 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE EVENT IF NOT EXISTS cascade_delete_chat_messages ON TABLE chat
           WHEN $event = 'DELETE'
           THEN (DELETE FROM message WHERE chat_id = meta::id($before.id));
+
+        DEFINE EVENT IF NOT EXISTS cascade_delete_chat_tool_executions ON TABLE chat
+          WHEN $event = 'DELETE'
+          THEN (DELETE FROM tool_execution WHERE chat_id = meta::id($before.id));
 
         DEFINE EVENT IF NOT EXISTS cascade_delete_task_chat ON TABLE task
           WHEN $event = 'DELETE' AND $before.chat_id IS NOT NONE

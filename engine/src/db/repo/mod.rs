@@ -14,5 +14,6 @@ pub mod skills;
 pub mod spaces;
 pub mod tasks;
 pub mod tokens;
+pub mod tool_executions;
 pub mod users;
 pub mod vault;
