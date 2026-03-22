@@ -25,9 +25,8 @@ fn spawn_inference(
 #[allow(clippy::too_many_arguments)]
 async fn handle_inference_result(
     result: Result<Result<InferenceResponse, crate::core::error::AppError>, tokio::task::JoinError>,
-    accumulated: String,
     chat_service: &ChatService,
-    chat_id: &str,
+    message_id: &str,
     presign_svc: &PresignService,
     user_id: &str,
     username: &str,
@@ -35,49 +34,37 @@ async fn handle_inference_result(
 ) {
     match result {
         Ok(Ok(response)) => match response {
-            InferenceResponse::Completed { text: _, attachments, reasoning, .. } => {
-                if !accumulated.is_empty()
-                    && let Ok(mut msg) = chat_service
-                        .save_assistant_message_with_tool_calls(chat_id, accumulated, None, attachments, reasoning)
-                        .await
+            InferenceResponse::Completed { text, attachments, reasoning, .. } => {
+                if let Ok(mut msg) = chat_service
+                    .complete_agent_message(message_id, text, attachments, reasoning)
+                    .await
                 {
                     presign_response(presign_svc, &mut msg, user_id, username).await;
                     event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
                 }
             }
-            InferenceResponse::Cancelled(_) => {
-                if !accumulated.is_empty() {
-                    let _ = chat_service.save_assistant_message(chat_id, accumulated).await;
-                }
+            InferenceResponse::Cancelled(text) => {
+                let _ = chat_service.complete_agent_message(message_id, text, vec![], None).await;
                 event_sender.send_kind(BroadcastEventKind::InferenceCancelled {
                     reason: "User cancelled generation".to_string(),
                 });
             }
             InferenceResponse::ExternalToolPending {
-                accumulated_text,
-                tool_calls_json,
-                tool_results,
-                external_tool,
-                system_prompt: _,
+                tool_execution, ..
             } => {
-                let text = if accumulated.is_empty() { accumulated_text } else { accumulated };
-                if let Ok(mut tool_msg) = chat_service
-                    .save_external_tool_pending(chat_id, text, tool_calls_json, &tool_results, external_tool)
-                    .await
-                {
-                    presign_response(presign_svc, &mut tool_msg, user_id, username).await;
-                    event_sender.send_kind(BroadcastEventKind::ToolMessage { message: tool_msg });
-                }
+                event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution });
             }
         },
         Ok(Err(e)) => {
             tracing::error!(error = %e, "Inference failed");
+            let _ = chat_service.fail_agent_message(message_id).await;
             event_sender.send_kind(BroadcastEventKind::InferenceError {
                 error: e.to_string(),
             });
         }
         Err(e) => {
             tracing::error!(error = %e, "Inference task panicked");
+            let _ = chat_service.fail_agent_message(message_id).await;
             event_sender.send_kind(BroadcastEventKind::InferenceError {
                 error: "Internal error".to_string(),
             });
@@ -91,24 +78,17 @@ pub(crate) async fn stream_message(
     Path(chat_id): Path<String>,
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Json<MessageResponse>, ApiError> {
-    use crate::chat::message::models::{MessageTool, ToolStatus};
-
     let chat = state
         .chat_service
         .get_chat(&auth.user_id, &chat_id)
         .await
         .map_err(ApiError::from)?;
 
-    let stored_messages = state.chat_service.get_stored_messages(&chat_id).await;
-    let pending_tool_id = stored_messages.iter().rev().find_map(|m| match &m.tool {
-        Some(MessageTool::Question { status: ToolStatus::Pending, .. })
-        | Some(MessageTool::HumanInTheLoop { status: ToolStatus::Pending, .. })
-        | Some(MessageTool::VaultApproval { status: ToolStatus::Pending, .. })
-        | Some(MessageTool::ServiceApproval { status: ToolStatus::Pending, .. }) => {
-            Some(m.id.clone())
-        }
-        _ => None,
-    });
+    // Check for pending tool execution instead of scanning messages
+    let pending_tool = state.chat_service
+        .find_pending_tool_execution(&chat_id)
+        .await
+        .map_err(ApiError::from)?;
 
     let cancel_token = state.active_sessions.register(&chat_id).await;
     let mut ctx = crate::chat::session::ChatSessionContext::build(
@@ -132,6 +112,7 @@ pub(crate) async fn stream_message(
         }
     }
 
+    let stored_messages = state.chat_service.get_stored_messages(&chat_id).await;
     let (chat_summary, context_messages) = state
         .memory_service
         .get_conversation_context(&chat_id)
@@ -156,7 +137,11 @@ pub(crate) async fn stream_message(
         model_ref: ctx.model_group.main.clone(),
         user_id: auth.user_id.clone(),
     };
-    rig_history.extend(conv_builder.build(&context_messages, &conv_ctx).await);
+    let tool_executions = state.chat_service
+        .get_tool_executions(&ctx.chat.id)
+        .await
+        .unwrap_or_default();
+    rig_history.extend(conv_builder.build(&context_messages, &tool_executions, &conv_ctx).await);
     ctx.rig_history = rig_history;
 
     let user_content = req.content;
@@ -170,7 +155,7 @@ pub(crate) async fn stream_message(
 
     let event_sender = tool_ctx.event_tx.clone();
 
-    if let Some(pending_id) = pending_tool_id {
+    if let Some(pending_te) = pending_tool {
         let mut user_response = state
             .chat_service
             .create_stream_user_message(&auth.user_id, &chat_id, &user_content, vec![])
@@ -179,12 +164,31 @@ pub(crate) async fn stream_message(
 
         presign_response(&state.presign_service, &mut user_response, &auth.user_id, &auth.username).await;
 
-        let resolved = state
+        let resolve_result = state
             .chat_service
-            .resolve_tool_message(&pending_id, Some(user_content))
+            .resolve_tool_execution(&pending_te.id, Some(user_content))
             .await
-            .map_err(ApiError::from)?
-            .into_message();
+            .map_err(ApiError::from)?;
+
+        let resolved_msg = resolve_result.into_message();
+
+        // Find the existing Executing agent message to reuse
+        let executing_msg = state.chat_service
+            .find_executing_message_for_chat(&chat_id)
+            .await
+            .map_err(ApiError::from)?;
+
+        let agent_msg_id = match executing_msg {
+            Some(msg) => msg.id,
+            None => {
+                // Fallback: create a new one if somehow missing
+                let msg = state.chat_service
+                    .create_executing_agent_message(&chat_id, &agent_id)
+                    .await
+                    .map_err(ApiError::from)?;
+                msg.id
+            }
+        };
 
         let pending_conv_builder = DefaultConversationBuilder {
             user_service: state.user_service.clone(),
@@ -203,32 +207,28 @@ pub(crate) async fn stream_message(
         let username = auth.username.clone();
         let chat_id_clone = chat_id.clone();
 
-        event_sender.send_kind(BroadcastEventKind::ToolResolved { message: resolved });
+        event_sender.send_kind(BroadcastEventKind::ToolResolved { message: resolved_msg });
 
         tokio::spawn(async move {
             let stored_messages = chat_service.get_stored_messages(&chat_id_clone).await;
-            let rig_history = pending_conv_builder.build(&stored_messages, &pending_conv_ctx).await;
+            let tool_executions = chat_service
+                .get_tool_executions(&chat_id_clone)
+                .await
+                .unwrap_or_default();
+            let rig_history = pending_conv_builder.build(&stored_messages, &tool_executions, &pending_conv_ctx).await;
 
             let handle = spawn_inference(InferenceRequest {
                 registry, model_group, system_prompt,
                 history: rig_history, tool_registry,
                 ctx: tool_ctx, cancel_token,
+                chat_service: chat_service.clone(),
+                message_id: agent_msg_id.clone(),
             });
 
             let result = handle.await;
-            let mut accumulated = String::new();
-            if let Ok(Ok(ref resp)) = result {
-                match resp {
-                    InferenceResponse::Completed { text, .. } => accumulated = text.clone(),
-                    InferenceResponse::Cancelled(text) => accumulated = text.clone(),
-                    InferenceResponse::ExternalToolPending { accumulated_text, .. } => {
-                        accumulated = accumulated_text.clone()
-                    }
-                }
-            }
 
             handle_inference_result(
-                result, accumulated, &chat_service, &chat_id_clone,
+                result, &chat_service, &agent_msg_id,
                 &presign_svc, &user_id, &username, &event_sender,
             ).await;
             active_sessions.remove(&chat_id_clone).await;
@@ -255,6 +255,13 @@ pub(crate) async fn stream_message(
             .map_err(ApiError::from)?;
 
         presign_response(&state.presign_service, &mut user_response, &auth.user_id, &auth.username).await;
+
+        // Pre-create agent message in Executing state
+        let agent_msg = state.chat_service
+            .create_executing_agent_message(&chat_id, &agent_id)
+            .await
+            .map_err(ApiError::from)?;
+        let agent_msg_id = agent_msg.id.clone();
 
         let chat_service = state.chat_service.clone();
         let presign_svc = state.presign_service.clone();
@@ -297,22 +304,14 @@ pub(crate) async fn stream_message(
                 registry, model_group, system_prompt,
                 history: full_history, tool_registry,
                 ctx: tool_ctx, cancel_token,
+                chat_service: chat_service.clone(),
+                message_id: agent_msg_id.clone(),
             });
 
             let result = handle.await;
-            let mut accumulated = String::new();
-            if let Ok(Ok(ref resp)) = result {
-                match resp {
-                    InferenceResponse::Completed { text, .. } => accumulated = text.clone(),
-                    InferenceResponse::Cancelled(text) => accumulated = text.clone(),
-                    InferenceResponse::ExternalToolPending { accumulated_text, .. } => {
-                        accumulated = accumulated_text.clone()
-                    }
-                }
-            }
 
             handle_inference_result(
-                result, accumulated, &chat_service, &chat_id_clone,
+                result, &chat_service, &agent_msg_id,
                 &presign_svc, &user_id, &username, &event_sender,
             ).await;
             active_sessions.remove(&chat_id_clone).await;

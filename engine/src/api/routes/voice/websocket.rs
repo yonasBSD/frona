@@ -182,110 +182,68 @@ async fn handle_voice_turn(
         .save_live_call_message(user_id, chat_id, content, contact_id)
         .await?;
 
+    let chat = state.chat_service.find_chat(chat_id).await?
+        .ok_or_else(|| AppError::NotFound("Chat not found".into()))?;
+
     loop {
-        let outcome = run_agent_loop(state, user_id, chat_id, cancel_token.clone(), false, None).await?;
+        // Create or find an Executing agent message for this turn
+        let agent_msg_id = match state.chat_service
+            .find_executing_message_for_chat(chat_id)
+            .await
+        {
+            Ok(Some(msg)) => msg.id,
+            _ => {
+                let msg = state.chat_service
+                    .create_executing_agent_message(chat_id, &chat.agent_id)
+                    .await?;
+                msg.id
+            }
+        };
+
+        let outcome = run_agent_loop(state, user_id, chat_id, &agent_msg_id, cancel_token.clone(), false, None).await?;
 
         match outcome.response {
             InferenceResponse::ExternalToolPending {
-                accumulated_text,
-                tool_calls_json,
-                tool_results,
-                external_tool,
-                system_prompt: _,
-            } if external_tool.tool_name == "send_dtmf" => {
-                tracing::debug!(chat_id = %chat_id, digits = %external_tool.result, "Sending DTMF digits");
-                state
-                    .chat_service
-                    .save_assistant_message_with_tool_calls(
-                        chat_id,
-                        accumulated_text,
-                        Some(tool_calls_json),
-                        vec![],
-                        None,
-                    )
-                    .await
-                    .ok();
+                ref tool_execution, ref turn_text, ..
+            } if tool_execution.name == "send_dtmf" => {
+                tracing::debug!(chat_id = %chat_id, digits = %tool_execution.result, "Sending DTMF digits");
 
-                for tr in &tool_results {
-                    state
-                        .chat_service
-                        .save_tool_result_message_with_tool(
-                            chat_id,
-                            &tr.tool_call_id,
-                            tr.result.clone(),
-                            tr.tool_data.clone(),
-                            None,
-                        )
-                        .await
-                        .ok();
-                }
-
+                // Tool executions already persisted by the tool loop.
+                // Send DTMF digits over WebSocket.
                 let dtmf_msg = serde_json::json!({
                     "type": "sendDigits",
-                    "digits": external_tool.result
+                    "digits": tool_execution.result
                 });
                 ws_send
                     .send(Message::Text(dtmf_msg.to_string().into()))
                     .await
                     .ok();
 
-                state
-                    .chat_service
-                    .save_tool_result_message_with_tool(
-                        chat_id,
-                        &external_tool.tool_call_id,
-                        "DTMF sent".to_string(),
-                        None,
-                        None,
-                    )
-                    .await
-                    .ok();
+                // Resolve the external tool execution so the loop can continue
+                let _ = state.chat_service
+                    .resolve_tool_execution(&tool_execution.id, Some("DTMF sent".to_string()))
+                    .await;
+
+                // Complete the agent message for this turn
+                let _ = state.chat_service
+                    .complete_agent_message(&agent_msg_id, turn_text.clone(), vec![], None)
+                    .await;
             }
             InferenceResponse::ExternalToolPending {
-                accumulated_text,
-                tool_calls_json,
-                tool_results,
-                external_tool,
-                system_prompt: _,
-            } if external_tool.tool_name == "hangup_call" => {
+                ref tool_execution, ref turn_text, ..
+            } if tool_execution.name == "hangup_call" => {
                 tracing::debug!(chat_id = %chat_id, "Hangup requested by agent");
-                state
-                    .chat_service
-                    .save_assistant_message_with_tool_calls(
-                        chat_id,
-                        accumulated_text.clone(),
-                        Some(tool_calls_json),
-                        vec![],
-                        None,
-                    )
-                    .await
-                    .ok();
 
-                for tr in &tool_results {
-                    state
-                        .chat_service
-                        .save_tool_result_message_with_tool(
-                            chat_id,
-                            &tr.tool_call_id,
-                            tr.result.clone(),
-                            tr.tool_data.clone(),
-                            None,
-                        )
-                        .await
-                        .ok();
-                }
+                // Tool executions already persisted by the tool loop.
+                // Resolve the external tool execution.
+                let _ = state.chat_service
+                    .resolve_tool_execution(&tool_execution.id, Some("Call ended".to_string()))
+                    .await;
 
-                state
-                    .chat_service
-                    .save_tool_result_message_with_tool(
-                        chat_id,
-                        &external_tool.tool_call_id,
-                        "Call ended".to_string(),
-                        None,
-                        None,
-                    )
-                    .await
-                    .ok();
+                // Complete the agent message
+                let _ = state.chat_service
+                    .complete_agent_message(&agent_msg_id, turn_text.clone(), vec![], None)
+                    .await;
 
                 if let Some(cid) = call_id
                     && let Err(e) = state.call_service.mark_completed(cid).await
@@ -293,19 +251,17 @@ async fn handle_voice_turn(
                     tracing::warn!(error = %e, call_id = %cid, "Failed to mark call completed");
                 }
 
-                return Ok((accumulated_text, true));
+                return Ok((turn_text.clone(), true));
             }
-            InferenceResponse::Completed { text, .. } => {
-                if !text.is_empty() {
-                    state
-                        .chat_service
-                        .save_assistant_message(chat_id, text.clone())
-                        .await
-                        .ok();
-                }
+            InferenceResponse::Completed { text, attachments, reasoning, .. } => {
+                let _ = state.chat_service
+                    .complete_agent_message(&agent_msg_id, text.clone(), attachments, reasoning)
+                    .await;
                 return Ok((text, false));
             }
             _ => {
+                let _ = state.chat_service
+                    .fail_agent_message(&agent_msg_id).await;
                 return Ok((String::new(), false));
             }
         }

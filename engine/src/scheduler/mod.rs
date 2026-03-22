@@ -387,27 +387,39 @@ async fn execute_background_agent(
         .create_stream_user_message(user_id, chat_id, message_content, vec![])
         .await?;
 
+    // Determine agent_id from the chat
+    let chat = state.chat_service.find_chat(chat_id).await?
+        .ok_or_else(|| AppError::NotFound("Chat not found".into()))?;
+    let agent_msg = state.chat_service
+        .create_executing_agent_message(chat_id, &chat.agent_id)
+        .await?;
+    let agent_msg_id = agent_msg.id.clone();
+
     let cancel_token = state.active_sessions.register(chat_id).await;
 
     let result = execution::run_agent_loop(
-        state, user_id, chat_id, cancel_token, false, None,
+        state, user_id, chat_id, &agent_msg_id, cancel_token, false, None,
     )
     .await;
 
     match result {
-        Ok(AgentLoopOutcome { response }) => {
-            if let InferenceResponse::Completed { text, attachments, .. } = response
-                && !text.is_empty()
-            {
-                let _ = state
-                    .chat_service
-                    .save_assistant_message_with_tool_calls(
-                        chat_id, text, None, attachments, None,
-                    )
+        Ok(AgentLoopOutcome { response }) => match response {
+            InferenceResponse::Completed { text, attachments, reasoning, .. } => {
+                let _ = state.chat_service
+                    .complete_agent_message(&agent_msg_id, text, attachments, reasoning)
                     .await;
             }
-        }
+            InferenceResponse::Cancelled(text) => {
+                let _ = state.chat_service
+                    .complete_agent_message(&agent_msg_id, text, vec![], None)
+                    .await;
+            }
+            InferenceResponse::ExternalToolPending { .. } => {
+                tracing::warn!(chat_id = %chat_id, "Background agent hit external tool pending — not supported");
+            }
+        },
         Err(e) => {
+            let _ = state.chat_service.fail_agent_message(&agent_msg_id).await;
             tracing::error!(error = %e, chat_id = %chat_id, "Background agent tool loop failed");
         }
     }

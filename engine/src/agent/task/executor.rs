@@ -12,7 +12,6 @@ use crate::chat::models::CreateChatRequest;
 use crate::core::error::AppError;
 use crate::core::state::AppState;
 use crate::inference::InferenceResponse;
-use crate::storage::Attachment;
 
 const MAX_TASK_RETRIES: usize = 10;
 
@@ -168,10 +167,25 @@ impl TaskExecutor {
                 None
             };
 
+            // Create or find an Executing agent message for this turn
+            let agent_msg_id = match self.app_state.chat_service
+                .find_executing_message_for_chat(&chat_id)
+                .await
+            {
+                Ok(Some(msg)) => msg.id,
+                _ => {
+                    let msg = self.app_state.chat_service
+                        .create_executing_agent_message(&chat_id, &task.agent_id)
+                        .await?;
+                    msg.id
+                }
+            };
+
             let result = execution::run_agent_loop(
                 &self.app_state,
                 &task.user_id,
                 &chat_id,
+                &agent_msg_id,
                 cancel_token.clone(),
                 true,
                 continuation_prompt.as_deref(),
@@ -180,14 +194,10 @@ impl TaskExecutor {
 
             match result {
                 Ok(execution::AgentLoopOutcome { response }) => match response {
-                    InferenceResponse::Completed { text, attachments, lifecycle_event, .. } => {
-                        self.save_assistant_message_if_needed(
-                            &task,
-                            &chat_id,
-                            &text,
-                            attachments,
-                        )
-                        .await;
+                    InferenceResponse::Completed { text, attachments, lifecycle_event, reasoning, .. } => {
+                        let _ = self.app_state.chat_service
+                            .complete_agent_message(&agent_msg_id, text.clone(), attachments, reasoning)
+                            .await;
 
                         if let Some(event) = lifecycle_event {
                             let _ = self.app_state.chat_service
@@ -209,35 +219,22 @@ impl TaskExecutor {
                         }
                         continue;
                     }
-                    InferenceResponse::ExternalToolPending {
-                        accumulated_text: ext_text,
-                        tool_calls_json,
-                        tool_results,
-                        external_tool,
-                        system_prompt: _,
-                    } => {
-                        let _ = self
-                            .app_state
-                            .chat_service
-                            .save_external_tool_pending(
-                                &chat_id,
-                                ext_text,
-                                tool_calls_json,
-                                &tool_results,
-                                external_tool,
-                            )
-                            .await;
-
+                    InferenceResponse::ExternalToolPending { .. } => {
+                        // Tool loop already persisted all tool executions
                         self.wait_for_resolution(&task.id, &cancel_token).await?;
                         continue;
                     }
                     InferenceResponse::Cancelled(text) => {
-                        self.handle_cancelled(&task, &chat_id, text)
-                            .await?;
+                        let _ = self.app_state.chat_service
+                            .complete_agent_message(&agent_msg_id, text, vec![], None)
+                            .await;
+                        self.handle_cancelled(&task).await?;
                         return Ok(());
                     }
                 },
                 Err(e) => {
+                    let _ = self.app_state.chat_service
+                        .fail_agent_message(&agent_msg_id).await;
                     self.handle_error(&task, &e).await?;
                     return Ok(());
                 }
@@ -409,32 +406,6 @@ impl TaskExecutor {
 
     // --- Helpers ---
 
-    async fn save_assistant_message_if_needed(
-        &self,
-        task: &Task,
-        chat_id: &str,
-        accumulated_text: &str,
-        attachments: Vec<Attachment>,
-    ) {
-        if !accumulated_text.is_empty() {
-            match self
-                .app_state
-                .chat_service
-                .save_assistant_message_with_tool_calls(
-                    chat_id,
-                    accumulated_text.to_string(),
-                    None,
-                    attachments,
-                    None,
-                )
-                .await
-            {
-                Ok(_) => tracing::debug!(task_id = %task.id, "Saved assistant message"),
-                Err(e) => tracing::error!(task_id = %task.id, error = %e, "Failed to save assistant message"),
-            }
-        }
-    }
-
     pub async fn ensure_task_chat(&self, task: &mut Task) -> Result<String, AppError> {
         if let Some(ref cid) = task.chat_id {
             return Ok(cid.clone());
@@ -483,17 +454,7 @@ impl TaskExecutor {
     pub async fn handle_cancelled(
         &self,
         task: &Task,
-        chat_id: &str,
-        accumulated_text: String,
     ) -> Result<(), AppError> {
-        if !accumulated_text.is_empty() {
-            let _ = self
-                .app_state
-                .chat_service
-                .save_assistant_message(chat_id, accumulated_text)
-                .await;
-        }
-
         self.app_state
             .task_service
             .mark_cancelled(&task.id)
@@ -663,7 +624,21 @@ pub async fn resume_or_notify(state: &AppState, user_id: &str, chat_id: &str) {
     }
 
     // No waiting executor — use the interactive path
-    if let Err(e) = crate::agent::execution::resume_agent_loop(state, user_id, chat_id).await {
+    let message_id = match state.chat_service
+        .find_executing_message_for_chat(chat_id)
+        .await
+    {
+        Ok(Some(msg)) => msg.id,
+        Ok(None) => {
+            tracing::warn!(chat_id = %chat_id, "No executing message found for resume");
+            return;
+        }
+        Err(e) => {
+            tracing::error!(error = %e, chat_id = %chat_id, "Failed to find executing message for resume");
+            return;
+        }
+    };
+    if let Err(e) = crate::agent::execution::resume_agent_loop(state, user_id, chat_id, &message_id).await {
         tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume chat");
     }
 }

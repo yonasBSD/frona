@@ -31,6 +31,10 @@ pub fn router() -> Router<AppState> {
             post(resolve_tool_message),
         )
         .route(
+            "/api/chats/{chat_id}/tool-executions/{tool_execution_id}/resolve",
+            post(resolve_tool_execution),
+        )
+        .route(
             "/api/chats/{chat_id}/cancel",
             post(cancel_generation),
         )
@@ -99,6 +103,39 @@ async fn resolve_tool_message(
     let result = state
         .chat_service
         .resolve_tool_message(&message_id, req.response.clone())
+        .await
+        .map_err(ApiError::from)?;
+
+    match result {
+        ToolResolveResult::Changed(msg) => {
+            let user_id = auth.user_id.clone();
+            let state = state.clone();
+            tokio::spawn(async move {
+                crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id).await;
+            });
+            Ok(Json(msg))
+        }
+        ToolResolveResult::AlreadyResolved(msg) => Ok(Json(msg)),
+    }
+}
+
+async fn resolve_tool_execution(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((chat_id, tool_execution_id)): Path<(String, String)>,
+    Json(req): Json<ResolveToolRequest>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    use crate::chat::service::ToolResolveResult;
+
+    state
+        .chat_service
+        .get_chat(&auth.user_id, &chat_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    let result = state
+        .chat_service
+        .resolve_tool_execution(&tool_execution_id, req.response.clone())
         .await
         .map_err(ApiError::from)?;
 

@@ -16,6 +16,7 @@ pub async fn run_agent_loop(
     state: &AppState,
     user_id: &str,
     chat_id: &str,
+    message_id: &str,
     cancel_token: CancellationToken,
     is_task: bool,
     continuation_prompt: Option<&str>,
@@ -43,10 +44,42 @@ pub async fn run_agent_loop(
         tool_registry,
         ctx: tool_ctx,
         cancel_token,
+        chat_service: state.chat_service.clone(),
+        message_id: message_id.to_string(),
     })
     .await?;
 
     Ok(AgentLoopOutcome { response })
+}
+
+/// Resume all interactive chats that were mid-inference when the server stopped.
+/// Only resumes non-task chats — task chats are handled by the task executor.
+pub async fn resume_all_chats(state: &AppState) {
+    let executing = state.chat_service.find_executing_chat_messages().await;
+
+    if executing.is_empty() {
+        return;
+    }
+
+    tracing::info!(count = executing.len(), "Resuming interrupted chats from previous run");
+
+    for msg in executing {
+        let state = state.clone();
+        let chat_id = msg.chat_id.clone();
+        let msg_id = msg.id.clone();
+        tokio::spawn(async move {
+            let user_id = match state.chat_service.find_chat(&chat_id).await {
+                Ok(Some(chat)) => chat.user_id,
+                _ => {
+                    tracing::error!(chat_id = %chat_id, "Failed to find chat for resume");
+                    return;
+                }
+            };
+            if let Err(e) = resume_agent_loop(&state, &user_id, &chat_id, &msg_id).await {
+                tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume chat");
+            }
+        });
+    }
 }
 
 /// Resume an interrupted chat (after external tool resolution, child task completion, etc.).
@@ -55,67 +88,45 @@ pub async fn resume_agent_loop(
     state: &AppState,
     user_id: &str,
     chat_id: &str,
+    message_id: &str,
 ) -> Result<(), AppError> {
     let cancel_token = state.active_sessions.register(chat_id).await;
     let event_sender = state.broadcast_service.create_event_sender(user_id, chat_id);
 
-    let result = run_agent_loop(state, user_id, chat_id, cancel_token, false, None).await;
+    let result = run_agent_loop(state, user_id, chat_id, message_id, cancel_token, false, None).await;
 
     match result {
         Ok(AgentLoopOutcome { response }) => match response {
             InferenceResponse::Completed { text, attachments, reasoning, .. } => {
-                if !text.is_empty()
-                    && let Ok(mut msg) = state
-                        .chat_service
-                        .save_assistant_message_with_tool_calls(
-                            chat_id,
-                            text,
-                            None,
-                            attachments,
-                            reasoning,
-                        )
-                        .await
+                if let Ok(mut msg) = state
+                    .chat_service
+                    .complete_agent_message(message_id, text, attachments, reasoning)
+                    .await
                 {
                     presign_response_by_user_id(&state.presign_service, &mut msg, user_id).await;
                     event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
                 }
             }
             InferenceResponse::Cancelled(text) => {
-                if !text.is_empty() {
-                    let _ = state
-                        .chat_service
-                        .save_assistant_message(chat_id, text)
-                        .await;
-                }
+                let _ = state
+                    .chat_service
+                    .complete_agent_message(message_id, text, vec![], None)
+                    .await;
                 event_sender.send_kind(BroadcastEventKind::InferenceCancelled {
                     reason: "Cancelled".to_string(),
                 });
             }
             InferenceResponse::ExternalToolPending {
-                accumulated_text,
-                tool_calls_json,
-                tool_results,
-                external_tool,
+                tool_execution,
                 system_prompt: _,
+                ..
             } => {
-                if let Ok(mut msg) = state
-                    .chat_service
-                    .save_external_tool_pending(
-                        chat_id,
-                        accumulated_text,
-                        tool_calls_json,
-                        &tool_results,
-                        external_tool,
-                    )
-                    .await
-                {
-                    presign_response_by_user_id(&state.presign_service, &mut msg, user_id).await;
-                    event_sender.send_kind(BroadcastEventKind::ToolMessage { message: msg });
-                }
+                event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution });
             }
         },
         Err(e) => {
             tracing::error!(error = %e, chat_id = %chat_id, "Resume chat inference failed");
+            let _ = state.chat_service.fail_agent_message(message_id).await;
             event_sender.send_kind(BroadcastEventKind::InferenceError {
                 error: e.to_string(),
             });

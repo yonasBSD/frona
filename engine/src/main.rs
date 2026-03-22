@@ -84,6 +84,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let app_state = state.clone();
         tokio::spawn(async move {
+            frona::agent::execution::resume_all_chats(&app_state).await;
+        });
+    }
+
+    {
+        let app_state = state.clone();
+        tokio::spawn(async move {
             if let Err(e) = frona::app::supervisor::restore_and_supervise_apps(app_state).await {
                 tracing::error!(error = %e, "App restoration failed");
             }
