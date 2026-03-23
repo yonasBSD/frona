@@ -45,10 +45,6 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE INDEX IF NOT EXISTS idx_insight_agent ON TABLE insight COLUMNS agent_id;
         DEFINE INDEX IF NOT EXISTS idx_insight_user ON TABLE insight COLUMNS user_id;
 
-        DEFINE TABLE IF NOT EXISTS skill SCHEMALESS;
-        DEFINE INDEX IF NOT EXISTS idx_skill_agent ON TABLE skill COLUMNS agent_id;
-        DEFINE INDEX IF NOT EXISTS idx_skill_agent_name ON TABLE skill COLUMNS agent_id, name UNIQUE;
-
         DEFINE TABLE IF NOT EXISTS keypair SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_keypair_owner ON TABLE keypair COLUMNS owner UNIQUE;
 
@@ -152,6 +148,7 @@ pub async fn seed_config_agents(db: &Surreal<Db>, agent_service: &AgentService, 
                 model_group = $model_group,
                 enabled = true,
                 tools = $tools,
+                skills = [],
                 identity = {},
                 created_at = time::now(),
                 updated_at = time::now()"
