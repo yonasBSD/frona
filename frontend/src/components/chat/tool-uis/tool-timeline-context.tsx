@@ -86,7 +86,10 @@ export function ToolTimelineProvider({
   useEffect(() => {
     if (isRunning && message.isLast) {
       wasRunning.current = true;
-      if (!userToggled) setCollapsed(false);
+      if (!userToggled) {
+        const timer = setTimeout(() => setCollapsed(false), 0);
+        return () => clearTimeout(timer);
+      }
       return;
     }
     if (wasRunning.current && totalTools > 0 && !userToggled) {

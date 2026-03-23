@@ -143,7 +143,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
     } finally {
       setInstalling(null);
     }
-  }, [agentId, preview]);
+  }, [agentId, preview, loadInstalled]);
 
   const handleUninstall = useCallback(async (name: string) => {
     setUninstalling(name);
@@ -162,7 +162,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
     } finally {
       setUninstalling(null);
     }
-  }, []);
+  }, [loadInstalled]);
 
   const handleBack = useCallback(() => {
     setSelectedName(null);
