@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { api, API_URL } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth";
 import { useFronaRuntime } from "@/lib/assistant-runtime";
+import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
 import { FronaComposer } from "@/components/chat/frona-composer";
-import type { AppResponse, ChatResponse } from "@/lib/types";
+import type { AppResponse, Attachment, ChatResponse } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
   running: "bg-success",
@@ -127,18 +129,28 @@ function AppCard({
 
 function HomeComposer() {
   const router = useRouter();
+  const { user } = useAuth();
   const { addStandaloneChat } = useNavigation();
+  const { setPendingMessage } = useSession();
+  const { runtime } = useFronaRuntime({ agentId: "system" });
+  const firstName = user?.name?.split(" ")[0];
 
-  const onChatCreated = useCallback((chat: ChatResponse) => {
-    addStandaloneChat(chat);
-    router.push(`/chat?id=${chat.id}`);
-  }, [addStandaloneChat, router]);
-
-  const { runtime } = useFronaRuntime({ agentId: "system", onChatCreated });
+  const handleSend = useCallback((content: string, attachments?: Attachment[]) => {
+    api.post<ChatResponse>("/api/chats", { agent_id: "system" }).then((chat) => {
+      addStandaloneChat(chat);
+      setPendingMessage(content, attachments);
+      router.push(`/chat?id=${chat.id}`);
+    });
+  }, [addStandaloneChat, setPendingMessage, router]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <FronaComposer placeholder="What's on your mind?" />
+      {firstName && (
+        <h1 className="text-2xl font-semibold text-text-primary mb-4">
+          Hello, {firstName}
+        </h1>
+      )}
+      <FronaComposer placeholder="What's on your mind?" onSend={handleSend} />
     </AssistantRuntimeProvider>
   );
 }

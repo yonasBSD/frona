@@ -62,7 +62,7 @@ function SetupComplete() {
       // Server may drop connection during restart
     }
     setTimeout(() => {
-      router.push("/chat");
+      router.push("/home");
     }, 3000);
   };
 
