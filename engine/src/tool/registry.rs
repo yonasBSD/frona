@@ -139,7 +139,7 @@ pub fn build_tool_registry(
     )));
 
     registry.register(Arc::new(SkillTool::new(
-        state.skill_resolver.clone(),
+        state.skill_service.clone(),
         prompts.clone(),
     )));
 
@@ -239,7 +239,7 @@ pub fn build_tool_registry(
             registry.register(Arc::new(CliTool::new(
                 tool_config.clone(),
                 state.sandbox_manager.clone(),
-                state.skill_resolver.clone(),
+                state.skill_service.clone(),
             )));
         }
     }
@@ -324,6 +324,7 @@ mod tests {
                 model_group: "primary".into(),
                 enabled: true,
                 tools: vec![],
+                skills: vec![],
                 sandbox_config: None,
                 max_concurrent_tasks: None,
                 avatar: None,

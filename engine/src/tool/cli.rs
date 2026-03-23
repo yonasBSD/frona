@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::agent::prompt::PromptLoader;
-use crate::agent::skill::resolver::SkillResolver;
+use crate::agent::skill::service::SkillService;
 use crate::core::error::AppError;
 
 use super::sandbox::SandboxManager;
@@ -29,19 +29,19 @@ pub struct CliToolConfig {
 pub struct CliTool {
     config: CliToolConfig,
     sandbox_manager: Arc<SandboxManager>,
-    skill_resolver: SkillResolver,
+    skill_service: SkillService,
 }
 
 impl CliTool {
     pub fn new(
         config: CliToolConfig,
         sandbox_manager: Arc<SandboxManager>,
-        skill_resolver: SkillResolver,
+        skill_service: SkillService,
     ) -> Self {
         Self {
             config,
             sandbox_manager,
-            skill_resolver,
+            skill_service,
         }
     }
 
@@ -110,12 +110,12 @@ impl AgentTool for CliTool {
         let defaults = ctx.agent.sandbox_config.clone().unwrap_or_default();
 
         let skill_dirs: Vec<(String, String)> = self
-            .skill_resolver
-            .list(agent_id)
+            .skill_service
+            .list(agent_id, &ctx.agent.skills)
             .await
             .into_iter()
             .filter_map(|s| {
-                self.skill_resolver
+                self.skill_service
                     .skill_dir_path(agent_id, &s.name)
                     .map(|p| {
                         let abs = std::fs::canonicalize(&p)
@@ -291,18 +291,21 @@ mod tests {
         assert!(configs.iter().any(|c| c.name == "python"));
     }
 
-    async fn mock_skill_resolver() -> SkillResolver {
-        use surrealdb::Surreal;
-        use surrealdb::engine::local::Mem;
-        use crate::db::repo::generic::SurrealRepo;
-        use crate::core::config::Config;
+    fn mock_skill_service() -> SkillService {
+        use crate::agent::skill::registry::SkillRegistryClient;
+        use crate::agent::skill::resolver::SkillResolver;
+        use crate::core::config::{Config, CacheConfig};
 
-        let db = Surreal::new::<Mem>(()).await.unwrap();
-        db.use_ns("test").use_db("test").await.unwrap();
-        let skill_repo = SurrealRepo::new(db);
         let config = Config::default();
         let storage = crate::storage::StorageService::new(&config);
-        SkillResolver::new(skill_repo, "/tmp/frona_test_config", storage)
+        let resolver = SkillResolver::new("/tmp/frona_test_config", storage.clone());
+        SkillService::new(
+            SkillRegistryClient::new(),
+            resolver,
+            storage,
+            "/tmp/frona_test_skills",
+            &CacheConfig::default(),
+        )
     }
 
     #[tokio::test]
@@ -326,8 +329,8 @@ mod tests {
         };
 
         let wm = Arc::new(SandboxManager::new("/tmp/test", false));
-        let resolver = mock_skill_resolver().await;
-        let tool = CliTool::new(config, wm, resolver);
+        let service = mock_skill_service();
+        let tool = CliTool::new(config, wm, service);
         let defs = tool.definitions();
 
         assert_eq!(defs.len(), 1);
@@ -355,6 +358,7 @@ mod tests {
                 model_group: "primary".into(),
                 enabled: true,
                 tools: vec![],
+                skills: vec![],
                 sandbox_config: None,
                 max_concurrent_tasks: None,
                 avatar: None,
@@ -405,8 +409,8 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
 
         let wm = Arc::new(SandboxManager::new(&tmp, false));
-        let resolver = mock_skill_resolver().await;
-        let tool = CliTool::new(config, wm, resolver);
+        let service = mock_skill_service();
+        let tool = CliTool::new(config, wm, service);
         let ctx = mock_context();
 
         let result = tool

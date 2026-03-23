@@ -49,8 +49,8 @@ impl ChatSessionContext {
             .await?;
 
         let skill_summaries: Vec<(String, String)> = state
-            .skill_resolver
-            .list(&chat.agent_id)
+            .skill_service
+            .list(&chat.agent_id, &agent_config.skills)
             .await
             .into_iter()
             .map(|s| (s.name, s.description))

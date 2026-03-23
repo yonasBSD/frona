@@ -1,21 +1,21 @@
 use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
-use crate::agent::skill::resolver::SkillResolver;
+use crate::agent::skill::service::SkillService;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
 use super::{InferenceContext, ToolOutput};
 
 pub struct SkillTool {
-    skill_resolver: SkillResolver,
+    skill_service: SkillService,
     prompts: PromptLoader,
 }
 
 impl SkillTool {
-    pub fn new(skill_resolver: SkillResolver, prompts: PromptLoader) -> Self {
+    pub fn new(skill_service: SkillService, prompts: PromptLoader) -> Self {
         Self {
-            skill_resolver,
+            skill_service,
             prompts,
         }
     }
@@ -29,7 +29,7 @@ impl SkillTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Validation("Missing 'name' parameter".into()))?;
 
-        match self.skill_resolver.resolve(&ctx.agent.id, name).await {
+        match self.skill_service.resolve(&ctx.agent.id, &ctx.agent.skills, name).await {
             Some(skill) => Ok(ToolOutput::text(skill.content)),
             None => Ok(ToolOutput::text(format!(
                 "Skill '{name}' not found. Check the available skills in your system prompt."
