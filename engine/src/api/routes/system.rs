@@ -28,9 +28,14 @@ async fn version_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {
     axum::Json(json!({"version": env!("CARGO_PKG_VERSION")}))
 }
 
-async fn restart_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {
-    tokio::spawn(async {
+async fn restart_handler(
+    _auth: AuthUser,
+    State(state): State<AppState>,
+) -> axum::Json<serde_json::Value> {
+    tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tracing::info!("Restart requested, draining in-flight work...");
+        crate::core::shutdown::graceful_drain(&state).await;
         re_exec_self();
     });
     axum::Json(json!({"status": "restarting"}))
