@@ -29,6 +29,7 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
             workspaces_path: format!("{base}/workspaces"),
             files_path: format!("{base}/files"),
             shared_config_dir: format!("{base}/config"),
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -106,6 +107,7 @@ async fn twilio_callback_valid_token_returns_xml() {
             workspaces_path: format!("{base}/workspaces"),
             files_path: format!("{base}/files"),
             shared_config_dir: format!("{base}/config"),
+            ..Default::default()
         },
         // voice provider not set — we just test the JWT decode + TwiML generation path
         ..Default::default()

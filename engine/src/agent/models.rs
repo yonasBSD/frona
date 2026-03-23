@@ -47,6 +47,8 @@ pub struct Agent {
     #[serde(default)]
     pub max_concurrent_tasks: Option<u32>,
     #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
     pub avatar: Option<String>,
     #[serde(default)]
     pub identity: BTreeMap<String, String>,
@@ -64,6 +66,7 @@ pub struct CreateAgentRequest {
     pub description: String,
     pub model_group: Option<String>,
     pub tools: Option<Vec<String>>,
+    pub skills: Option<Vec<String>>,
     pub sandbox_config: Option<SandboxSettings>,
 }
 
@@ -74,6 +77,7 @@ pub struct UpdateAgentRequest {
     pub model_group: Option<String>,
     pub enabled: Option<bool>,
     pub tools: Option<Vec<String>>,
+    pub skills: Option<Vec<String>>,
     pub sandbox_config: Option<SandboxSettings>,
 }
 
@@ -85,6 +89,7 @@ pub struct AgentResponse {
     pub model_group: String,
     pub enabled: bool,
     pub tools: Vec<String>,
+    pub skills: Vec<String>,
     pub sandbox_config: Option<SandboxSettings>,
     pub avatar: Option<String>,
     pub identity: BTreeMap<String, String>,
@@ -110,6 +115,7 @@ impl From<Agent> for AgentResponse {
             model_group: agent.model_group,
             enabled: agent.enabled,
             tools: normalize_tools(agent.tools),
+            skills: agent.skills,
             sandbox_config: agent.sandbox_config,
             avatar: agent.avatar,
             identity: agent.identity,

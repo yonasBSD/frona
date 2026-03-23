@@ -28,6 +28,7 @@ fn test_builder(db: &Surreal<Db>) -> DefaultConversationBuilder {
             workspaces_path: format!("{base}/workspaces"),
             files_path: format!("{base}/files"),
             shared_config_dir: format!("{base}/config"),
+            ..Default::default()
         },
         ..Default::default()
     };

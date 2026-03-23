@@ -47,6 +47,7 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
             workspaces_path: format!("{base}/workspaces"),
             files_path: format!("{base}/files"),
             shared_config_dir: format!("{base}/config"),
+            ..Default::default()
         },
         ..Default::default()
     };

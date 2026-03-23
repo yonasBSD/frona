@@ -59,6 +59,7 @@ impl AgentService {
             model_group: req.model_group.unwrap_or_else(|| "primary".to_string()),
             enabled: true,
             tools,
+            skills: req.skills.unwrap_or_default(),
             sandbox_config: req.sandbox_config,
             max_concurrent_tasks: None,
             avatar: None,
@@ -141,6 +142,9 @@ impl AgentService {
         }
         if let Some(tools) = req.tools {
             agent.tools = tools;
+        }
+        if let Some(skills) = req.skills {
+            agent.skills = skills;
         }
         if let Some(sandbox_config) = req.sandbox_config {
             agent.sandbox_config = Some(sandbox_config);

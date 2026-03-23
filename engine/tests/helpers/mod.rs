@@ -263,6 +263,7 @@ pub fn mock_context() -> InferenceContext {
             model_group: "primary".into(),
             enabled: true,
             tools: vec![],
+            skills: vec![],
             sandbox_config: None,
             max_concurrent_tasks: None,
             avatar: None,
@@ -430,6 +431,7 @@ pub async fn test_chat_service() -> frona::chat::service::ChatService {
             workspaces_path: format!("{base}/workspaces"),
             files_path: format!("{base}/files"),
             shared_config_dir: format!("{base}/config"),
+            ..Default::default()
         },
         ..Default::default()
     };

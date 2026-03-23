@@ -45,6 +45,7 @@ fn make_memory_service(db: Surreal<Db>) -> MemoryService {
                 workspaces_path: "/nonexistent".to_string(),
                 files_path: "/nonexistent".to_string(),
                 shared_config_dir: "/nonexistent".to_string(),
+                ..Default::default()
             },
             ..Default::default()
         }),

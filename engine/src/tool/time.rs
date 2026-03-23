@@ -75,7 +75,7 @@ mod tests {
             crate::agent::models::Agent {
                 id: "a".into(), user_id: None, name: "a".into(),
                 description: String::new(), model_group: "p".into(), enabled: true,
-                tools: vec![], sandbox_config: None, max_concurrent_tasks: None,
+                tools: vec![], skills: vec![], sandbox_config: None, max_concurrent_tasks: None,
                 avatar: None, identity: Default::default(),
                 heartbeat_interval: None, next_heartbeat_at: None,
                 heartbeat_chat_id: None,

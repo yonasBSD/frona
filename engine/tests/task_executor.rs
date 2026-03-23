@@ -46,6 +46,7 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
             workspaces_path: format!("{base}/workspaces"),
             files_path: format!("{base}/files"),
             shared_config_dir: format!("{base}/config"),
+            ..Default::default()
         },
         ..Default::default()
     }

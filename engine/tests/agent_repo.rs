@@ -25,6 +25,7 @@ fn test_agent(user_id: &str) -> Agent {
         model_group: "primary".to_string(),
         enabled: true,
         tools: vec!["browser".to_string()],
+        skills: vec![],
         sandbox_config: None,
         max_concurrent_tasks: None,
         avatar: None,
@@ -139,6 +140,7 @@ async fn test_seed_config_agents_visible_in_find_by_user_id() {
             workspaces_path: "/tmp/frona_test_seed_visible".to_string(),
             files_path: "/tmp/frona_test_seed_visible/files".to_string(),
             shared_config_dir: shared_dir.to_string_lossy().to_string(),
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -203,6 +205,7 @@ async fn agent_service_update_invalidates_cache() {
             model_group: None,
             enabled: None,
             tools: None,
+            skills: None,
             sandbox_config: None,
         },
     )
