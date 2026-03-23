@@ -11,7 +11,7 @@ import {
 } from "react";
 import { useMessage } from "@assistant-ui/react";
 import { useThreadIsRunning } from "@assistant-ui/core/react";
-import { ChevronRightIcon, ChevronUpIcon, WrenchIcon } from "lucide-react";
+import { ChevronRightIcon, ChevronUpIcon, WrenchScrewdriverIcon } from "@heroicons/react/24/outline";
 import { AnimatePresence, motion } from "motion/react";
 
 const MAX_VISIBLE = 6;
@@ -164,7 +164,7 @@ export function ToolTimelineProvider({
             onClick={handleToggle}
             className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-secondary transition-colors mt-1"
           >
-            <WrenchIcon className="h-3 w-3" />
+            <WrenchScrewdriverIcon className="h-3 w-3" />
             <span>
               Used {totalTools} tool{totalTools !== 1 ? "s" : ""}
             </span>
@@ -181,7 +181,7 @@ export function ToolTimelineProvider({
             onClick={handleToggle}
             className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-secondary transition-colors mt-1"
           >
-            <WrenchIcon className="h-3 w-3" />
+            <WrenchScrewdriverIcon className="h-3 w-3" />
             <span>
               Hide {totalTools} tool{totalTools !== 1 ? "s" : ""}
             </span>

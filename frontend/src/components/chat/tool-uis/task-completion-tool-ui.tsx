@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import { useSession } from "@/lib/session-context";
-import { ArrowUpRightIcon, CheckCircleIcon, XCircleIcon } from "lucide-react";
+import { ArrowTopRightOnSquareIcon, CheckCircleIcon, XCircleIcon } from "@heroicons/react/24/outline";
 
 interface TaskCompletionArgs {
   task_id: string;
@@ -24,7 +24,7 @@ function TaskCompletionContent({ args }: { args: TaskCompletionArgs }) {
         className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-secondary px-4 py-2 text-sm text-text-secondary my-2 cursor-pointer hover:bg-surface-tertiary transition-colors"
       >
         Ask Follow-up Questions
-        <ArrowUpRightIcon className="h-3.5 w-3.5" />
+        <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
       </button>
     );
   }
