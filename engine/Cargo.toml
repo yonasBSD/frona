@@ -55,6 +55,8 @@ minijinja = "2"
 schemars = { version = "0.8", features = ["chrono"] }
 tempfile = "3"
 ignore = "0.4.25"
+agent-skills = "0.2"
+notify = "8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"

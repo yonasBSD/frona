@@ -1,0 +1,640 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::agent::config::parse_frontmatter;
+use crate::core::config::CacheConfig;
+use crate::core::error::AppError;
+use crate::storage::StorageService;
+
+use super::registry::SkillRegistryClient;
+use super::resolver::{ResolvedSkill, SkillResolver, SkillSummary};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillListItem {
+    pub name: String,
+    pub description: String,
+    pub source: Option<String>,
+    pub installed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillSearchResult {
+    pub name: String,
+    pub repo: String,
+    pub avatar_url: String,
+    pub installs: u64,
+    pub installed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoBrowseResult {
+    pub name: String,
+    pub sha: String,
+    pub installed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillPreview {
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    pub metadata: HashMap<String, String>,
+    pub repo: String,
+    pub avatar_url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateCheckResult {
+    pub name: String,
+    pub repo: String,
+    pub has_update: bool,
+    pub current_sha: String,
+    pub latest_sha: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillsLock {
+    version: u32,
+    skills: HashMap<String, SkillLockEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillLockEntry {
+    source: String,
+    sha: String,
+    installed_at: DateTime<Utc>,
+}
+
+impl Default for SkillsLock {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            skills: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SkillService {
+    registry: SkillRegistryClient,
+    resolver: SkillResolver,
+    storage: StorageService,
+    installed_dir: PathBuf,
+    list_cache: Arc<moka::future::Cache<String, Vec<SkillSummary>>>,
+    resolve_cache: Arc<moka::future::Cache<String, Option<ResolvedSkill>>>,
+}
+
+impl SkillService {
+    pub fn new(
+        registry: SkillRegistryClient,
+        resolver: SkillResolver,
+        storage: StorageService,
+        installed_dir: impl Into<PathBuf>,
+        cache_config: &CacheConfig,
+    ) -> Self {
+        let list_cache = Arc::new(
+            moka::future::Cache::builder()
+                .max_capacity(cache_config.entity_max_capacity)
+                .time_to_live(std::time::Duration::from_secs(cache_config.entity_ttl_secs))
+                .build(),
+        );
+        let resolve_cache = Arc::new(
+            moka::future::Cache::builder()
+                .max_capacity(cache_config.entity_max_capacity)
+                .time_to_live(std::time::Duration::from_secs(cache_config.entity_ttl_secs))
+                .build(),
+        );
+
+        Self {
+            registry,
+            resolver,
+            storage,
+            installed_dir: installed_dir.into(),
+            list_cache,
+            resolve_cache,
+        }
+    }
+
+    /// Start filesystem watcher on skill directories.
+    /// Best-effort: logs warning if watcher fails to start.
+    pub fn start_watcher(&self) {
+        use notify::{RecursiveMode, Watcher};
+
+        let list_cache = self.list_cache.clone();
+        let resolve_cache = self.resolve_cache.clone();
+
+        let mut dirs_to_watch = vec![self.installed_dir.clone()];
+        dirs_to_watch.push(self.resolver.builtin_skills_dir());
+
+        // Use a dedicated OS thread since notify's recommended_watcher
+        // uses std::sync::mpsc which blocks the thread.
+        std::thread::spawn(move || {
+            let (tx, rx) = std::sync::mpsc::channel();
+
+            let mut watcher = match notify::recommended_watcher(tx) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to create filesystem watcher for skills, relying on TTL-based cache expiry");
+                    return;
+                }
+            };
+
+            for dir in &dirs_to_watch {
+                if dir.exists()
+                    && let Err(e) = watcher.watch(dir, RecursiveMode::Recursive)
+                {
+                    tracing::warn!(dir = %dir.display(), error = %e, "Failed to watch skill directory");
+                }
+            }
+
+            tracing::info!("Skill filesystem watcher started");
+
+            for event in rx {
+                match event {
+                    Ok(_) => {
+                        // invalidate_all() is synchronous on moka::future::Cache
+                        list_cache.invalidate_all();
+                        resolve_cache.invalidate_all();
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Skill filesystem watcher error");
+                    }
+                }
+            }
+        });
+    }
+
+    // -- Cached resolver delegation --
+
+    pub async fn list(&self, agent_id: &str, agent_skills: &[String]) -> Vec<SkillSummary> {
+        let cache_key = format!("{agent_id}:{}", skills_hash(agent_skills));
+        if let Some(cached) = self.list_cache.get(&cache_key).await {
+            return cached;
+        }
+        let result = self.resolver.list(agent_id, agent_skills);
+        self.list_cache.insert(cache_key, result.clone()).await;
+        result
+    }
+
+    pub async fn resolve(&self, agent_id: &str, agent_skills: &[String], name: &str) -> Option<ResolvedSkill> {
+        let cache_key = format!("{agent_id}:{}:{name}", skills_hash(agent_skills));
+        if let Some(cached) = self.resolve_cache.get(&cache_key).await {
+            return cached;
+        }
+        let result = self.resolver.resolve(agent_id, agent_skills, name);
+        self.resolve_cache.insert(cache_key, result.clone()).await;
+        result
+    }
+
+    pub fn skill_dir_path(&self, agent_id: &str, name: &str) -> Option<PathBuf> {
+        self.resolver.skill_dir_path(agent_id, name)
+    }
+
+    // -- Remote operations (search, browse, preview) --
+
+    pub async fn search(&self, query: &str) -> Result<Vec<SkillSearchResult>, AppError> {
+        let results = self.registry.search(query, 20).await?;
+        let lock = self.read_lock();
+
+        Ok(results.into_iter().map(|r| {
+            let installed = lock.skills.get(&r.name)
+                .is_some_and(|entry| entry.source == r.repo);
+            SkillSearchResult {
+                name: r.name,
+                repo: r.repo,
+                avatar_url: r.avatar_url,
+                installs: r.installs,
+                installed,
+            }
+        }).collect())
+    }
+
+    pub async fn browse_repo(&self, owner_repo: &str) -> Result<Vec<RepoBrowseResult>, AppError> {
+        let entries = self.registry.browse_repo(owner_repo).await?;
+        let lock = self.read_lock();
+
+        Ok(entries.into_iter().map(|e| {
+            let installed = lock.skills.contains_key(&e.name);
+            RepoBrowseResult {
+                name: e.name,
+                sha: e.sha,
+                installed,
+            }
+        }).collect())
+    }
+
+    pub async fn preview(&self, repo: &str, skill_name: &str) -> Result<SkillPreview, AppError> {
+        // Try reading from local installed dir first
+        let local_content = self.installed_dir.join(skill_name).join("SKILL.md");
+        let content = if local_content.exists() {
+            std::fs::read_to_string(&local_content)
+                .map_err(|e| AppError::Internal(format!("Failed to read installed SKILL.md: {e}")))?
+        } else {
+            self.registry.fetch_skill(repo, skill_name).await?.content
+        };
+
+        let owner = repo.split('/').next().unwrap_or(repo);
+
+        let parsed = agent_skills::Skill::parse(&content)
+            .map_err(|e| AppError::Validation(format!("Invalid SKILL.md: {e}")))?;
+
+        let mut metadata = HashMap::new();
+        if let Some(license) = parsed.frontmatter().license() {
+            metadata.insert("license".to_string(), license.to_string());
+        }
+        if let Some(compat) = parsed.frontmatter().compatibility() {
+            metadata.insert("compatibility".to_string(), compat.as_str().to_string());
+        }
+        if let Some(meta) = parsed.frontmatter().metadata() {
+            for (k, v) in meta.iter() {
+                metadata.insert(k.to_string(), v.to_string());
+            }
+        }
+
+        Ok(SkillPreview {
+            name: parsed.name().as_str().to_string(),
+            description: parsed.description().as_str().to_string(),
+            body: parsed.body().to_string(),
+            metadata,
+            repo: repo.to_string(),
+            avatar_url: format!("https://github.com/{owner}.png"),
+        })
+    }
+
+    // -- Install / Uninstall --
+
+    pub async fn install(&self, repo: &str, skill_name: &str, agent_id: Option<&str>) -> Result<SkillListItem, AppError> {
+        let fetched = self.registry.fetch_skill(repo, skill_name).await?;
+
+        if let Some(aid) = agent_id {
+            // Install to agent workspace
+            let ws = self.storage.agent_workspace(aid);
+            let skill_base = format!("skills/{}", &fetched.name);
+            ws.write(&format!("{skill_base}/SKILL.md"), &fetched.content)?;
+            for file in &fetched.files {
+                ws.write_bytes(&format!("{skill_base}/{}", file.path), &file.content)?;
+            }
+
+            self.invalidate_caches().await;
+
+            return Ok(SkillListItem {
+                name: fetched.name,
+                description: fetched.description,
+                source: Some(repo.to_string()),
+                installed_at: Some(Utc::now()),
+            });
+        }
+
+        // Install to shared installed dir
+        let skill_dir = self.installed_dir.join(&fetched.name);
+        std::fs::create_dir_all(&skill_dir)
+            .map_err(|e| AppError::Internal(format!("Failed to create skill directory: {e}")))?;
+
+        std::fs::write(skill_dir.join("SKILL.md"), &fetched.content)
+            .map_err(|e| AppError::Internal(format!("Failed to write SKILL.md: {e}")))?;
+
+        for file in &fetched.files {
+            let file_path = skill_dir.join(&file.path);
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| AppError::Internal(format!("Failed to create directory: {e}")))?;
+            }
+            std::fs::write(&file_path, &file.content)
+                .map_err(|e| AppError::Internal(format!("Failed to write {}: {e}", file.path)))?;
+        }
+
+        let now = Utc::now();
+        let mut lock = self.read_lock();
+        lock.skills.insert(fetched.name.clone(), SkillLockEntry {
+            source: repo.to_string(),
+            sha: fetched.sha,
+            installed_at: now,
+        });
+        self.write_lock(&lock)?;
+
+        self.invalidate_caches().await;
+
+        Ok(SkillListItem {
+            name: fetched.name,
+            description: fetched.description,
+            source: Some(repo.to_string()),
+            installed_at: Some(now),
+        })
+    }
+
+    pub fn list_installed(&self) -> Result<Vec<SkillListItem>, AppError> {
+        let lock = self.read_lock();
+        let mut items = Vec::new();
+
+        let Ok(entries) = std::fs::read_dir(&self.installed_dir) else {
+            return Ok(items);
+        };
+
+        for entry in entries.flatten() {
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+
+            let name = entry.file_name().to_string_lossy().to_string();
+            let skill_md = entry.path().join("SKILL.md");
+
+            if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                let parsed = parse_frontmatter(&content);
+                let description = parsed.metadata.get("description").cloned().unwrap_or_default();
+                let lock_entry = lock.skills.get(&name);
+
+                items.push(SkillListItem {
+                    name,
+                    description,
+                    source: lock_entry.map(|e| e.source.clone()),
+                    installed_at: lock_entry.map(|e| e.installed_at),
+                });
+            }
+        }
+
+        Ok(items)
+    }
+
+    pub async fn uninstall(&self, name: &str) -> Result<(), AppError> {
+        let skill_dir = self.installed_dir.join(name);
+        if !skill_dir.exists() {
+            return Err(AppError::NotFound(format!("Skill '{name}' is not installed")));
+        }
+
+        std::fs::remove_dir_all(&skill_dir)
+            .map_err(|e| AppError::Internal(format!("Failed to remove skill directory: {e}")))?;
+
+        let mut lock = self.read_lock();
+        lock.skills.remove(name);
+        self.write_lock(&lock)?;
+
+        self.invalidate_caches().await;
+
+        Ok(())
+    }
+
+    pub async fn check_updates(&self) -> Result<Vec<UpdateCheckResult>, AppError> {
+        let lock = self.read_lock();
+
+        let mut repos: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        for (name, entry) in &lock.skills {
+            repos.entry(entry.source.clone())
+                .or_default()
+                .push((name.clone(), entry.sha.clone()));
+        }
+
+        let mut results = Vec::new();
+
+        for (repo, skills) in repos {
+            match self.registry.get_tree_shas(&repo).await {
+                Ok(shas) => {
+                    for (name, current_sha) in skills {
+                        let latest_sha = shas.get(&name).cloned().unwrap_or_default();
+                        results.push(UpdateCheckResult {
+                            has_update: !latest_sha.is_empty() && latest_sha != current_sha,
+                            name,
+                            repo: repo.clone(),
+                            current_sha,
+                            latest_sha,
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(repo = %repo, error = %e, "Failed to check updates for repo");
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    // -- Private helpers --
+
+    async fn invalidate_caches(&self) {
+        self.list_cache.invalidate_all();
+        self.resolve_cache.invalidate_all();
+        self.list_cache.run_pending_tasks().await;
+        self.resolve_cache.run_pending_tasks().await;
+    }
+
+    fn read_lock(&self) -> SkillsLock {
+        let lock_path = self.installed_dir.join("skills-lock.json");
+        std::fs::read_to_string(&lock_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    fn write_lock(&self, lock: &SkillsLock) -> Result<(), AppError> {
+        std::fs::create_dir_all(&self.installed_dir)
+            .map_err(|e| AppError::Internal(format!("Failed to create skills directory: {e}")))?;
+
+        let lock_path = self.installed_dir.join("skills-lock.json");
+        let json = serde_json::to_string_pretty(lock)
+            .map_err(|e| AppError::Internal(format!("Failed to serialize lock file: {e}")))?;
+
+        std::fs::write(&lock_path, json)
+            .map_err(|e| AppError::Internal(format!("Failed to write lock file: {e}")))?;
+
+        Ok(())
+    }
+}
+
+fn skills_hash(skills: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    skills.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lock_file_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = StorageService::new(&crate::core::config::Config::default());
+        let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
+        let service = SkillService::new(
+            SkillRegistryClient::new(),
+            resolver,
+            storage,
+            tmp.path(),
+            &CacheConfig::default(),
+        );
+
+        let mut lock = SkillsLock::default();
+        lock.skills.insert("test-skill".to_string(), SkillLockEntry {
+            source: "owner/repo".to_string(),
+            sha: "abc123".to_string(),
+            installed_at: Utc::now(),
+        });
+
+        service.write_lock(&lock).unwrap();
+        let read_back = service.read_lock();
+
+        assert_eq!(read_back.version, 1);
+        assert!(read_back.skills.contains_key("test-skill"));
+        assert_eq!(read_back.skills["test-skill"].source, "owner/repo");
+    }
+
+    #[test]
+    fn test_list_installed_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = StorageService::new(&crate::core::config::Config::default());
+        let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
+        let service = SkillService::new(
+            SkillRegistryClient::new(),
+            resolver,
+            storage,
+            tmp.path(),
+            &CacheConfig::default(),
+        );
+        let result = service.list_installed().unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_list_installed_with_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: test-skill\ndescription: A test skill\n---\nContent here\n").unwrap();
+
+        let storage = StorageService::new(&crate::core::config::Config::default());
+        let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
+        let service = SkillService::new(
+            SkillRegistryClient::new(),
+            resolver,
+            storage,
+            tmp.path(),
+            &CacheConfig::default(),
+        );
+        let result = service.list_installed().unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "test-skill");
+        assert_eq!(result[0].description, "A test skill");
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_removes_dir_and_lock_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: test-skill\ndescription: Test\n---\n").unwrap();
+
+        let storage = StorageService::new(&crate::core::config::Config::default());
+        let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
+        let service = SkillService::new(
+            SkillRegistryClient::new(),
+            resolver,
+            storage,
+            tmp.path(),
+            &CacheConfig::default(),
+        );
+
+        let mut lock = SkillsLock::default();
+        lock.skills.insert("test-skill".to_string(), SkillLockEntry {
+            source: "owner/repo".to_string(),
+            sha: "abc".to_string(),
+            installed_at: Utc::now(),
+        });
+        service.write_lock(&lock).unwrap();
+
+        service.uninstall("test-skill").await.unwrap();
+
+        assert!(!skill_dir.exists());
+        let lock_after = service.read_lock();
+        assert!(!lock_after.skills.contains_key("test-skill"));
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = StorageService::new(&crate::core::config::Config::default());
+        let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
+        let service = SkillService::new(
+            SkillRegistryClient::new(),
+            resolver,
+            storage,
+            tmp.path(),
+            &CacheConfig::default(),
+        );
+        let result = service.uninstall("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_skills_hash_deterministic() {
+        let a = skills_hash(&["foo".to_string(), "bar".to_string()]);
+        let b = skills_hash(&["foo".to_string(), "bar".to_string()]);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_skills_hash_different_for_different_input() {
+        let a = skills_hash(&["foo".to_string()]);
+        let b = skills_hash(&["bar".to_string()]);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_agent_skills_parse_inline_description() {
+        let content = "---\nname: test\ndescription: A simple description.\n---\nBody\n";
+        let skill = agent_skills::Skill::parse(content).unwrap();
+        assert_eq!(skill.description().as_str(), "A simple description.");
+        assert!(skill.body().contains("Body"));
+    }
+
+    #[test]
+    fn test_agent_skills_parse_folded_scalar_description() {
+        let content = "\
+---
+name: test
+description: >
+  First paragraph about the skill.
+
+  TRIGGER WHEN:
+  - Item one
+  - Item two
+
+  SYMPTOMS:
+  - Symptom one
+  - Symptom two
+---
+Body content
+";
+        let skill = agent_skills::Skill::parse(content).unwrap();
+        let desc = skill.description().as_str();
+        // YAML folded scalar (>): single newlines become spaces, blank lines preserved as \n
+        assert!(desc.contains("First paragraph about the skill."));
+        // List items on consecutive lines get collapsed into one line
+        assert!(desc.contains("- Item one - Item two"));
+    }
+
+    #[test]
+    fn test_agent_skills_parse_literal_scalar_description() {
+        let content = "\
+---
+name: test
+description: |
+  First line.
+
+  TRIGGER WHEN:
+  - Item one
+  - Item two
+---
+Body content
+";
+        let skill = agent_skills::Skill::parse(content).unwrap();
+        let desc = skill.description().as_str();
+        // YAML literal scalar (|): all newlines preserved
+        assert!(desc.contains("- Item one\n- Item two"));
+    }
+}

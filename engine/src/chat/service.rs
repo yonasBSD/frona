@@ -21,6 +21,7 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub model_group: String,
     pub tools: Vec<String>,
+    pub skills: Vec<String>,
     pub sandbox_config: Option<crate::agent::models::SandboxSettings>,
     pub identity: std::collections::BTreeMap<String, String>,
 }
@@ -712,6 +713,7 @@ impl ChatService {
                 system_prompt,
                 model_group: agent.model_group,
                 tools,
+                skills: agent.skills,
                 sandbox_config: agent.sandbox_config,
                 identity: agent.identity,
             });
@@ -733,6 +735,7 @@ impl ChatService {
             system_prompt: parsed.template,
             model_group,
             tools,
+            skills: vec![],
             sandbox_config: None,
             identity: std::collections::BTreeMap::new(),
         })

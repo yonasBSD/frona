@@ -30,6 +30,10 @@ impl Workspace {
     }
 
     pub fn write(&self, path: &str, content: &str) -> Result<(), AppError> {
+        self.write_bytes(path, content.as_bytes())
+    }
+
+    pub fn write_bytes(&self, path: &str, content: &[u8]) -> Result<(), AppError> {
         let full = self.layers[0].join(path);
         if let Some(parent) = full.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {

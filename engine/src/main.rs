@@ -72,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new(surreal.clone(), &config, loaded.models, agent_service, storage, metrics_handle);
     state.vault_service.sync_config_connections().await?;
     state.browser_session_manager.kill_all_sessions().await;
+    state.skill_service.start_watcher();
 
     state.init_task_executor();
     if let Some(executor) = state.task_executor() {
@@ -150,6 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::browser::router())
         .merge(routes::navigation::router())
         .merge(routes::notifications::router())
+        .merge(routes::skills::router())
         .merge(routes::tools::router())
         .merge(routes::files::router())
         .merge(routes::metrics::router())

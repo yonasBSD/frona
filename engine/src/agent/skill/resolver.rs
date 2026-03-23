@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 
 use crate::agent::config::parse_frontmatter;
 use crate::storage::StorageService;
-use crate::db::repo::skills::SurrealSkillRepo;
-
-use super::repository::SkillRepository;
 
 #[derive(Debug, Clone)]
 pub struct SkillSummary {
@@ -23,32 +20,41 @@ pub struct ResolvedSkill {
 
 #[derive(Clone)]
 pub struct SkillResolver {
-    skill_repo: SurrealSkillRepo,
     config_dir: PathBuf,
+    installed_dir: Option<PathBuf>,
     storage: StorageService,
 }
 
 impl SkillResolver {
-    pub fn new(skill_repo: SurrealSkillRepo, config_dir: impl Into<PathBuf>, storage: StorageService) -> Self {
+    pub fn new(config_dir: impl Into<PathBuf>, storage: StorageService) -> Self {
         Self {
-            skill_repo,
             config_dir: config_dir.into(),
+            installed_dir: None,
             storage,
         }
     }
 
-    pub async fn list(&self, agent_id: &str) -> Vec<SkillSummary> {
+    pub fn with_installed_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.installed_dir = Some(dir.into());
+        self
+    }
+
+    pub fn installed_dir(&self) -> Option<&Path> {
+        self.installed_dir.as_deref()
+    }
+
+    pub fn builtin_skills_dir(&self) -> PathBuf {
+        self.config_dir.join("skills")
+    }
+
+    /// Resolution order:
+    /// 1. Agent Workspace FS
+    /// 2. Installed skills dir (data/skills/) — filtered by agent_skills when non-empty
+    /// 3. Built-in FS (resources/skills/) — filtered by agent_skills when non-empty
+    pub fn list(&self, agent_id: &str, agent_skills: &[String]) -> Vec<SkillSummary> {
         let mut seen = HashMap::new();
 
-        if let Ok(db_skills) = self.skill_repo.find_by_agent(Some(agent_id)).await {
-            for skill in db_skills {
-                seen.entry(skill.name.clone()).or_insert(SkillSummary {
-                    name: skill.name,
-                    description: skill.description,
-                });
-            }
-        }
-
+        // Tier 1: Agent workspace FS (always included)
         let ws = self.storage.agent_workspace(agent_id);
         for name in ws.read_dir("skills") {
             if seen.contains_key(&name) {
@@ -69,32 +75,33 @@ impl SkillResolver {
             }
         }
 
-        if let Ok(db_globals) = self.skill_repo.find_by_agent(None).await {
-            for skill in db_globals {
-                seen.entry(skill.name.clone()).or_insert(SkillSummary {
-                    name: skill.name,
-                    description: skill.description,
-                });
+        // Tier 2: Installed skills (filtered when agent_skills is non-empty)
+        if let Some(dir) = &self.installed_dir {
+            for summary in self.scan_fs_skills(dir) {
+                if !agent_skills.is_empty() && !agent_skills.contains(&summary.name) {
+                    continue;
+                }
+                seen.entry(summary.name.clone()).or_insert(summary);
             }
         }
 
+        // Tier 3: Built-in FS (filtered when agent_skills is non-empty)
         for summary in self.scan_fs_skills(&self.config_dir.join("skills")) {
+            if !agent_skills.is_empty() && !agent_skills.contains(&summary.name) {
+                continue;
+            }
             seen.entry(summary.name.clone()).or_insert(summary);
         }
 
         seen.into_values().collect()
     }
 
-    pub async fn resolve(&self, agent_id: &str, name: &str) -> Option<ResolvedSkill> {
-        if let Ok(Some(skill)) = self.skill_repo.find_by_name(Some(agent_id), name).await {
-            return Some(ResolvedSkill {
-                name: skill.name,
-                description: skill.description,
-                content: skill.content,
-                path: None,
-            });
-        }
-
+    /// Resolution order:
+    /// 1. Agent Workspace FS
+    /// 2. Installed skills dir — filtered by agent_skills when non-empty
+    /// 3. Built-in FS — filtered by agent_skills when non-empty
+    pub fn resolve(&self, agent_id: &str, agent_skills: &[String], name: &str) -> Option<ResolvedSkill> {
+        // Tier 1: Agent workspace FS (always allowed)
         let ws = self.storage.agent_workspace(agent_id);
         let skill_path = format!("skills/{name}/SKILL.md");
         if let Some(content) = ws.read(&skill_path) {
@@ -122,15 +129,20 @@ impl SkillResolver {
             });
         }
 
-        if let Ok(Some(skill)) = self.skill_repo.find_by_name(None, name).await {
-            return Some(ResolvedSkill {
-                name: skill.name,
-                description: skill.description,
-                content: skill.content,
-                path: None,
-            });
+        // Check allowlist for non-workspace tiers
+        if !agent_skills.is_empty() && !agent_skills.contains(&name.to_string()) {
+            return None;
         }
 
+        // Tier 2: Installed skills
+        if let Some(dir) = &self.installed_dir {
+            let installed_skill_dir = dir.join(name);
+            if let Some(skill) = self.read_fs_skill(name, &installed_skill_dir) {
+                return Some(skill);
+            }
+        }
+
+        // Tier 3: Built-in FS
         let global_skill_dir = self.config_dir.join("skills").join(name);
         self.read_fs_skill(name, &global_skill_dir)
     }
@@ -139,6 +151,14 @@ impl SkillResolver {
         let ws = self.storage.agent_workspace(agent_id);
         if let Some(path) = ws.resolve_path(&format!("skills/{name}/SKILL.md")) {
             return path.parent().map(|p| p.to_path_buf());
+        }
+
+        // Installed skills dir
+        if let Some(dir) = &self.installed_dir {
+            let installed_path = dir.join(name);
+            if installed_path.join("SKILL.md").exists() {
+                return Some(installed_path);
+            }
         }
 
         let global_path = self.config_dir.join("skills").join(name);

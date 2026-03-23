@@ -1,12 +1,9 @@
 use chrono::Utc;
 use frona::agent::models::Agent;
 use frona::agent::repository::AgentRepository;
-use frona::agent::skill::models::Skill;
-use frona::agent::skill::repository::SkillRepository;
 use frona::db::init as db;
 use frona::db::repo::agents::SurrealAgentRepo;
 use frona::db::repo::chats::SurrealChatRepo;
-use frona::db::repo::skills::SurrealSkillRepo;
 use frona::chat::models::Chat;
 use frona::chat::repository::ChatRepository;
 use frona::core::repository::Repository;
@@ -29,6 +26,7 @@ fn test_agent(user_id: Option<&str>) -> Agent {
         model_group: "primary".to_string(),
         enabled: true,
         tools: vec![],
+        skills: vec![],
         sandbox_config: None,
         max_concurrent_tasks: None,
         avatar: None,
@@ -56,19 +54,6 @@ fn test_chat(user_id: &str, space_id: Option<&str>, title: Option<&str>) -> Chat
     }
 }
 
-fn test_skill(agent_id: Option<&str>, name: &str) -> Skill {
-    let now = Utc::now();
-    Skill {
-        id: uuid::Uuid::new_v4().to_string(),
-        agent_id: agent_id.map(|s| s.to_string()),
-        name: name.to_string(),
-        description: "A test skill".to_string(),
-        content: "skill content".to_string(),
-        created_at: now,
-        updated_at: now,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 4a. Seeded agent with JSON null user_id round-trips after fix
 // ---------------------------------------------------------------------------
@@ -86,6 +71,7 @@ async fn test_seeded_agent_with_absent_user_id_round_trips() {
             model_group = 'primary',
             enabled = true,
             tools = [],
+            skills = [],
             identity = {},
             created_at = time::now(),
             updated_at = time::now()"
@@ -162,48 +148,6 @@ async fn test_chat_with_space_id_excluded_from_standalone() {
     let standalone = repo.find_standalone_by_user_id("user-1").await.unwrap();
     assert_eq!(standalone.len(), 1);
     assert_eq!(standalone[0].id, standalone_chat.id);
-}
-
-// ---------------------------------------------------------------------------
-// 4d. Skill: agent_id=None (global skill) round-trips
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_skill_global_round_trips() {
-    let db = test_db().await;
-    let repo = SurrealSkillRepo::new(db);
-
-    let skill = test_skill(None, "global-skill");
-    repo.create(&skill).await.unwrap();
-
-    let found = repo.find_by_name(None, "global-skill").await.unwrap();
-    assert!(found.is_some(), "global skill should be found by find_by_name(None, name)");
-    assert_eq!(found.unwrap().agent_id, None);
-
-    let skills = repo.find_by_agent(None).await.unwrap();
-    assert!(
-        skills.iter().any(|s| s.id == skill.id),
-        "global skill should appear in find_by_agent(None)"
-    );
-}
-
-#[tokio::test]
-async fn test_skill_with_agent_id_not_in_global() {
-    let db = test_db().await;
-    let repo = SurrealSkillRepo::new(db);
-
-    let global_skill = test_skill(None, "global-skill");
-    let agent_skill = test_skill(Some("agent-1"), "agent-skill");
-    repo.create(&global_skill).await.unwrap();
-    repo.create(&agent_skill).await.unwrap();
-
-    let globals = repo.find_by_agent(None).await.unwrap();
-    assert_eq!(globals.len(), 1);
-    assert_eq!(globals[0].id, global_skill.id);
-
-    let agent_skills = repo.find_by_agent(Some("agent-1")).await.unwrap();
-    assert_eq!(agent_skills.len(), 1);
-    assert_eq!(agent_skills[0].id, agent_skill.id);
 }
 
 // ---------------------------------------------------------------------------

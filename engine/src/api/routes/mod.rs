@@ -14,6 +14,7 @@ pub mod notifications;
 pub mod spaces;
 pub mod system;
 pub mod tasks;
+pub mod skills;
 pub mod tools;
 pub mod vaults;
 pub mod voice;

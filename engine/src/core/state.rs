@@ -11,7 +11,9 @@ use crate::agent::task::executor::TaskExecutor;
 use crate::agent::service::AgentService;
 use crate::app::manager::AppManager;
 use crate::app::service::AppService;
+use crate::agent::skill::registry::SkillRegistryClient;
 use crate::agent::skill::resolver::SkillResolver;
+use crate::agent::skill::service::SkillService;
 use crate::storage::StorageService;
 use crate::auth::AuthService;
 use crate::auth::jwt::JwtService;
@@ -99,7 +101,7 @@ pub struct AppState {
     pub cli_tools_config: Arc<Vec<CliToolConfig>>,
     pub search_provider: Option<Arc<dyn SearchProvider>>,
     pub voice_provider: Option<Arc<dyn VoiceProvider>>,
-    pub skill_resolver: SkillResolver,
+    pub skill_service: SkillService,
     pub task_executor: Arc<OnceLock<Arc<TaskExecutor>>>,
     pub max_concurrent_tasks: usize,
     pub config: Arc<Config>,
@@ -166,8 +168,15 @@ impl AppState {
             storage.clone(),
         );
 
-        let skill_repo = SurrealRepo::new(db.clone());
-        let skill_resolver = SkillResolver::new(skill_repo, &config.storage.shared_config_dir, storage.clone());
+        let skill_resolver = SkillResolver::new(&config.storage.shared_config_dir, storage.clone())
+            .with_installed_dir(&config.storage.skills_dir);
+        let skill_service = SkillService::new(
+            SkillRegistryClient::new(),
+            skill_resolver,
+            storage.clone(),
+            &config.storage.skills_dir,
+            &config.cache,
+        );
 
         let keypair_repo: SurrealRepo<crate::credential::keypair::models::KeyPair> =
             SurrealRepo::new(db.clone());
@@ -269,7 +278,7 @@ impl AppState {
             cli_tools_config,
             search_provider,
             voice_provider,
-            skill_resolver,
+            skill_service,
             task_executor: Arc::new(OnceLock::new()),
             max_concurrent_tasks: config.server.max_concurrent_tasks,
             config: Arc::new(config.clone()),
