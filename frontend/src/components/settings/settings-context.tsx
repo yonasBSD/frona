@@ -21,10 +21,16 @@ interface SettingsContextValue {
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
+const noopSettings: SettingsContextValue = {
+  setModified: () => {},
+  register: () => {},
+  unregister: () => {},
+  refresh: () => Promise.resolve(),
+};
+
 export function useSettings() {
   const ctx = useContext(SettingsContext);
-  if (!ctx) throw new Error("useSettings must be used within SettingsProvider");
-  return ctx;
+  return ctx ?? noopSettings;
 }
 
 interface SettingsProviderProps {
