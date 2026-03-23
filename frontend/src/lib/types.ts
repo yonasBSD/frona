@@ -35,6 +35,7 @@ export interface Agent {
   model_group: string;
   enabled: boolean;
   tools: string[];
+  skills: string[];
   avatar: string | null;
   identity: Record<string, string>;
   chat_count: number;
@@ -47,6 +48,7 @@ export interface CreateAgentRequest {
   description: string;
   model_group?: string;
   tools?: string[];
+  skills?: string[];
 }
 
 export interface UpdateAgentRequest {
@@ -55,6 +57,7 @@ export interface UpdateAgentRequest {
   model_group?: string;
   enabled?: boolean;
   tools?: string[];
+  skills?: string[];
 }
 
 // Space types

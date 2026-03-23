@@ -282,6 +282,54 @@ export function getContacts() {
   return request<import("./types").Contact[]>("/api/contacts");
 }
 
+// Skill types
+export interface SkillSearchResult {
+  name: string;
+  repo: string;
+  avatar_url: string;
+  installs: number;
+  installed: boolean;
+}
+
+export interface SkillPreview {
+  name: string;
+  description: string;
+  body: string;
+  metadata: Record<string, string>;
+  repo: string;
+  avatar_url: string;
+}
+
+export interface SkillListItem {
+  name: string;
+  description: string;
+  source: string | null;
+  installed_at: string | null;
+}
+
+export async function searchSkills(query: string): Promise<SkillSearchResult[]> {
+  return request<SkillSearchResult[]>(`/api/skills/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function previewSkill(repo: string, name: string): Promise<SkillPreview> {
+  return request<SkillPreview>(`/api/skills/preview?repo=${encodeURIComponent(repo)}&name=${encodeURIComponent(name)}`);
+}
+
+export async function installSkill(repo: string, skillName: string, agentId?: string): Promise<SkillListItem> {
+  return request<SkillListItem>("/api/skills/install", {
+    method: "POST",
+    body: JSON.stringify({ repo, skill_name: skillName, agent_id: agentId }),
+  });
+}
+
+export async function uninstallSkill(name: string): Promise<void> {
+  return request<void>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function listInstalledSkills(): Promise<SkillListItem[]> {
+  return request<SkillListItem[]>("/api/skills");
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
