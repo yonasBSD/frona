@@ -171,7 +171,7 @@ impl AppState {
         let skill_resolver = SkillResolver::new(&config.storage.shared_config_dir, storage.clone())
             .with_installed_dir(&config.storage.skills_dir);
         let skill_service = SkillService::new(
-            SkillRegistryClient::new(),
+            SkillRegistryClient::new(format!("{}/skills", config.storage.cache_dir)),
             skill_resolver,
             storage.clone(),
             &config.storage.skills_dir,

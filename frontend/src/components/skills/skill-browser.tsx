@@ -14,15 +14,20 @@ import {
   TrashIcon,
   PuzzlePieceIcon,
 } from "@heroicons/react/24/outline";
+import * as Checkbox from "@radix-ui/react-checkbox";
+import { CheckIcon, MinusIcon } from "@heroicons/react/16/solid";
 import {
   searchSkills,
   previewSkill,
-  installSkill,
+  installSkills,
   uninstallSkill,
   listInstalledSkills,
+  browseRepo,
   type SkillSearchResult,
   type SkillPreview,
   type SkillListItem,
+  type RepoBrowseResult,
+  type RepoBrowseSkill,
 } from "@/lib/api-client";
 
 interface SkillBrowserProps {
@@ -61,11 +66,16 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
   const [searching, setSearching] = useState(false);
   const [installing, setInstalling] = useState<string | null>(null);
   const [uninstalling, setUninstalling] = useState<string | null>(null);
+  const [uninstallingBatch, setUninstallingBatch] = useState(false);
   const [selectedInstalled, setSelectedInstalled] = useState(false);
-  const [confirmInstall, setConfirmInstall] = useState<{ repo: string; name: string } | null>(null);
+  const [confirmInstall, setConfirmInstall] = useState<{ repo: string; names: string[] } | null>(null);
+  const [confirmUninstall, setConfirmUninstall] = useState<string[] | null>(null);
   const [reviewed, setReviewed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installed, setInstalled] = useState<SkillListItem[]>([]);
+  const [repoBrowse, setRepoBrowse] = useState<RepoBrowseResult | null>(null);
+  const [installingAll, setInstallingAll] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const loadInstalled = useCallback(async () => {
@@ -79,6 +89,26 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
 
   useEffect(() => { loadInstalled(); }, [loadInstalled]);
 
+  const installableSkills = useMemo(
+    () => repoBrowse?.skills.filter((s) => !s.installed) ?? [],
+    [repoBrowse],
+  );
+
+  const toggleSelect = useCallback((name: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback((items: { name: string }[]) => {
+    setSelected((prev) => {
+      if (prev.size === items.length) return new Set();
+      return new Set(items.map((s) => s.name));
+    });
+  }, []);
+
   const previewMeta = useMemo(() => {
     if (!preview) return {};
     return {
@@ -88,9 +118,51 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
     };
   }, [preview]);
 
+  const parseRepoPath = (q: string): string | null => {
+    const trimmed = q.trim().replace(/\/+$/, "");
+    const ghMatch = trimmed.match(/^https?:\/\/github\.com\/([a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+)/);
+    if (ghMatch) return ghMatch[1];
+    if (/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(trimmed)) return trimmed;
+    return null;
+  };
+
+  const handleBrowseRepo = useCallback(async (repo: string) => {
+    setSearching(true);
+    setRepoBrowse(null);
+    setResults([]);
+    setError(null);
+    setSelected(new Set());
+    try {
+      const result = await browseRepo(repo);
+      setRepoBrowse(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to browse repo");
+    } finally {
+      setSearching(false);
+    }
+  }, []);
+
+  const handleInstallAll = useCallback(async (repo: string, skills: RepoBrowseSkill[]) => {
+    const toInstall = skills.filter((s) => !s.installed);
+    if (toInstall.length === 0) return;
+    setInstallingAll(true);
+    setError(null);
+    try {
+      await installSkills(repo, toInstall.map((s) => s.name), agentId);
+      setRepoBrowse((prev) => prev ? { ...prev, skills: prev.skills.map((s) => ({ ...s, installed: true })) } : prev);
+      loadInstalled();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Install failed");
+    } finally {
+      setInstallingAll(false);
+    }
+  }, [agentId, loadInstalled]);
+
   const handleSearch = useCallback(async (q: string) => {
     setQuery(q);
     setError(null);
+    setRepoBrowse(null);
+    setSelected(new Set());
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
@@ -100,6 +172,11 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
     }
 
     debounceRef.current = setTimeout(async () => {
+      const repo = parseRepoPath(q);
+      if (repo) {
+        handleBrowseRepo(repo);
+        return;
+      }
       setSearching(true);
       try {
         const r = await searchSkills(q.trim());
@@ -110,11 +187,11 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
         setSearching(false);
       }
     }, 300);
-  }, []);
+  }, [handleBrowseRepo]);
 
   const handleSelect = useCallback(async (result: SkillSearchResult) => {
     setSelectedName(result.name);
-    setSelectedInstalled(result.installed);
+    setSelectedInstalled(installed.some((s) => s.name === result.name && s.source === result.repo));
     setPreview(null);
     setError(null);
     try {
@@ -123,16 +200,17 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load preview");
     }
-  }, []);
+  }, [installed]);
 
   const handleInstall = useCallback(async (repo: string, name: string) => {
     setInstalling(name);
     setError(null);
     try {
-      await installSkill(repo, name, agentId);
+      await installSkills(repo, [name], agentId);
       setResults((prev) =>
         prev.map((r) => (r.name === name && r.repo === repo ? { ...r, installed: true } : r))
       );
+      setRepoBrowse((prev) => prev ? { ...prev, skills: prev.skills.map((s) => (s.name === name ? { ...s, installed: true } : s)) } : prev);
       if (preview?.name === name) {
         setPreview(null);
         setSelectedName(null);
@@ -164,6 +242,23 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
     }
   }, [loadInstalled]);
 
+  const handleUninstallBatch = useCallback(async (names: string[]) => {
+    if (names.length === 0) return;
+    setUninstallingBatch(true);
+    setError(null);
+    try {
+      for (const name of names) {
+        await uninstallSkill(name);
+      }
+      setSelected(new Set());
+      loadInstalled();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Uninstall failed");
+    } finally {
+      setUninstallingBatch(false);
+    }
+  }, [loadInstalled]);
+
   const handleBack = useCallback(() => {
     setSelectedName(null);
     setPreview(null);
@@ -176,7 +271,9 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
         <div className="mb-5 pb-3 border-b border-border flex items-end justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-lg font-semibold text-text-primary">{confirmInstall.name}</h3>
+              <h3 className="text-lg font-semibold text-text-primary">
+                {confirmInstall.names.length === 1 ? confirmInstall.names[0] : `${confirmInstall.names.length} skills`}
+              </h3>
               <span className="rounded-full bg-surface-tertiary px-2.5 py-0.5 text-[11px] font-medium text-text-secondary uppercase tracking-wide">install</span>
             </div>
             <p className="text-sm text-text-tertiary mt-1">{confirmInstall.repo}</p>
@@ -202,9 +299,9 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
             className="h-4 w-4 mt-0.5 rounded border-border accent-accent shrink-0"
           />
           <span className="text-sm text-text-secondary">
-            I&apos;ve reviewed the skill{" "}
+            I&apos;ve reviewed the{" "}
             <a
-              href={`https://github.com/${confirmInstall.repo}/tree/main/skills/${confirmInstall.name}`}
+              href={`https://github.com/${confirmInstall.repo}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-accent hover:text-accent-hover"
@@ -221,10 +318,14 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
         <div className="flex gap-2">
           <button
             onClick={() => {
-              const { repo, name } = confirmInstall;
+              const { repo, names } = confirmInstall;
               setConfirmInstall(null);
               setReviewed(false);
-              handleInstall(repo, name);
+              if (names.length === 1) {
+                handleInstall(repo, names[0]);
+              } else {
+                handleInstallAll(repo, (repoBrowse?.skills ?? []).filter((s) => names.includes(s.name)));
+              }
             }}
             disabled={!reviewed}
             className="w-28 inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent py-2 text-sm font-medium text-surface shadow-sm hover:bg-accent-hover transition disabled:opacity-50"
@@ -243,10 +344,62 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
     </div>
   );
 
+  const uninstallDialog = confirmUninstall && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={() => setConfirmUninstall(null)} />
+      <div className="relative rounded-xl border border-border bg-surface-secondary p-4 space-y-4 max-w-lg w-full mx-4 shadow-xl">
+        <div className="mb-5 pb-3 border-b border-border flex items-end justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-text-primary">
+                {confirmUninstall.length === 1 ? confirmUninstall[0] : `${confirmUninstall.length} skills`}
+              </h3>
+              <span className="rounded-full bg-surface-tertiary px-2.5 py-0.5 text-[11px] font-medium text-text-secondary uppercase tracking-wide">uninstall</span>
+            </div>
+          </div>
+          <TrashIcon className="h-10 w-10 text-danger shrink-0" />
+        </div>
+
+        <div className="text-sm text-text-secondary space-y-2">
+          <p>
+            {confirmUninstall.length === 1
+              ? "This will remove the skill and all its files. The agent will no longer have access to it."
+              : `This will remove ${confirmUninstall.length} skills and all their files. The agent will no longer have access to them.`}
+          </p>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              const names = confirmUninstall;
+              setConfirmUninstall(null);
+              if (names.length === 1) {
+                handleUninstall(names[0]);
+              } else {
+                handleUninstallBatch(names);
+              }
+            }}
+            className="w-28 inline-flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-sm font-medium text-danger hover:bg-surface-tertiary transition"
+          >
+            <TrashIcon className="h-4 w-4" />
+            Uninstall
+          </button>
+          <button
+            onClick={() => setConfirmUninstall(null)}
+            className="w-28 inline-flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-sm font-medium text-text-secondary shadow-sm hover:bg-surface-tertiary transition"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   if (selectedName) {
     return (
       <div className="space-y-4">
         {confirmDialog}
+      {uninstallDialog}
         <button
           onClick={handleBack}
           className="inline-flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition"
@@ -283,7 +436,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
               </div>
               <div className="shrink-0 flex items-center gap-2">
                 <a
-                  href={`https://github.com/${preview.repo}/tree/main/skills/${preview.name}`}
+                  href={preview.github_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium text-text-secondary hover:bg-surface-tertiary transition"
@@ -295,7 +448,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
                 </a>
                 {selectedInstalled ? (
                   <button
-                    onClick={() => handleUninstall(preview.name)}
+                    onClick={() => setConfirmUninstall([preview.name])}
                     disabled={uninstalling === preview.name}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm font-medium text-danger hover:bg-surface-tertiary disabled:opacity-50 transition"
                   >
@@ -304,7 +457,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
                   </button>
                 ) : (
                   <button
-                    onClick={() => { setReviewed(false); setConfirmInstall({ repo: preview.repo, name: preview.name }); }}
+                    onClick={() => { setReviewed(false); setConfirmInstall({ repo: preview.repo, names: [preview.name] }); }}
                     disabled={installing === preview.name}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-surface hover:bg-accent-hover disabled:opacity-50 transition"
                   >
@@ -321,6 +474,18 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
+                  a({ href, children, ...props }) {
+                    const resolved = href && !href.startsWith("http") && !href.startsWith("#")
+                      ? `${preview.github_url}/${href}`
+                      : href;
+                    return <a href={resolved} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
+                  },
+                  img({ src, alt, ...props }) {
+                    const resolved = typeof src === "string" && !src.startsWith("http")
+                      ? `${preview.raw_base_url}/${src}`
+                      : src;
+                    return <img src={resolved as string} alt={alt} {...props} />;
+                  },
                   code({ className, children, ...props }) {
                     const match = /language-(\w+)/.exec(className || "");
                     const code = String(children).replace(/\n$/, "");
@@ -360,13 +525,14 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
   return (
     <div className="space-y-4">
       {confirmDialog}
+      {uninstallDialog}
       <div className="relative">
         <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary" />
         <input
           type="text"
           value={query}
           onChange={(e) => handleSearch(e.target.value)}
-          placeholder="Search skills..."
+          placeholder="Search skills or enter owner/repo..."
           className="w-full rounded-lg border border-border bg-surface pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
         />
         {searching && (
@@ -416,34 +582,166 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
         </div>
       )}
 
-      {query.trim().length >= 2 && !searching && results.length === 0 && (
+      {query.trim().length >= 2 && !searching && results.length === 0 && !repoBrowse && (
         <p className="text-sm text-text-tertiary text-center py-8">No skills found</p>
+      )}
+
+      {repoBrowse && repoBrowse.skills.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-4 min-h-[36px]">
+            <div className="flex items-center gap-3 min-w-0">
+              <img src={repoBrowse.avatar_url} alt="" className="h-10 w-10 rounded-lg shrink-0" />
+              <div className="min-w-0">
+                <h4 className="text-base font-medium text-text-primary">{repoBrowse.repo}</h4>
+                {repoBrowse.description && (
+                  <p className="text-xs text-text-tertiary truncate">{repoBrowse.description}</p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                const names = selected.size > 0
+                  ? Array.from(selected)
+                  : installableSkills.map((s) => s.name);
+                if (names.length > 0) {
+                  setReviewed(false);
+                  setConfirmInstall({ repo: repoBrowse.repo, names });
+                }
+              }}
+              disabled={installingAll || installableSkills.length === 0}
+              className={`inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-surface shadow-sm hover:bg-accent-hover disabled:opacity-50 transition shrink-0 ${selected.size === 0 ? "invisible" : ""}`}
+            >
+              <ArrowDownTrayIcon className="h-3.5 w-3.5" />
+              {installingAll
+                ? "Installing..."
+                : selected.size > 0
+                  ? `Install ${selected.size} selected`
+                  : "Install all"}
+            </button>
+          </div>
+          <div className="rounded-xl border border-border bg-surface-secondary divide-y divide-border">
+            {installableSkills.length > 0 && (
+              <div className="px-4 py-2 flex items-center gap-3 bg-surface-tertiary/30">
+                <Checkbox.Root
+                  checked={selected.size === installableSkills.length ? true : selected.size > 0 ? "indeterminate" : false}
+                  onCheckedChange={() => toggleSelectAll(installableSkills)}
+                  className="h-4 w-4 rounded border border-border bg-surface flex items-center justify-center data-[state=checked]:bg-accent data-[state=checked]:border-accent data-[state=indeterminate]:bg-accent data-[state=indeterminate]:border-accent transition shrink-0"
+                >
+                  <Checkbox.Indicator>
+                    {selected.size === installableSkills.length
+                      ? <CheckIcon className="h-3 w-3 text-surface" />
+                      : <MinusIcon className="h-3 w-3 text-surface" />}
+                  </Checkbox.Indicator>
+                </Checkbox.Root>
+                <span className="text-xs text-text-secondary">
+                  {selected.size > 0 && `${selected.size} of ${installableSkills.length} selected`}
+                </span>
+              </div>
+            )}
+            {repoBrowse.skills.map((skill) => (
+              <div
+                key={skill.name}
+                className="px-4 py-3 flex items-center gap-3 group"
+              >
+                {skill.installed ? (
+                  <CheckCircleIcon className="h-4 w-4 text-green-500 shrink-0" />
+                ) : (
+                  <Checkbox.Root
+                    checked={selected.has(skill.name)}
+                    onCheckedChange={() => toggleSelect(skill.name)}
+                    className="h-4 w-4 rounded border border-border bg-surface flex items-center justify-center data-[state=checked]:bg-accent data-[state=checked]:border-accent transition shrink-0"
+                  >
+                    <Checkbox.Indicator>
+                      <CheckIcon className="h-3 w-3 text-surface" />
+                    </Checkbox.Indicator>
+                  </Checkbox.Root>
+                )}
+                <img
+                  src={repoBrowse.avatar_url}
+                  alt=""
+                  className="h-8 w-8 rounded-lg shrink-0"
+                />
+                <div
+                  className="flex-1 min-w-0 cursor-pointer"
+                  onClick={() => handleSelect({ name: skill.name, repo: repoBrowse.repo, avatar_url: repoBrowse.avatar_url, installs: 0, installed: skill.installed })}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-text-primary truncate hover:text-accent transition">{skill.name}</span>
+                  </div>
+                  {skill.description && (
+                    <div className="text-xs text-text-tertiary line-clamp-3">{skill.description}</div>
+                  )}
+                </div>
+                {skill.installed && (
+                  <CheckCircleIcon className="h-5 w-5 text-green-500 shrink-0" />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {query.trim().length < 2 && installed.length > 0 && (
         <div>
-          <h4 className="text-sm font-medium text-text-secondary mb-2">Installed</h4>
+          <div className="flex items-center justify-between mb-2 min-h-[36px]">
+            <h4 className="text-base font-medium text-text-secondary">Installed</h4>
+            <button
+              onClick={() => setConfirmUninstall(Array.from(selected))}
+              disabled={uninstallingBatch || selected.size === 0}
+              className={`inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-danger hover:bg-surface-tertiary disabled:opacity-50 transition ${selected.size === 0 ? "invisible" : ""}`}
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+              {uninstallingBatch ? "Removing..." : `Uninstall ${selected.size} selected`}
+            </button>
+          </div>
           <div className="rounded-xl border border-border bg-surface-secondary divide-y divide-border">
+            <div className="px-4 py-2 flex items-center gap-3 bg-surface-tertiary/30">
+              <Checkbox.Root
+                checked={selected.size === installed.length ? true : selected.size > 0 ? "indeterminate" : false}
+                onCheckedChange={() => toggleSelectAll(installed)}
+                className="h-4 w-4 rounded border border-border bg-surface flex items-center justify-center data-[state=checked]:bg-accent data-[state=checked]:border-accent data-[state=indeterminate]:bg-accent data-[state=indeterminate]:border-accent transition shrink-0"
+              >
+                <Checkbox.Indicator>
+                  {selected.size === installed.length
+                    ? <CheckIcon className="h-3 w-3 text-surface" />
+                    : <MinusIcon className="h-3 w-3 text-surface" />}
+                </Checkbox.Indicator>
+              </Checkbox.Root>
+              <span className="text-xs text-text-secondary">
+                {selected.size > 0 && `${selected.size} of ${installed.length} selected`}
+              </span>
+            </div>
             {installed.map((skill) => {
               const owner = skill.source?.split("/")[0];
               return (
-                <button
+                <div
                   key={skill.name}
-                  onClick={() => handleSelect({ name: skill.name, repo: skill.source || "", avatar_url: owner ? `https://github.com/${owner}.png` : "", installs: 0, installed: true })}
-                  className="w-full text-left px-4 py-3 flex items-start gap-3 transition hover:bg-surface-tertiary cursor-pointer"
+                  className="px-4 py-3 flex items-center gap-3 transition hover:bg-surface-tertiary"
                 >
+                  <Checkbox.Root
+                    checked={selected.has(skill.name)}
+                    onCheckedChange={() => toggleSelect(skill.name)}
+                    className="h-4 w-4 rounded border border-border bg-surface flex items-center justify-center data-[state=checked]:bg-accent data-[state=checked]:border-accent transition shrink-0"
+                  >
+                    <Checkbox.Indicator>
+                      <CheckIcon className="h-3 w-3 text-surface" />
+                    </Checkbox.Indicator>
+                  </Checkbox.Root>
                   {owner ? (
                     <img
                       src={`https://github.com/${owner}.png`}
                       alt=""
-                      className="h-10 w-10 rounded-lg shrink-0"
+                      className="h-8 w-8 rounded-lg shrink-0"
                     />
                   ) : (
-                    <PuzzlePieceIcon className="h-10 w-10 text-text-tertiary shrink-0" />
+                    <PuzzlePieceIcon className="h-8 w-8 text-text-tertiary shrink-0" />
                   )}
-                  <div className="flex-1 min-w-0">
+                  <div
+                    className="flex-1 min-w-0 cursor-pointer"
+                    onClick={() => handleSelect({ name: skill.name, repo: skill.source || "", avatar_url: owner ? `https://github.com/${owner}.png` : "", installs: 0, installed: true })}
+                  >
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-text-primary truncate">{skill.name}</span>
+                      <span className="text-sm font-medium text-text-primary truncate hover:text-accent transition">{skill.name}</span>
                       {skill.source && (
                         <span className="rounded-full bg-surface-tertiary px-2 py-0.5 text-[11px] text-text-tertiary whitespace-nowrap">{skill.source}</span>
                       )}
@@ -452,7 +750,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
                       <div className="text-xs text-text-tertiary line-clamp-3">{skill.description}</div>
                     )}
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -461,7 +759,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
 
       {query.trim().length < 2 && installed.length === 0 && (
         <p className="text-sm text-text-tertiary text-center py-8">
-          Search to find and install skills
+          Search skills or enter a GitHub repo (e.g. anthropics/skills)
         </p>
       )}
     </div>

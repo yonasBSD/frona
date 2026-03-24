@@ -224,6 +224,8 @@ pub struct StorageConfig {
     pub shared_config_dir: String,
     #[schemars(description = "Path for installed skills directory.")]
     pub skills_dir: String,
+    #[schemars(description = "Path for system cache directory.")]
+    pub cache_dir: String,
 }
 
 impl Default for StorageConfig {
@@ -233,6 +235,7 @@ impl Default for StorageConfig {
             files_path: "data/files".into(),
             shared_config_dir: "resources".into(),
             skills_dir: "data/skills".into(),
+            cache_dir: "data/system/cache".into(),
         }
     }
 }

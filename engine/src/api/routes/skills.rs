@@ -40,7 +40,7 @@ struct PreviewQuery {
 #[derive(Deserialize)]
 struct InstallRequest {
     repo: String,
-    skill_name: String,
+    skill_names: Vec<String>,
     agent_id: Option<String>,
 }
 
@@ -65,9 +65,9 @@ async fn browse_repo(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(params): Query<BrowseQuery>,
-) -> Result<Json<Vec<RepoBrowseResult>>, ApiError> {
-    let results = state.skill_service.browse_repo(&params.repo).await?;
-    Ok(Json(results))
+) -> Result<Json<RepoBrowseResult>, ApiError> {
+    let result = state.skill_service.get_skills(&params.repo).await?;
+    Ok(Json(result))
 }
 
 async fn preview_skill(
@@ -83,9 +83,9 @@ async fn install_skill(
     _auth: AuthUser,
     State(state): State<AppState>,
     Json(req): Json<InstallRequest>,
-) -> Result<Json<SkillListItem>, ApiError> {
-    let item = state.skill_service.install(&req.repo, &req.skill_name, req.agent_id.as_deref()).await?;
-    Ok(Json(item))
+) -> Result<Json<Vec<SkillListItem>>, ApiError> {
+    let items = state.skill_service.install_batch(&req.repo, &req.skill_names, req.agent_id.as_deref()).await?;
+    Ok(Json(items))
 }
 
 async fn uninstall_skill(

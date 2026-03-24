@@ -10,7 +10,7 @@ use crate::core::config::CacheConfig;
 use crate::core::error::AppError;
 use crate::storage::StorageService;
 
-use super::registry::SkillRegistryClient;
+use super::registry::{self, SkillRegistryClient};
 use super::resolver::{ResolvedSkill, SkillResolver, SkillSummary};
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,10 +31,20 @@ pub struct SkillSearchResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RepoBrowseResult {
+pub struct RepoBrowseSkill {
     pub name: String,
+    pub description: String,
     pub sha: String,
+    pub dir_path: String,
     pub installed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoBrowseResult {
+    pub repo: String,
+    pub description: String,
+    pub avatar_url: String,
+    pub skills: Vec<RepoBrowseSkill>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +55,8 @@ pub struct SkillPreview {
     pub metadata: HashMap<String, String>,
     pub repo: String,
     pub avatar_url: String,
+    pub github_url: String,
+    pub raw_base_url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -86,6 +98,7 @@ pub struct SkillService {
     installed_dir: PathBuf,
     list_cache: Arc<moka::future::Cache<String, Vec<SkillSummary>>>,
     resolve_cache: Arc<moka::future::Cache<String, Option<ResolvedSkill>>>,
+    browse_cache: Arc<moka::future::Cache<String, RepoBrowseResult>>,
 }
 
 impl SkillService {
@@ -108,6 +121,12 @@ impl SkillService {
                 .time_to_live(std::time::Duration::from_secs(cache_config.entity_ttl_secs))
                 .build(),
         );
+        let browse_cache = Arc::new(
+            moka::future::Cache::builder()
+                .max_capacity(100)
+                .time_to_live(std::time::Duration::from_secs(600))
+                .build(),
+        );
 
         Self {
             registry,
@@ -116,22 +135,20 @@ impl SkillService {
             installed_dir: installed_dir.into(),
             list_cache,
             resolve_cache,
+            browse_cache,
         }
     }
 
-    /// Start filesystem watcher on skill directories.
-    /// Best-effort: logs warning if watcher fails to start.
     pub fn start_watcher(&self) {
         use notify::{RecursiveMode, Watcher};
 
         let list_cache = self.list_cache.clone();
         let resolve_cache = self.resolve_cache.clone();
+        let browse_cache = self.browse_cache.clone();
 
         let mut dirs_to_watch = vec![self.installed_dir.clone()];
         dirs_to_watch.push(self.resolver.builtin_skills_dir());
 
-        // Use a dedicated OS thread since notify's recommended_watcher
-        // uses std::sync::mpsc which blocks the thread.
         std::thread::spawn(move || {
             let (tx, rx) = std::sync::mpsc::channel();
 
@@ -156,9 +173,9 @@ impl SkillService {
             for event in rx {
                 match event {
                     Ok(_) => {
-                        // invalidate_all() is synchronous on moka::future::Cache
                         list_cache.invalidate_all();
                         resolve_cache.invalidate_all();
+                        browse_cache.invalidate_all();
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "Skill filesystem watcher error");
@@ -167,8 +184,6 @@ impl SkillService {
             }
         });
     }
-
-    // -- Cached resolver delegation --
 
     pub async fn list(&self, agent_id: &str, agent_skills: &[String]) -> Vec<SkillSummary> {
         let cache_key = format!("{agent_id}:{}", skills_hash(agent_skills));
@@ -194,8 +209,6 @@ impl SkillService {
         self.resolver.skill_dir_path(agent_id, name)
     }
 
-    // -- Remote operations (search, browse, preview) --
-
     pub async fn search(&self, query: &str) -> Result<Vec<SkillSearchResult>, AppError> {
         let results = self.registry.search(query, 20).await?;
         let lock = self.read_lock();
@@ -213,28 +226,57 @@ impl SkillService {
         }).collect())
     }
 
-    pub async fn browse_repo(&self, owner_repo: &str) -> Result<Vec<RepoBrowseResult>, AppError> {
-        let entries = self.registry.browse_repo(owner_repo).await?;
-        let lock = self.read_lock();
+    pub async fn get_skills(&self, owner_repo: &str) -> Result<RepoBrowseResult, AppError> {
+        if let Some(cached) = self.browse_cache.get(owner_repo).await {
+            let lock = self.read_lock();
+            let skills = cached.skills.into_iter().map(|mut s| {
+                s.installed = lock.skills.get(&s.name)
+                    .is_some_and(|entry| entry.source == owner_repo);
+                s
+            }).collect();
+            return Ok(RepoBrowseResult { skills, ..cached });
+        }
 
-        Ok(entries.into_iter().map(|e| {
-            let installed = lock.skills.contains_key(&e.name);
-            RepoBrowseResult {
-                name: e.name,
-                sha: e.sha,
+        let discovered = self.registry.discover_skills(owner_repo).await?;
+
+        let lock = self.read_lock();
+        let skills = discovered.into_iter().map(|s| {
+            let installed = lock.skills.get(&s.name)
+                .is_some_and(|entry| entry.source == owner_repo);
+            RepoBrowseSkill {
+                description: s.description,
+                name: s.name,
+                sha: s.sha,
+                dir_path: s.dir_path,
                 installed,
             }
-        }).collect())
+        }).collect();
+
+        let result = RepoBrowseResult {
+            repo: owner_repo.to_string(),
+            description: String::new(),
+            avatar_url: registry::derive_avatar_url(owner_repo),
+            skills,
+        };
+
+        self.browse_cache.insert(owner_repo.to_string(), result.clone()).await;
+
+        Ok(result)
     }
 
     pub async fn preview(&self, repo: &str, skill_name: &str) -> Result<SkillPreview, AppError> {
-        // Try reading from local installed dir first
         let local_content = self.installed_dir.join(skill_name).join("SKILL.md");
-        let content = if local_content.exists() {
-            std::fs::read_to_string(&local_content)
-                .map_err(|e| AppError::Internal(format!("Failed to read installed SKILL.md: {e}")))?
+        let (content, dir_path) = if local_content.exists() {
+            let c = std::fs::read_to_string(&local_content)
+                .map_err(|e| AppError::Internal(format!("Failed to read installed SKILL.md: {e}")))?;
+            (c, skill_name.to_string())
         } else {
-            self.registry.fetch_skill(repo, skill_name).await?.content
+            let browse = self.get_skills(repo).await?;
+            let skill = browse.skills.iter()
+                .find(|s| s.name == skill_name)
+                .ok_or_else(|| AppError::NotFound(format!("Skill '{skill_name}' not found in {repo}")))?;
+            let c = self.registry.fetch_skill_content(repo, &skill.dir_path).await?;
+            (c, skill.dir_path.clone())
         };
 
         let owner = repo.split('/').next().unwrap_or(repo);
@@ -262,16 +304,30 @@ impl SkillService {
             metadata,
             repo: repo.to_string(),
             avatar_url: format!("https://github.com/{owner}.png"),
+            github_url: if dir_path.is_empty() {
+                format!("https://github.com/{repo}")
+            } else {
+                format!("https://github.com/{repo}/tree/main/{dir_path}")
+            },
+            raw_base_url: if dir_path.is_empty() {
+                format!("https://raw.githubusercontent.com/{repo}/main")
+            } else {
+                format!("https://raw.githubusercontent.com/{repo}/main/{dir_path}")
+            },
         })
     }
 
-    // -- Install / Uninstall --
-
     pub async fn install(&self, repo: &str, skill_name: &str, agent_id: Option<&str>) -> Result<SkillListItem, AppError> {
-        let fetched = self.registry.fetch_skill(repo, skill_name).await?;
+        let (dir_path, sha, description) = self.discover_skill(repo, skill_name).await?;
+        let discovered = super::registry::DiscoveredSkill {
+            name: skill_name.to_string(),
+            description,
+            dir_path,
+            sha,
+        };
+        let fetched = self.registry.fetch_skill_from_cache(repo, &discovered).await?;
 
         if let Some(aid) = agent_id {
-            // Install to agent workspace
             let ws = self.storage.agent_workspace(aid);
             let skill_base = format!("skills/{}", &fetched.name);
             ws.write(&format!("{skill_base}/SKILL.md"), &fetched.content)?;
@@ -289,7 +345,6 @@ impl SkillService {
             });
         }
 
-        // Install to shared installed dir
         let skill_dir = self.installed_dir.join(&fetched.name);
         std::fs::create_dir_all(&skill_dir)
             .map_err(|e| AppError::Internal(format!("Failed to create skill directory: {e}")))?;
@@ -324,6 +379,70 @@ impl SkillService {
             source: Some(repo.to_string()),
             installed_at: Some(now),
         })
+    }
+
+    pub async fn install_batch(&self, repo: &str, skill_names: &[String], agent_id: Option<&str>) -> Result<Vec<SkillListItem>, AppError> {
+        let browse = self.get_skills(repo).await?;
+        let now = Utc::now();
+        let mut items = Vec::new();
+        let mut lock = self.read_lock();
+
+        for skill_name in skill_names {
+            let skill = browse.skills.iter()
+                .find(|s| s.name == *skill_name)
+                .ok_or_else(|| AppError::NotFound(format!("Skill '{skill_name}' not found in {repo}")))?;
+
+            let discovered = super::registry::DiscoveredSkill {
+                name: skill_name.clone(),
+                description: skill.description.clone(),
+                dir_path: skill.dir_path.clone(),
+                sha: skill.sha.clone(),
+            };
+            let fetched = self.registry.fetch_skill_from_cache(repo, &discovered).await?;
+
+            if let Some(aid) = agent_id {
+                let ws = self.storage.agent_workspace(aid);
+                let skill_base = format!("skills/{}", &fetched.name);
+                ws.write(&format!("{skill_base}/SKILL.md"), &fetched.content)?;
+                for file in &fetched.files {
+                    ws.write_bytes(&format!("{skill_base}/{}", file.path), &file.content)?;
+                }
+            } else {
+                let skill_dir = self.installed_dir.join(&fetched.name);
+                std::fs::create_dir_all(&skill_dir)
+                    .map_err(|e| AppError::Internal(format!("Failed to create skill directory: {e}")))?;
+                std::fs::write(skill_dir.join("SKILL.md"), &fetched.content)
+                    .map_err(|e| AppError::Internal(format!("Failed to write SKILL.md: {e}")))?;
+                for file in &fetched.files {
+                    let file_path = skill_dir.join(&file.path);
+                    if let Some(parent) = file_path.parent() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| AppError::Internal(format!("Failed to create directory: {e}")))?;
+                    }
+                    std::fs::write(&file_path, &file.content)
+                        .map_err(|e| AppError::Internal(format!("Failed to write {}: {e}", file.path)))?;
+                }
+                lock.skills.insert(fetched.name.clone(), SkillLockEntry {
+                    source: repo.to_string(),
+                    sha: fetched.sha,
+                    installed_at: now,
+                });
+            }
+
+            items.push(SkillListItem {
+                name: fetched.name,
+                description: fetched.description,
+                source: Some(repo.to_string()),
+                installed_at: Some(now),
+            });
+        }
+
+        if agent_id.is_none() {
+            self.write_lock(&lock)?;
+        }
+        self.invalidate_caches().await;
+
+        Ok(items)
     }
 
     pub fn list_installed(&self) -> Result<Vec<SkillListItem>, AppError> {
@@ -390,35 +509,46 @@ impl SkillService {
         let mut results = Vec::new();
 
         for (repo, skills) in repos {
-            match self.registry.get_tree_shas(&repo).await {
-                Ok(shas) => {
-                    for (name, current_sha) in skills {
-                        let latest_sha = shas.get(&name).cloned().unwrap_or_default();
-                        results.push(UpdateCheckResult {
-                            has_update: !latest_sha.is_empty() && latest_sha != current_sha,
-                            name,
-                            repo: repo.clone(),
-                            current_sha,
-                            latest_sha,
-                        });
-                    }
-                }
+            let discovered = match self.get_skills(&repo).await {
+                Ok(browse) => browse.skills.iter().map(|s| (s.name.clone(), s.sha.clone())).collect::<Vec<_>>(),
                 Err(e) => {
                     tracing::warn!(repo = %repo, error = %e, "Failed to check updates for repo");
+                    continue;
                 }
+            };
+            for (name, current_sha) in skills {
+                let latest_sha = discovered.iter()
+                    .find(|(n, _)| n == &name)
+                    .map(|(_, sha)| sha.clone())
+                    .unwrap_or_default();
+                results.push(UpdateCheckResult {
+                    has_update: !latest_sha.is_empty() && latest_sha != current_sha,
+                    name,
+                    repo: repo.clone(),
+                    current_sha,
+                    latest_sha,
+                });
             }
         }
 
         Ok(results)
     }
 
-    // -- Private helpers --
-
     async fn invalidate_caches(&self) {
         self.list_cache.invalidate_all();
         self.resolve_cache.invalidate_all();
+        self.browse_cache.invalidate_all();
         self.list_cache.run_pending_tasks().await;
         self.resolve_cache.run_pending_tasks().await;
+        self.browse_cache.run_pending_tasks().await;
+    }
+
+    async fn discover_skill(&self, repo: &str, skill_name: &str) -> Result<(String, String, String), AppError> {
+        let browse = self.get_skills(repo).await?;
+        let skill = browse.skills.iter()
+            .find(|s| s.name == skill_name)
+            .ok_or_else(|| AppError::NotFound(format!("Skill '{skill_name}' not found in {repo}")))?;
+        Ok((skill.dir_path.clone(), skill.sha.clone(), skill.description.clone()))
     }
 
     fn read_lock(&self) -> SkillsLock {
@@ -461,7 +591,7 @@ mod tests {
         let storage = StorageService::new(&crate::core::config::Config::default());
         let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
         let service = SkillService::new(
-            SkillRegistryClient::new(),
+            SkillRegistryClient::default(),
             resolver,
             storage,
             tmp.path(),
@@ -489,7 +619,7 @@ mod tests {
         let storage = StorageService::new(&crate::core::config::Config::default());
         let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
         let service = SkillService::new(
-            SkillRegistryClient::new(),
+            SkillRegistryClient::default(),
             resolver,
             storage,
             tmp.path(),
@@ -509,7 +639,7 @@ mod tests {
         let storage = StorageService::new(&crate::core::config::Config::default());
         let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
         let service = SkillService::new(
-            SkillRegistryClient::new(),
+            SkillRegistryClient::default(),
             resolver,
             storage,
             tmp.path(),
@@ -532,7 +662,7 @@ mod tests {
         let storage = StorageService::new(&crate::core::config::Config::default());
         let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
         let service = SkillService::new(
-            SkillRegistryClient::new(),
+            SkillRegistryClient::default(),
             resolver,
             storage,
             tmp.path(),
@@ -560,7 +690,7 @@ mod tests {
         let storage = StorageService::new(&crate::core::config::Config::default());
         let resolver = SkillResolver::new("/tmp/test_config", storage.clone());
         let service = SkillService::new(
-            SkillRegistryClient::new(),
+            SkillRegistryClient::default(),
             resolver,
             storage,
             tmp.path(),
@@ -612,9 +742,7 @@ Body content
 ";
         let skill = agent_skills::Skill::parse(content).unwrap();
         let desc = skill.description().as_str();
-        // YAML folded scalar (>): single newlines become spaces, blank lines preserved as \n
         assert!(desc.contains("First paragraph about the skill."));
-        // List items on consecutive lines get collapsed into one line
         assert!(desc.contains("- Item one - Item two"));
     }
 
@@ -634,7 +762,6 @@ Body content
 ";
         let skill = agent_skills::Skill::parse(content).unwrap();
         let desc = skill.description().as_str();
-        // YAML literal scalar (|): all newlines preserved
         assert!(desc.contains("- Item one\n- Item two"));
     }
 }

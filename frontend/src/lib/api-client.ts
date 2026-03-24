@@ -298,6 +298,8 @@ export interface SkillPreview {
   metadata: Record<string, string>;
   repo: string;
   avatar_url: string;
+  github_url: string;
+  raw_base_url: string;
 }
 
 export interface SkillListItem {
@@ -315,10 +317,10 @@ export async function previewSkill(repo: string, name: string): Promise<SkillPre
   return request<SkillPreview>(`/api/skills/preview?repo=${encodeURIComponent(repo)}&name=${encodeURIComponent(name)}`);
 }
 
-export async function installSkill(repo: string, skillName: string, agentId?: string): Promise<SkillListItem> {
-  return request<SkillListItem>("/api/skills/install", {
+export async function installSkills(repo: string, skillNames: string[], agentId?: string): Promise<SkillListItem[]> {
+  return request<SkillListItem[]>("/api/skills/install", {
     method: "POST",
-    body: JSON.stringify({ repo, skill_name: skillName, agent_id: agentId }),
+    body: JSON.stringify({ repo, skill_names: skillNames, agent_id: agentId }),
   });
 }
 
@@ -328,6 +330,25 @@ export async function uninstallSkill(name: string): Promise<void> {
 
 export async function listInstalledSkills(): Promise<SkillListItem[]> {
   return request<SkillListItem[]>("/api/skills");
+}
+
+export interface RepoBrowseSkill {
+  name: string;
+  description: string;
+  sha: string;
+  dir_path: string;
+  installed: boolean;
+}
+
+export interface RepoBrowseResult {
+  repo: string;
+  description: string;
+  avatar_url: string;
+  skills: RepoBrowseSkill[];
+}
+
+export async function browseRepo(repo: string): Promise<RepoBrowseResult> {
+  return request<RepoBrowseResult>(`/api/skills/browse?repo=${encodeURIComponent(repo)}`);
 }
 
 export const api = {
