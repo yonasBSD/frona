@@ -12,7 +12,7 @@ export default function SsoCallbackPage() {
     // After SSO redirect, the refresh cookie is set.
     // Revalidate will trigger a refresh flow to get an access token.
     revalidate().then(() => {
-      router.replace("/chat");
+      router.replace("/home");
     });
   }, [revalidate, router]);
 

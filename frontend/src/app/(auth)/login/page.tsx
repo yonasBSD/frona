@@ -17,7 +17,7 @@ export default function LoginPage() {
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get("redirect") || "/chat";
+  const redirectTo = searchParams.get("redirect") || "/home";
   const { login, user, revalidate, ssoStatus, initiateSso } = useAuth();
 
   useEffect(() => {

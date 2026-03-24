@@ -43,7 +43,7 @@ export function ChatsTab() {
 
   const handleNewChat = () => {
     setActiveChat(null);
-    if (activeChatId) router.push("/chat");
+    router.push("/chat");
   };
 
   const handleCreateSpace = async (e: React.FormEvent) => {

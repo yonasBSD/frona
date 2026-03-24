@@ -16,7 +16,7 @@ export default function Home() {
       } else if (needsSetup) {
         router.replace("/setup");
       } else {
-        router.replace("/chat");
+        router.replace("/home");
       }
     }
   }, [user, loading, needsSetup, router]);

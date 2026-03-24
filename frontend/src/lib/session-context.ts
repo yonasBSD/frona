@@ -53,7 +53,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const activeChatId = chatIdParam ?? activeTask?.chat_id ?? null;
   const activeTaskId = taskIdParam;
   const [activeChat, setActiveChat] = useState<ChatResponse | null>(null);
-  const agentId = activeChat?.agent_id ?? agentParam ?? (activeChatId ? "system" : null);
+  const agentId = activeChat?.agent_id ?? agentParam ?? "system";
   const [inferring, setInferring] = useState(false);
   const { updateChatTitle, updateAgent, updateTaskInList, setActiveTab } = useNavigation();
   const { addNotification } = useNotifications();
