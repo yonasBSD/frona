@@ -609,13 +609,40 @@ impl MemoryService {
         // Prompt is ordered static → almost-static → dynamic to maximise
         // the cacheable prefix for LLM prompt caching.
 
-        // --- Static: base prompt + shared prompt files ---
+        // --- Instructions: base prompt + shared prompt files ---
         let mut result = base_prompt.to_string();
 
-        if let Some(skills_section) = crate::agent::skill::render::render_skills_section(skills, &self.prompts) {
+        const CORE_IDENTITY_KEYS: &[&str] = &["name", "creature", "vibe"];
+        let has_core_identity = CORE_IDENTITY_KEYS
+            .iter()
+            .all(|core_key| identity.keys().any(|k| k.eq_ignore_ascii_case(core_key)));
+
+        if !has_core_identity
+            && let Some(identity_prompt) = self.load_prompt("IDENTITY.md", Some(agent_id))
+        {
             result.push_str("\n\n");
-            result.push_str(&skills_section);
+            result.push_str(&identity_prompt);
         }
+
+        const AGENT_PROMPTS: &[&str] = &["WORKSPACE.md", "TOOLS.md", "SKILLS.md", "MEMORY.md", "SCHEDULING.md"];
+        for name in AGENT_PROMPTS {
+            if let Some(content) = self.prompts.read(name) {
+                result.push_str("\n\n");
+                result.push_str(&content);
+            }
+        }
+
+        // --- Data: all XML-tagged blocks ---
+        let skill_items: Vec<(String, String)> = skills
+            .iter()
+            .map(|s| (s.name.clone(), format!("{} (file: {}/SKILL.md)", s.description, s.path)))
+            .collect();
+        append_tagged_section(
+            &mut result,
+            "available_skills",
+            None,
+            &skill_items,
+        );
 
         append_tagged_section(
             &mut result,
@@ -632,26 +659,6 @@ impl MemoryService {
             None,
             &identity_pairs,
         );
-
-        const CORE_IDENTITY_KEYS: &[&str] = &["name", "creature", "vibe"];
-        let has_core_identity = CORE_IDENTITY_KEYS
-            .iter()
-            .all(|core_key| identity.keys().any(|k| k.eq_ignore_ascii_case(core_key)));
-
-        if !has_core_identity
-            && let Some(identity_prompt) = self.load_prompt("IDENTITY.md", Some(agent_id))
-        {
-            result.push_str("\n\n");
-            result.push_str(&identity_prompt);
-        }
-
-        const AGENT_PROMPTS: &[&str] = &["WORKSPACE.md", "TOOLS.md", "MEMORY.md", "SCHEDULING.md"];
-        for name in AGENT_PROMPTS {
-            if let Some(content) = self.prompts.read(name) {
-                result.push_str("\n\n");
-                result.push_str(&content);
-            }
-        }
 
         // --- Dynamic: space context, user memory, agent memory ---
         if let Some(sid) = space_id

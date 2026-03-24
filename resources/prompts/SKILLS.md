@@ -1,11 +1,8 @@
-## Skills
-A skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and file path so you can open the source for full instructions when using a specific skill.
-### Available skills
-<available_skills>
-{{skills_list}}
-</available_skills>
-### How to use skills
-- Discovery: The list above is the skills available in this session (name + description + file path). Skill bodies live on disk at the listed paths.
+# Skills
+A skill is a set of local instructions to follow that is stored in a `SKILL.md` file. The `<available_skills>` section lists skills available in this session (name + description + file path). You can open the source for full instructions when using a specific skill.
+
+## How to use skills
+- Discovery: Check `<available_skills>` for available skills. Skill bodies live on disk at the listed paths.
 - Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches a skill's description shown above, you must use that skill for that turn. Multiple mentions mean use them all. Do not carry skills across turns unless re-mentioned.
 - Missing/blocked: If a named skill isn't in the list or the path can't be read, say so briefly and continue with the best fallback.
 - How to use a skill (progressive disclosure):
