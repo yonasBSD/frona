@@ -602,7 +602,7 @@ impl MemoryService {
         agent_id: &str,
         user_id: &str,
         space_id: Option<&str>,
-        skill_summaries: &[(String, String)],
+        skills: &[crate::agent::skill::resolver::Skill],
         agent_summaries: &[(String, String)],
         identity: &std::collections::BTreeMap<String, String>,
     ) -> Result<String, AppError> {
@@ -612,12 +612,10 @@ impl MemoryService {
         // --- Static: base prompt + shared prompt files ---
         let mut result = base_prompt.to_string();
 
-        append_tagged_section(
-            &mut result,
-            "available_skills",
-            self.prompts.read("AVAILABLE_SKILLS.md").as_deref(),
-            skill_summaries,
-        );
+        if let Some(skills_section) = crate::agent::skill::render::render_skills_section(skills, &self.prompts) {
+            result.push_str("\n\n");
+            result.push_str(&skills_section);
+        }
 
         append_tagged_section(
             &mut result,

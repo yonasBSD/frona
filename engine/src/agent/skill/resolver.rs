@@ -5,17 +5,10 @@ use crate::agent::config::parse_frontmatter;
 use crate::storage::StorageService;
 
 #[derive(Debug, Clone)]
-pub struct SkillSummary {
+pub struct Skill {
     pub name: String,
     pub description: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedSkill {
-    pub name: String,
-    pub description: String,
-    pub content: String,
-    pub path: Option<String>,
+    pub path: String,
 }
 
 #[derive(Clone)]
@@ -51,7 +44,7 @@ impl SkillResolver {
     /// 1. Agent Workspace FS
     /// 2. Installed skills dir (data/skills/) — filtered by agent_skills when non-empty
     /// 3. Built-in FS (resources/skills/) — filtered by agent_skills when non-empty
-    pub fn list(&self, agent_id: &str, agent_skills: &[String]) -> Vec<SkillSummary> {
+    pub fn list(&self, agent_id: &str, agent_skills: &[String]) -> Vec<Skill> {
         let mut seen = HashMap::new();
 
         // Tier 1: Agent workspace FS (always included)
@@ -68,108 +61,43 @@ impl SkillResolver {
                     .get("description")
                     .cloned()
                     .unwrap_or_default();
-                seen.insert(name.clone(), SkillSummary {
+
+                let dir_path = ws
+                    .resolve_path(&format!("skills/{name}"))
+                    .and_then(|p| std::fs::canonicalize(&p).ok())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+
+                seen.insert(name.clone(), Skill {
                     name,
                     description,
+                    path: dir_path,
                 });
             }
         }
 
         // Tier 2: Installed skills (filtered when agent_skills is non-empty)
         if let Some(dir) = &self.installed_dir {
-            for summary in self.scan_fs_skills(dir) {
-                if !agent_skills.is_empty() && !agent_skills.contains(&summary.name) {
+            for skill in self.scan_fs_skills(dir) {
+                if !agent_skills.is_empty() && !agent_skills.contains(&skill.name) {
                     continue;
                 }
-                seen.entry(summary.name.clone()).or_insert(summary);
+                seen.entry(skill.name.clone()).or_insert(skill);
             }
         }
 
         // Tier 3: Built-in FS (filtered when agent_skills is non-empty)
-        for summary in self.scan_fs_skills(&self.config_dir.join("skills")) {
-            if !agent_skills.is_empty() && !agent_skills.contains(&summary.name) {
+        for skill in self.scan_fs_skills(&self.config_dir.join("skills")) {
+            if !agent_skills.is_empty() && !agent_skills.contains(&skill.name) {
                 continue;
             }
-            seen.entry(summary.name.clone()).or_insert(summary);
+            seen.entry(skill.name.clone()).or_insert(skill);
         }
 
         seen.into_values().collect()
     }
 
-    /// Resolution order:
-    /// 1. Agent Workspace FS
-    /// 2. Installed skills dir — filtered by agent_skills when non-empty
-    /// 3. Built-in FS — filtered by agent_skills when non-empty
-    pub fn resolve(&self, agent_id: &str, agent_skills: &[String], name: &str) -> Option<ResolvedSkill> {
-        // Tier 1: Agent workspace FS (always allowed)
-        let ws = self.storage.agent_workspace(agent_id);
-        let skill_path = format!("skills/{name}/SKILL.md");
-        if let Some(content) = ws.read(&skill_path) {
-            let parsed = parse_frontmatter(&content);
-            let description = parsed
-                .metadata
-                .get("description")
-                .cloned()
-                .unwrap_or_default();
-
-            let dir_path = ws.resolve_path(&format!("skills/{name}"))
-                .and_then(|p| std::fs::canonicalize(&p).ok())
-                .map(|p| p.to_string_lossy().into_owned());
-
-            let mut full_content = parsed.template.clone();
-            if !full_content.ends_with('\n') {
-                full_content.push('\n');
-            }
-
-            return Some(ResolvedSkill {
-                name: name.to_string(),
-                description,
-                content: full_content,
-                path: dir_path,
-            });
-        }
-
-        // Check allowlist for non-workspace tiers
-        if !agent_skills.is_empty() && !agent_skills.contains(&name.to_string()) {
-            return None;
-        }
-
-        // Tier 2: Installed skills
-        if let Some(dir) = &self.installed_dir {
-            let installed_skill_dir = dir.join(name);
-            if let Some(skill) = self.read_fs_skill(name, &installed_skill_dir) {
-                return Some(skill);
-            }
-        }
-
-        // Tier 3: Built-in FS
-        let global_skill_dir = self.config_dir.join("skills").join(name);
-        self.read_fs_skill(name, &global_skill_dir)
-    }
-
-    pub fn skill_dir_path(&self, agent_id: &str, name: &str) -> Option<PathBuf> {
-        let ws = self.storage.agent_workspace(agent_id);
-        if let Some(path) = ws.resolve_path(&format!("skills/{name}/SKILL.md")) {
-            return path.parent().map(|p| p.to_path_buf());
-        }
-
-        // Installed skills dir
-        if let Some(dir) = &self.installed_dir {
-            let installed_path = dir.join(name);
-            if installed_path.join("SKILL.md").exists() {
-                return Some(installed_path);
-            }
-        }
-
-        let global_path = self.config_dir.join("skills").join(name);
-        if global_path.join("SKILL.md").exists() {
-            return Some(global_path);
-        }
-
-        None
-    }
-
-    fn scan_fs_skills(&self, dir: &Path) -> Vec<SkillSummary> {
+    fn scan_fs_skills(&self, dir: &Path) -> Vec<Skill> {
         let mut results = Vec::new();
         let Ok(entries) = std::fs::read_dir(dir) else {
             return results;
@@ -190,40 +118,19 @@ impl SkillResolver {
                     .get("description")
                     .cloned()
                     .unwrap_or_default();
-                results.push(SkillSummary {
+
+                let abs_dir = std::fs::canonicalize(entry.path())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| entry.path().to_string_lossy().into_owned());
+
+                results.push(Skill {
                     name: skill_name,
                     description,
+                    path: abs_dir,
                 });
             }
         }
 
         results
-    }
-
-    fn read_fs_skill(&self, name: &str, dir: &Path) -> Option<ResolvedSkill> {
-        let skill_md = dir.join("SKILL.md");
-        let content = std::fs::read_to_string(&skill_md).ok()?;
-        let parsed = parse_frontmatter(&content);
-        let description = parsed
-            .metadata
-            .get("description")
-            .cloned()
-            .unwrap_or_default();
-
-        let abs_dir = std::fs::canonicalize(dir)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| dir.to_string_lossy().into_owned());
-
-        let mut full_content = parsed.template.clone();
-        if !full_content.ends_with('\n') {
-            full_content.push('\n');
-        }
-
-        Some(ResolvedSkill {
-            name: name.to_string(),
-            description,
-            content: full_content,
-            path: Some(abs_dir),
-        })
     }
 }

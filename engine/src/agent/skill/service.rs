@@ -11,7 +11,7 @@ use crate::core::error::AppError;
 use crate::storage::StorageService;
 
 use super::registry::{self, SkillRegistryClient};
-use super::resolver::{ResolvedSkill, SkillResolver, SkillSummary};
+use super::resolver::{Skill, SkillResolver};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillListItem {
@@ -96,8 +96,7 @@ pub struct SkillService {
     resolver: SkillResolver,
     storage: StorageService,
     installed_dir: PathBuf,
-    list_cache: Arc<moka::future::Cache<String, Vec<SkillSummary>>>,
-    resolve_cache: Arc<moka::future::Cache<String, Option<ResolvedSkill>>>,
+    list_cache: Arc<moka::future::Cache<String, Vec<Skill>>>,
     browse_cache: Arc<moka::future::Cache<String, RepoBrowseResult>>,
 }
 
@@ -110,12 +109,6 @@ impl SkillService {
         cache_config: &CacheConfig,
     ) -> Self {
         let list_cache = Arc::new(
-            moka::future::Cache::builder()
-                .max_capacity(cache_config.entity_max_capacity)
-                .time_to_live(std::time::Duration::from_secs(cache_config.entity_ttl_secs))
-                .build(),
-        );
-        let resolve_cache = Arc::new(
             moka::future::Cache::builder()
                 .max_capacity(cache_config.entity_max_capacity)
                 .time_to_live(std::time::Duration::from_secs(cache_config.entity_ttl_secs))
@@ -134,7 +127,6 @@ impl SkillService {
             storage,
             installed_dir: installed_dir.into(),
             list_cache,
-            resolve_cache,
             browse_cache,
         }
     }
@@ -143,7 +135,6 @@ impl SkillService {
         use notify::{RecursiveMode, Watcher};
 
         let list_cache = self.list_cache.clone();
-        let resolve_cache = self.resolve_cache.clone();
         let browse_cache = self.browse_cache.clone();
 
         let mut dirs_to_watch = vec![self.installed_dir.clone()];
@@ -174,7 +165,6 @@ impl SkillService {
                 match event {
                     Ok(_) => {
                         list_cache.invalidate_all();
-                        resolve_cache.invalidate_all();
                         browse_cache.invalidate_all();
                     }
                     Err(e) => {
@@ -185,7 +175,7 @@ impl SkillService {
         });
     }
 
-    pub async fn list(&self, agent_id: &str, agent_skills: &[String]) -> Vec<SkillSummary> {
+    pub async fn list(&self, agent_id: &str, agent_skills: &[String]) -> Vec<Skill> {
         let cache_key = format!("{agent_id}:{}", skills_hash(agent_skills));
         if let Some(cached) = self.list_cache.get(&cache_key).await {
             return cached;
@@ -193,20 +183,6 @@ impl SkillService {
         let result = self.resolver.list(agent_id, agent_skills);
         self.list_cache.insert(cache_key, result.clone()).await;
         result
-    }
-
-    pub async fn resolve(&self, agent_id: &str, agent_skills: &[String], name: &str) -> Option<ResolvedSkill> {
-        let cache_key = format!("{agent_id}:{}:{name}", skills_hash(agent_skills));
-        if let Some(cached) = self.resolve_cache.get(&cache_key).await {
-            return cached;
-        }
-        let result = self.resolver.resolve(agent_id, agent_skills, name);
-        self.resolve_cache.insert(cache_key, result.clone()).await;
-        result
-    }
-
-    pub fn skill_dir_path(&self, agent_id: &str, name: &str) -> Option<PathBuf> {
-        self.resolver.skill_dir_path(agent_id, name)
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<SkillSearchResult>, AppError> {
@@ -536,10 +512,8 @@ impl SkillService {
 
     async fn invalidate_caches(&self) {
         self.list_cache.invalidate_all();
-        self.resolve_cache.invalidate_all();
         self.browse_cache.invalidate_all();
         self.list_cache.run_pending_tasks().await;
-        self.resolve_cache.run_pending_tasks().await;
         self.browse_cache.run_pending_tasks().await;
     }
 

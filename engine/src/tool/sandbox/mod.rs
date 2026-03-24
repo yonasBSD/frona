@@ -42,7 +42,6 @@ impl SandboxManager {
             sandbox: create_driver(self.sandbox_disabled),
             network_access,
             allowed_network_destinations,
-            skill_dirs: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: self.shared_read_paths.clone(),
             shared_write_paths: Vec::new(),
@@ -55,18 +54,12 @@ pub struct Sandbox {
     sandbox: Box<dyn driver::SandboxDriver>,
     network_access: bool,
     allowed_network_destinations: Vec<String>,
-    skill_dirs: Vec<(String, String)>,
     extra_env_vars: Vec<(String, String)>,
     shared_read_paths: Vec<String>,
     shared_write_paths: Vec<String>,
 }
 
 impl Sandbox {
-    pub fn with_skill_dirs(mut self, skill_dirs: Vec<(String, String)>) -> Self {
-        self.skill_dirs = skill_dirs;
-        self
-    }
-
     pub fn with_extra_env_vars(mut self, vars: Vec<(String, String)>) -> Self {
         self.extra_env_vars = vars;
         self
@@ -236,30 +229,10 @@ impl Sandbox {
         let mut config = self.base_config()?;
         config.timeout_secs = timeout_secs;
 
-        let mut resolved_args: Vec<String> = Vec::new();
-
-        for arg in args {
-            let mut resolved = arg.to_string();
-            for (prefix, abs_dir) in &self.skill_dirs {
-                if resolved.contains(prefix) {
-                    resolved = resolved.replace(prefix, abs_dir);
-                }
-                if !config.additional_read_paths.contains(abs_dir) {
-                    config.additional_read_paths.push(abs_dir.clone());
-                }
-                if !config.additional_path_dirs.contains(abs_dir) {
-                    config.additional_path_dirs.push(abs_dir.clone());
-                }
-            }
-            resolved_args.push(resolved);
-        }
-
-        let resolved_refs: Vec<&str> = resolved_args.iter().map(|s| s.as_str()).collect();
-
         execute_sandboxed(
             &*self.sandbox,
             program,
-            &resolved_refs,
+            args,
             &config,
             on_stdout,
             stdin_rx,
@@ -288,7 +261,7 @@ mod tests {
             sandbox: create_driver(false),
             network_access: false,
             allowed_network_destinations: Vec::new(),
-            skill_dirs: Vec::new(),
+
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
             shared_write_paths: Vec::new(),
@@ -329,7 +302,7 @@ mod tests {
             sandbox: create_driver(false),
             network_access: false,
             allowed_network_destinations: Vec::new(),
-            skill_dirs: Vec::new(),
+
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
             shared_write_paths: Vec::new(),

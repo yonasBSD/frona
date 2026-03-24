@@ -109,28 +109,19 @@ impl AgentTool for CliTool {
         let agent_id = &ctx.agent.id;
         let defaults = ctx.agent.sandbox_config.clone().unwrap_or_default();
 
-        let skill_dirs: Vec<(String, String)> = self
+        let skill_read_paths: Vec<String> = self
             .skill_service
             .list(agent_id, &ctx.agent.skills)
             .await
             .into_iter()
-            .filter_map(|s| {
-                self.skill_service
-                    .skill_dir_path(agent_id, &s.name)
-                    .map(|p| {
-                        let abs = std::fs::canonicalize(&p)
-                            .map(|c| c.to_string_lossy().into_owned())
-                            .unwrap_or_else(|_| p.to_string_lossy().into_owned());
-                        (format!("skills/{}/", s.name), abs)
-                    })
-            })
+            .map(|s| s.path)
             .collect();
 
         let mut sandbox = self.sandbox_manager.get_sandbox(
             agent_id,
             defaults.network_access,
             defaults.allowed_network_destinations,
-        ).with_skill_dirs(skill_dirs);
+        ).with_read_paths(skill_read_paths);
 
         if !ctx.file_paths.is_empty() {
             sandbox = sandbox.with_write_paths(ctx.file_paths.clone());

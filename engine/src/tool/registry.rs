@@ -94,7 +94,6 @@ pub fn build_tool_registry(
     use super::remember::{RememberTool, RememberUserFactTool};
     use super::request_credentials::RequestCredentialsTool;
     use super::schedule::ScheduleTaskTool;
-    use super::skill::SkillTool;
     use super::task_control::TaskControlTool;
     use super::time::TimeTool;
     use super::update_entity::UpdateEntityTool;
@@ -135,11 +134,6 @@ pub fn build_tool_registry(
     registry.register(Arc::new(RememberUserFactTool::new(
         state.memory_service.clone(),
         state.compaction_model_group(),
-        prompts.clone(),
-    )));
-
-    registry.register(Arc::new(SkillTool::new(
-        state.skill_service.clone(),
         prompts.clone(),
     )));
 

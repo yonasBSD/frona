@@ -48,13 +48,10 @@ impl ChatSessionContext {
             .resolve_agent_config(&chat.agent_id)
             .await?;
 
-        let skill_summaries: Vec<(String, String)> = state
+        let skills = state
             .skill_service
             .list(&chat.agent_id, &agent_config.skills)
-            .await
-            .into_iter()
-            .map(|s| (s.name, s.description))
-            .collect();
+            .await;
 
         let agent_summaries =
             crate::tool::registry::build_agent_summaries(
@@ -72,7 +69,7 @@ impl ChatSessionContext {
                 &chat.agent_id,
                 user_id,
                 chat.space_id.as_deref(),
-                &skill_summaries,
+                &skills,
                 &agent_summaries,
                 &agent_config.identity,
             )

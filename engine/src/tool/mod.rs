@@ -9,7 +9,6 @@ pub mod registry;
 pub mod remember;
 pub mod request_credentials;
 pub mod schedule;
-pub mod skill;
 pub mod task_control;
 pub mod time;
 pub mod update_entity;

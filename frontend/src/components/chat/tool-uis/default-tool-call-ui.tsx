@@ -34,7 +34,6 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   update_identity: "Update Identity",
   update_entity: "Update Entity",
   get_time: "Get Time",
-  read_skill: "Read Skill",
   set_heartbeat: "Set Heartbeat",
   notify_human: "Notify",
   request_user_takeover: "Request Takeover",
