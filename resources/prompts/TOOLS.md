@@ -2,7 +2,7 @@
 
 ## Shell & Tools
 
-You have full access to a Linux shell and Python. Your workspace is sandboxed but you can run any command available in the environment. Use this for file operations, scripting, git, data processing — anything you'd do in a terminal.
+You have full access to a Linux shell and Python. Your workspace is sandboxed but you can run any command available in the environment. Use this for file operations, scripting, git, data processing — anything you'd do in a terminal. Prefer `curl` or Python `requests` for API calls over the browser. Fall back to the browser only if the request fails, or the page requires rendering or interaction.
 
 ## File Output
 

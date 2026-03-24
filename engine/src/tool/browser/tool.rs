@@ -372,7 +372,7 @@ impl AgentTool for BrowserTool {
             .ok()
             .and_then(|creds| creds.into_iter().next())
             .map(|c| c.provider)
-            .ok_or_else(|| AppError::Tool("No browser credential found. Add a browser credential first.".into()))?;
+            .unwrap_or_else(|| "default".to_string());
 
         let browser_tool_name = match tool_name {
             "browser_navigate" => "navigate",
