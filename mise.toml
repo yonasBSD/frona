@@ -103,5 +103,4 @@ description = "Remove build artifacts and generated files"
 run = """
 cargo clean
 rm -rf frontend/.next frontend/node_modules frontend/out
-rm -rf data/db
 """
