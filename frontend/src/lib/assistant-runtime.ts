@@ -3,7 +3,7 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useLocalRuntime } from "@assistant-ui/react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
-import { createChatAdapter, fronaAttachmentAdapter, registerBackendAttachment } from "./chat-adapter";
+import { createChatAdapter, fronaAttachmentAdapter, registerBackendAttachment, promoteTurnText } from "./chat-adapter";
 import { sseBus } from "./sse-event-bus";
 import { api, fileDownloadUrl } from "./api-client";
 import type { MessageResponse, ChatResponse, Attachment } from "./types";
@@ -57,21 +57,11 @@ function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
       content.push({ type: "reasoning" as const, text: msg.reasoning });
     }
 
-    // Use message content, or fall back to the last turn_text from tool
-    // executions so the message isn't empty when the agent spoke before a tool call
-    // but produced no text after it.
-    let textContent = msg.content;
-    if (!textContent && msg.tool_executions?.length) {
-      for (const te of msg.tool_executions) {
-        if (te.turn_text) textContent = te.turn_text;
-      }
+    if (msg.content) {
+      content.push({ type: "text" as const, text: msg.content });
     }
 
-    if (textContent) {
-      content.push({ type: "text" as const, text: textContent });
-    }
-
-    if (!textContent && !msg.reasoning && !msg.event) {
+    if (!msg.content && !msg.reasoning && !msg.event) {
       content.push({ type: "text" as const, text: "" });
     }
 
@@ -114,7 +104,7 @@ function convertMessage(msg: MessageResponse): ThreadMessageLike | null {
     return {
       id: msg.id,
       role: "assistant" as const,
-      content,
+      content: promoteTurnText(content),
       createdAt: new Date(msg.created_at),
       status: msg.tool_executions?.some(te => te.tool_data && te.tool_data.data.status === "pending")
         || msg.status === "executing"

@@ -97,6 +97,34 @@ function buildParts(
   return parts;
 }
 
+/**
+ * If the text part is empty but a tool call has turnText, promote the last
+ * turnText to the main text and strip it from all tool call args.
+ * This handles the case where the agent spoke before a side-effect tool call
+ * (e.g. store_user_memory) but produced no text after it.
+ */
+export function promoteTurnText<T extends { type: string; text?: string; args?: Record<string, unknown> }>(parts: T[]): T[] {
+  const textPart = parts.find((p): p is T & { type: "text"; text: string } => p.type === "text");
+  if (textPart?.text?.trim()) return parts;
+
+  let lastTurnText = "";
+  for (const p of parts) {
+    if (p.type === "tool-call" && typeof p.args?.turnText === "string") {
+      lastTurnText = p.args.turnText;
+    }
+  }
+  if (!lastTurnText) return parts;
+
+  return parts.map(p => {
+    if (p.type === "text") return { ...p, text: lastTurnText };
+    if (p.type === "tool-call" && p.args?.turnText) {
+      const { turnText: _, ...rest } = p.args;
+      return { ...p, args: rest };
+    }
+    return p;
+  });
+}
+
 /** Only cancel generation when the user explicitly clicks Stop, not on component unmount. */
 function onUserCancel(abortSignal: AbortSignal, chatId: string): () => void {
   return () => {
@@ -339,17 +367,12 @@ async function* streamEvents(
       if (result.yield) {
         // Only show text from the current turn (after the last tool call).
         // Earlier turn text is already captured as turnText bubbles on tool calls.
-        // If the stream ends with no text after the last tool call, fall back to
-        // the previous turn's text so the message isn't empty.
-        let displayText = lastTextSnapshot > 0
+        const displayText = lastTextSnapshot > 0
           ? text.slice(lastTextSnapshot)
           : text;
-        if (result.done && !displayText.trim() && lastTextSnapshot > 0) {
-          displayText = text.slice(0, lastTextSnapshot);
-        }
-        const update: Record<string, unknown> = {
-          content: buildParts(displayText, reasoning, toolCalls, toolResults),
-        };
+        let content = buildParts(displayText, reasoning, toolCalls, toolResults);
+        if (result.done) content = promoteTurnText(content);
+        const update: Record<string, unknown> = { content };
         if (result.done && result.requiresAction) {
           update.status = { type: "requires-action", reason: "tool-calls" };
         }
