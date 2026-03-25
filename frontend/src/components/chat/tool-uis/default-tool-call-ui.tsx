@@ -118,8 +118,10 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
 
   const isCancelled =
     status?.type === "incomplete" && status.reason === "cancelled";
-  const description =
+  const rawDescription =
     typeof args?.description === "string" ? args.description : null;
+  const description =
+    rawDescription && rawDescription !== toolName ? rawDescription : null;
   const turnText =
     typeof args?.turnText === "string" ? args.turnText : null;
   const statusType = status?.type ?? "complete";
