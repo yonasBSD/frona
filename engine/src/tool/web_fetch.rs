@@ -23,7 +23,7 @@ impl WebFetchTool {
     }
 
     fn provider(&self) -> &str {
-        "web_fetch"
+        "default"
     }
 }
 
