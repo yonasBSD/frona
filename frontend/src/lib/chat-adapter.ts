@@ -339,9 +339,14 @@ async function* streamEvents(
       if (result.yield) {
         // Only show text from the current turn (after the last tool call).
         // Earlier turn text is already captured as turnText bubbles on tool calls.
-        const displayText = lastTextSnapshot > 0
+        // If the stream ends with no text after the last tool call, fall back to
+        // the previous turn's text so the message isn't empty.
+        let displayText = lastTextSnapshot > 0
           ? text.slice(lastTextSnapshot)
           : text;
+        if (result.done && !displayText.trim() && lastTextSnapshot > 0) {
+          displayText = text.slice(0, lastTextSnapshot);
+        }
         const update: Record<string, unknown> = {
           content: buildParts(displayText, reasoning, toolCalls, toolResults),
         };
