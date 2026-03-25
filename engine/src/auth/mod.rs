@@ -8,7 +8,7 @@ use async_trait::async_trait;
 
 pub use self::models::User;
 pub use self::user_service::UserService;
-use self::models::{AuthResponse, LoginRequest, RegisterRequest, UpdateUsernameRequest, UserInfo};
+use self::models::{AuthResponse, LoginRequest, RegisterRequest, UpdateProfileRequest, UpdateUsernameRequest, UserInfo};
 use crate::auth::token::service::TokenService;
 use crate::core::config::Config;
 use crate::core::error::AppError;
@@ -54,6 +54,7 @@ impl AuthService {
             email: req.email,
             name: req.name,
             password_hash,
+            timezone: None,
             created_at: now,
             updated_at: now,
         };
@@ -69,6 +70,7 @@ impl AuthService {
                 username: user.username,
                 email: user.email,
                 name: user.name,
+                timezone: user.timezone,
                 needs_setup: None,
             },
         };
@@ -101,6 +103,7 @@ impl AuthService {
                 username: user.username,
                 email: user.email,
                 name: user.name,
+                timezone: user.timezone,
                 needs_setup: None,
             },
         };
@@ -247,11 +250,37 @@ impl AuthService {
                 username: user.username,
                 email: user.email,
                 name: user.name,
+                timezone: user.timezone,
                 needs_setup: None,
             },
         };
 
         Ok((response, refresh_jwt))
+    }
+
+    pub async fn update_profile(
+        &self,
+        user_service: &UserService,
+        user_id: &str,
+        req: UpdateProfileRequest,
+    ) -> Result<UserInfo, AppError> {
+        let mut user = user_service
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+
+        user.timezone = req.timezone;
+        user.updated_at = chrono::Utc::now();
+        user_service.update(&user).await?;
+
+        Ok(UserInfo {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            name: user.name,
+            timezone: user.timezone,
+            needs_setup: None,
+        })
     }
 
     fn hash_password(&self, password: &str) -> Result<String, AppError> {

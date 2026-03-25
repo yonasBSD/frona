@@ -10,7 +10,6 @@ pub mod memory;
 pub mod request_credentials;
 pub mod schedule;
 pub mod task_control;
-pub mod time;
 pub mod update_entity;
 pub mod update_identity;
 pub mod voice;

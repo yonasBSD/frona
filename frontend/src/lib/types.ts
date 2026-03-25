@@ -3,6 +3,7 @@ export interface UserInfo {
   username: string;
   email: string;
   name: string;
+  timezone?: string;
   needs_setup?: boolean;
 }
 

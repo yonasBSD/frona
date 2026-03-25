@@ -22,6 +22,7 @@ fn test_user() -> User {
         email: "test@example.com".to_string(),
         name: "Test User".to_string(),
         password_hash: "hashed_password".to_string(),
+        timezone: None,
         created_at: now,
         updated_at: now,
     }

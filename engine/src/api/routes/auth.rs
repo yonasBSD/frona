@@ -10,7 +10,7 @@ use tower_governor::key_extractor::SmartIpKeyExtractor;
 use crate::api::cookie::{
     extract_refresh_token_from_cookie_header, make_clear_refresh_cookie, make_refresh_cookie,
 };
-use crate::auth::models::{AuthResponse, LoginRequest, RegisterRequest, UpdateUsernameRequest, UserInfo};
+use crate::auth::models::{AuthResponse, LoginRequest, RegisterRequest, UpdateProfileRequest, UpdateUsernameRequest, UserInfo};
 use crate::auth::token::models::CreatePatRequest;
 use crate::core::error::AppError;
 
@@ -37,6 +37,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/refresh", post(refresh))
         .route("/api/auth/username", put(change_username))
+        .route("/api/auth/profile", put(update_profile))
         .route("/api/auth/tokens", post(create_pat).get(list_pats))
         .route("/api/auth/tokens/{id}", delete(delete_pat))
         .route("/api/auth/sso", get(sso_status))
@@ -128,6 +129,7 @@ async fn me(
         username: user.username,
         email: user.email,
         name: user.name,
+        timezone: user.timezone,
         needs_setup,
     }))
 }
@@ -158,6 +160,18 @@ async fn change_username(
     );
 
     Ok(([(SET_COOKIE, cookie)], Json(response)))
+}
+
+async fn update_profile(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<UpdateProfileRequest>,
+) -> Result<Json<UserInfo>, ApiError> {
+    let user_info = state
+        .auth_service
+        .update_profile(&state.user_service, &auth.user_id, req)
+        .await?;
+    Ok(Json(user_info))
 }
 
 async fn logout(

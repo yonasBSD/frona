@@ -13,6 +13,8 @@ pub struct User {
     pub email: String,
     pub name: String,
     pub password_hash: String,
+    #[serde(default)]
+    pub timezone: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -44,12 +46,19 @@ pub struct UserInfo {
     pub email: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub needs_setup: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateUsernameRequest {
     pub username: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

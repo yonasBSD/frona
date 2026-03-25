@@ -252,6 +252,7 @@ pub fn mock_context() -> InferenceContext {
             email: "test@test.com".into(),
             name: "Test".into(),
             password_hash: String::new(),
+            timezone: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         },

@@ -95,7 +95,6 @@ pub fn build_tool_registry(
     use super::request_credentials::RequestCredentialsTool;
     use super::schedule::ScheduleTaskTool;
     use super::task_control::TaskControlTool;
-    use super::time::TimeTool;
     use super::update_entity::UpdateEntityTool;
     use super::update_identity::UpdateIdentityTool;
     use super::web_fetch::WebFetchTool;
@@ -105,7 +104,6 @@ pub fn build_tool_registry(
 
     let prompts = state.prompts.clone();
 
-    registry.register(Arc::new(TimeTool::new(prompts.clone())));
     registry.register(Arc::new(NotifyHumanTool::new(state.vault_service.clone(), prompts.clone())));
 
     let workspaces_path = std::path::PathBuf::from(&state.config.storage.workspaces_path);
@@ -307,6 +305,7 @@ mod tests {
                 email: "test@test.com".into(),
                 name: "Test".into(),
                 password_hash: String::new(),
+                timezone: None,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },

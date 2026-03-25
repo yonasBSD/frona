@@ -128,9 +128,12 @@ impl AgentTool for CliTool {
         }
 
         {
-            let vault_vars = ctx.vault_env_vars.read().await;
-            if !vault_vars.is_empty() {
-                sandbox = sandbox.with_extra_env_vars(vault_vars.clone());
+            let mut extra_vars = ctx.vault_env_vars.read().await.clone();
+            if let Some(tz) = &ctx.user.timezone {
+                extra_vars.push(("TZ".to_string(), tz.clone()));
+            }
+            if !extra_vars.is_empty() {
+                sandbox = sandbox.with_extra_env_vars(extra_vars);
             }
         }
 
@@ -338,6 +341,7 @@ mod tests {
                 email: "test@test.com".into(),
                 name: "Test".into(),
                 password_hash: String::new(),
+                timezone: None,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },

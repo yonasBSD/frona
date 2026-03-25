@@ -184,6 +184,7 @@ impl TokenService {
             email: claims.email.clone(),
             name: String::new(),
             password_hash: String::new(),
+            timezone: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

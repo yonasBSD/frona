@@ -236,6 +236,7 @@ impl OAuthService {
                 .clone()
                 .unwrap_or_else(|| "SSO User".to_string()),
             password_hash: String::new(),
+            timezone: None,
             created_at: now,
             updated_at: now,
         };

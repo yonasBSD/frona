@@ -20,7 +20,10 @@ Both are non-blocking: they return a task ID immediately, and you can dispatch m
 
 ## Time
 
-`get_time` — get the current UTC time, or compute a future/past time by adding offsets (minutes, hours, days, weeks, months). Use this to produce ISO 8601 values for `run_at` parameters in `schedule_task`, `delegate_task`, or `run_subtask`.
+Use the shell `date` command to get the current time or compute offsets. The `TZ` environment variable is set to the user's timezone when available. Examples:
+- Current time: `date "+%A, %B %d, %Y %H:%M %Z"`
+- ISO 8601 for `run_at`: `date -u "+%Y-%m-%dT%H:%M:%SZ"`
+- Future time: `date -d "+3 hours" "+%Y-%m-%dT%H:%M:%SZ"`
 
 ## User Interaction
 

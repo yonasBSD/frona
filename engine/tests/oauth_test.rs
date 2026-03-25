@@ -123,6 +123,7 @@ async fn test_email_matching_flow() {
         email: "existing@example.com".to_string(),
         name: "Existing User".to_string(),
         password_hash: "hash".to_string(),
+        timezone: None,
         created_at: now,
         updated_at: now,
     };
