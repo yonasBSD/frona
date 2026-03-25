@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         scheduler.start();
         info!(
             space_secs = config.scheduler.space_compaction_secs,
-            insight_secs = config.scheduler.insight_compaction_secs,
+            memory_secs = config.scheduler.memory_compaction_secs,
             poll_secs = config.scheduler.poll_secs,
             "Scheduler started"
         );

@@ -7,14 +7,14 @@ use crate::agent::execution::{self, AgentLoopOutcome};
 use crate::agent::models::Agent;
 use crate::agent::task::models::TaskKind;
 use crate::db::repo::generic::SurrealRepo;
-use crate::db::repo::insights::SurrealInsightRepo;
+use crate::db::repo::memory_entries::SurrealMemoryEntryRepo;
 use crate::core::state::AppState;
 use crate::chat::models::CreateChatRequest;
 use crate::chat::repository::ChatRepository;
 use crate::core::error::AppError;
 use crate::inference::config::ModelGroup;
 use crate::inference::InferenceResponse;
-use crate::memory::insight::repository::InsightRepository;
+use crate::memory::repository::MemoryEntryRepository;
 use crate::memory::models::MemorySourceType;
 use crate::space::repository::SpaceRepository;
 use crate::tool::schedule::next_cron_occurrence;
@@ -57,13 +57,13 @@ impl Scheduler {
     pub fn start(self: Arc<Self>) {
         let cfg = &self.app_state.config;
         let space = Duration::from_secs(cfg.scheduler.space_compaction_secs);
-        let insight = Duration::from_secs(cfg.scheduler.insight_compaction_secs);
+        let memory = Duration::from_secs(cfg.scheduler.memory_compaction_secs);
         let poll = Duration::from_secs(cfg.scheduler.poll_secs);
 
         let shutdown = self.app_state.shutdown_token.clone();
         spawn_periodic!(self, space, "space_compaction", run_space_compaction, shutdown);
-        spawn_periodic!(self, insight, "insight_compaction", run_insight_compaction, shutdown);
-        spawn_periodic!(self, insight, "user_insight_compaction", run_user_insight_compaction, shutdown);
+        spawn_periodic!(self, memory, "memory_compaction", run_memory_compaction, shutdown);
+        spawn_periodic!(self, memory, "user_memory_compaction", run_user_memory_compaction, shutdown);
         spawn_periodic!(self, poll, "poll_tasks", run_poll_tasks, shutdown);
         spawn_periodic!(self, space, "token_cleanup", run_token_cleanup, shutdown);
     }
@@ -278,43 +278,43 @@ impl Scheduler {
         Ok(())
     }
 
-    async fn run_insight_compaction(&self) -> Result<(), AppError> {
-        let repo: SurrealInsightRepo = SurrealRepo::new(self.app_state.db.clone());
+    async fn run_memory_compaction(&self) -> Result<(), AppError> {
+        let repo: SurrealMemoryEntryRepo = SurrealRepo::new(self.app_state.db.clone());
         let ids = repo.find_distinct_agent_ids().await?;
-        self.run_insight_compaction_for("agent", ids).await
+        self.run_memory_compaction_for("agent", ids).await
     }
 
-    async fn run_user_insight_compaction(&self) -> Result<(), AppError> {
-        let repo: SurrealInsightRepo = SurrealRepo::new(self.app_state.db.clone());
+    async fn run_user_memory_compaction(&self) -> Result<(), AppError> {
+        let repo: SurrealMemoryEntryRepo = SurrealRepo::new(self.app_state.db.clone());
         let ids = repo.find_distinct_user_ids().await?;
-        self.run_insight_compaction_for("user", ids).await
+        self.run_memory_compaction_for("user", ids).await
     }
 
-    async fn run_insight_compaction_for(
+    async fn run_memory_compaction_for(
         &self,
         kind: &str,
         ids: Vec<String>,
     ) -> Result<(), AppError> {
-        tracing::info!(count = ids.len(), kind = kind, "Starting scheduled insight compaction");
+        tracing::info!(count = ids.len(), kind = kind, "Starting scheduled memory compaction");
         for id in &ids {
-            tracing::info!(%id, kind = kind, "Running scheduled insight compaction");
+            tracing::info!(%id, kind = kind, "Running scheduled memory compaction");
             let result = match kind {
                 "agent" => {
                     self.app_state
                         .memory_service
-                        .compact_insights_if_needed(id, &self.compaction_model_group)
+                        .compact_entries_if_needed(id, &self.compaction_model_group)
                         .await
                 }
                 "user" => {
                     self.app_state
                         .memory_service
-                        .compact_user_insights_if_needed(id, &self.compaction_model_group)
+                        .compact_user_entries_if_needed(id, &self.compaction_model_group)
                         .await
                 }
                 _ => Ok(()),
             };
             if let Err(e) = result {
-                tracing::warn!(%id, kind = kind, error = %e, "Failed to compact insights");
+                tracing::warn!(%id, kind = kind, error = %e, "Failed to compact memory entries");
             }
         }
         Ok(())

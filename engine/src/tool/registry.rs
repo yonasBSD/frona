@@ -91,7 +91,7 @@ pub fn build_tool_registry(
     use super::heartbeat::HeartbeatTool;
     use super::notify_human::NotifyHumanTool;
     use super::produce_file::ProduceFileTool;
-    use super::remember::{RememberTool, RememberUserFactTool};
+    use super::memory::{StoreAgentMemoryTool, StoreUserMemoryTool};
     use super::request_credentials::RequestCredentialsTool;
     use super::schedule::ScheduleTaskTool;
     use super::task_control::TaskControlTool;
@@ -125,13 +125,13 @@ pub fn build_tool_registry(
         prompts.clone(),
     )));
 
-    registry.register(Arc::new(RememberTool::new(
+    registry.register(Arc::new(StoreAgentMemoryTool::new(
         state.memory_service.clone(),
         state.compaction_model_group(),
         prompts.clone(),
     )));
 
-    registry.register(Arc::new(RememberUserFactTool::new(
+    registry.register(Arc::new(StoreUserMemoryTool::new(
         state.memory_service.clone(),
         state.compaction_model_group(),
         prompts.clone(),

@@ -8,13 +8,13 @@ use frona_derive::agent_tool;
 
 use super::{InferenceContext, ToolOutput};
 
-pub struct RememberTool {
+pub struct StoreAgentMemoryTool {
     memory_service: MemoryService,
     compaction_group: Option<ModelGroup>,
     prompts: PromptLoader,
 }
 
-impl RememberTool {
+impl StoreAgentMemoryTool {
     pub fn new(
         memory_service: MemoryService,
         compaction_group: Option<ModelGroup>,
@@ -28,13 +28,13 @@ impl RememberTool {
     }
 }
 
-#[agent_tool(name = "remember_agent_fact")]
-impl RememberTool {
+#[agent_tool(name = "store_agent_memory")]
+impl StoreAgentMemoryTool {
     async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
-        let fact = arguments
-            .get("fact")
+        let memory = arguments
+            .get("memory")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Validation("Missing 'fact' parameter".into()))?;
+            .ok_or_else(|| AppError::Validation("Missing 'memory' parameter".into()))?;
 
         let overrides = arguments
             .get("overrides")
@@ -46,13 +46,13 @@ impl RememberTool {
 
         tracing::debug!(
             agent_id = %agent_id,
-            fact = %fact,
+            memory = %memory,
             overrides = overrides,
-            "remember tool called"
+            "store_agent_memory tool called"
         );
 
         self.memory_service
-            .store_insight(agent_id, fact, Some(chat_id))
+            .store_memory_entry(agent_id, memory, Some(chat_id))
             .await?;
 
         if let Some(ref group) = self.compaction_group {
@@ -60,33 +60,33 @@ impl RememberTool {
             let aid = agent_id.clone();
             let group = group.clone();
             if overrides {
-                tracing::debug!(agent_id = %aid, "Spawning forced insight compaction (overrides=true)");
+                tracing::debug!(agent_id = %aid, "Spawning forced memory compaction (overrides=true)");
                 tokio::spawn(async move {
-                    if let Err(e) = ms.compact_insights_forced(&aid, &group).await {
-                        tracing::warn!(error = %e, agent_id = %aid, "Background forced insight compaction failed");
+                    if let Err(e) = ms.compact_entries_forced(&aid, &group).await {
+                        tracing::warn!(error = %e, agent_id = %aid, "Background forced memory compaction failed");
                     }
                 });
             } else {
-                tracing::debug!(agent_id = %aid, "Spawning background insight compaction");
+                tracing::debug!(agent_id = %aid, "Spawning background memory compaction");
                 tokio::spawn(async move {
-                    if let Err(e) = ms.compact_insights_if_needed(&aid, &group).await {
-                        tracing::warn!(error = %e, agent_id = %aid, "Background insight compaction failed");
+                    if let Err(e) = ms.compact_entries_if_needed(&aid, &group).await {
+                        tracing::warn!(error = %e, agent_id = %aid, "Background memory compaction failed");
                     }
                 });
             }
         }
 
-        Ok(ToolOutput::text(format!("Remembered: {fact}")))
+        Ok(ToolOutput::text(format!("Stored: {memory}")))
     }
 }
 
-pub struct RememberUserFactTool {
+pub struct StoreUserMemoryTool {
     memory_service: MemoryService,
     compaction_group: Option<ModelGroup>,
     prompts: PromptLoader,
 }
 
-impl RememberUserFactTool {
+impl StoreUserMemoryTool {
     pub fn new(
         memory_service: MemoryService,
         compaction_group: Option<ModelGroup>,
@@ -101,12 +101,12 @@ impl RememberUserFactTool {
 }
 
 #[agent_tool]
-impl RememberUserFactTool {
+impl StoreUserMemoryTool {
     async fn execute(&self, _tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
-        let fact = arguments
-            .get("fact")
+        let memory = arguments
+            .get("memory")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Validation("Missing 'fact' parameter".into()))?;
+            .ok_or_else(|| AppError::Validation("Missing 'memory' parameter".into()))?;
 
         let overrides = arguments
             .get("overrides")
@@ -118,13 +118,13 @@ impl RememberUserFactTool {
 
         tracing::debug!(
             user_id = %user_id,
-            fact = %fact,
+            memory = %memory,
             overrides = overrides,
-            "remember_user_fact tool called"
+            "store_user_memory tool called"
         );
 
         self.memory_service
-            .store_user_insight(user_id, fact, Some(chat_id))
+            .store_user_memory_entry(user_id, memory, Some(chat_id))
             .await?;
 
         if let Some(ref group) = self.compaction_group {
@@ -132,22 +132,22 @@ impl RememberUserFactTool {
             let uid = user_id.clone();
             let group = group.clone();
             if overrides {
-                tracing::debug!(user_id = %uid, "Spawning forced user insight compaction (overrides=true)");
+                tracing::debug!(user_id = %uid, "Spawning forced user memory compaction (overrides=true)");
                 tokio::spawn(async move {
-                    if let Err(e) = ms.compact_user_insights_forced(&uid, &group).await {
-                        tracing::warn!(error = %e, user_id = %uid, "Background forced user insight compaction failed");
+                    if let Err(e) = ms.compact_user_entries_forced(&uid, &group).await {
+                        tracing::warn!(error = %e, user_id = %uid, "Background forced user memory compaction failed");
                     }
                 });
             } else {
-                tracing::debug!(user_id = %uid, "Spawning background user insight compaction");
+                tracing::debug!(user_id = %uid, "Spawning background user memory compaction");
                 tokio::spawn(async move {
-                    if let Err(e) = ms.compact_user_insights_if_needed(&uid, &group).await {
-                        tracing::warn!(error = %e, user_id = %uid, "Background user insight compaction failed");
+                    if let Err(e) = ms.compact_user_entries_if_needed(&uid, &group).await {
+                        tracing::warn!(error = %e, user_id = %uid, "Background user memory compaction failed");
                     }
                 });
             }
         }
 
-        Ok(ToolOutput::text(format!("Remembered for user: {fact}")))
+        Ok(ToolOutput::text(format!("Stored for user: {memory}")))
     }
 }

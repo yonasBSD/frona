@@ -5,9 +5,9 @@ use frona::agent::models::Agent;
 use frona::agent::repository::AgentRepository;
 use frona::db::init as db;
 use frona::db::repo::generic::SurrealRepo;
-use frona::db::repo::insights::SurrealInsightRepo;
-use frona::memory::insight::models::Insight;
-use frona::memory::insight::repository::InsightRepository;
+use frona::db::repo::memory_entries::SurrealMemoryEntryRepo;
+use frona::memory::models::MemoryEntry;
+use frona::memory::repository::MemoryEntryRepository;
 use frona::core::repository::Repository;
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
@@ -18,8 +18,8 @@ async fn test_db() -> Surreal<Db> {
     db
 }
 
-fn make_insight(agent_id: &str, content: &str) -> Insight {
-    Insight {
+fn make_entry(agent_id: &str, content: &str) -> MemoryEntry {
+    MemoryEntry {
         id: uuid::Uuid::new_v4().to_string(),
         agent_id: agent_id.to_string(),
         user_id: None,
@@ -29,8 +29,8 @@ fn make_insight(agent_id: &str, content: &str) -> Insight {
     }
 }
 
-fn make_user_insight(user_id: &str, content: &str) -> Insight {
-    Insight {
+fn make_user_entry(user_id: &str, content: &str) -> MemoryEntry {
+    MemoryEntry {
         id: uuid::Uuid::new_v4().to_string(),
         agent_id: String::new(),
         user_id: Some(user_id.to_string()),
@@ -64,13 +64,13 @@ fn make_agent(id: &str, user_id: &str, heartbeat_interval: Option<u64>, next_hea
 }
 
 #[tokio::test]
-async fn insight_compaction_discovers_distinct_agent_ids() {
+async fn memory_compaction_discovers_distinct_agent_ids() {
     let db = test_db().await;
-    let repo: SurrealInsightRepo = SurrealRepo::new(db);
+    let repo: SurrealMemoryEntryRepo = SurrealRepo::new(db);
 
-    repo.create(&make_insight("agent-a", "fact 1")).await.unwrap();
-    repo.create(&make_insight("agent-b", "fact 2")).await.unwrap();
-    repo.create(&make_insight("agent-a", "fact 3")).await.unwrap();
+    repo.create(&make_entry("agent-a", "memory 1")).await.unwrap();
+    repo.create(&make_entry("agent-b", "memory 2")).await.unwrap();
+    repo.create(&make_entry("agent-a", "memory 3")).await.unwrap();
 
     let mut ids = repo.find_distinct_agent_ids().await.unwrap();
     ids.sort();
@@ -78,13 +78,13 @@ async fn insight_compaction_discovers_distinct_agent_ids() {
 }
 
 #[tokio::test]
-async fn insight_compaction_discovers_distinct_user_ids() {
+async fn memory_compaction_discovers_distinct_user_ids() {
     let db = test_db().await;
-    let repo: SurrealInsightRepo = SurrealRepo::new(db);
+    let repo: SurrealMemoryEntryRepo = SurrealRepo::new(db);
 
-    repo.create(&make_user_insight("user-x", "pref 1")).await.unwrap();
-    repo.create(&make_user_insight("user-y", "pref 2")).await.unwrap();
-    repo.create(&make_user_insight("user-x", "pref 3")).await.unwrap();
+    repo.create(&make_user_entry("user-x", "pref 1")).await.unwrap();
+    repo.create(&make_user_entry("user-y", "pref 2")).await.unwrap();
+    repo.create(&make_user_entry("user-x", "pref 3")).await.unwrap();
 
     let mut ids = repo.find_distinct_user_ids().await.unwrap();
     ids.sort();

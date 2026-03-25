@@ -5,7 +5,7 @@ use rig::completion::Message as RigMessage;
 
 use crate::agent::workspace::AgentPromptLoader;
 use crate::storage::StorageService;
-use crate::db::repo::insights::SurrealInsightRepo;
+use crate::db::repo::memory_entries::SurrealMemoryEntryRepo;
 use crate::db::repo::memories::SurrealMemoryRepo;
 use crate::db::repo::messages::SurrealMessageRepo;
 use crate::chat::message::models::Message;
@@ -19,19 +19,17 @@ use crate::inference::conversation::{
 };
 use crate::inference::text_inference;
 use crate::inference::ModelProviderRegistry;
-use crate::memory::insight::models::Insight;
-use crate::memory::insight::repository::InsightRepository;
-use crate::memory::models::{Memory, MemorySourceType};
-use crate::memory::repository::MemoryRepository;
+use crate::memory::models::{Memory, MemoryEntry, MemorySourceType};
+use crate::memory::repository::{MemoryRepository, MemoryEntryRepository};
 use crate::agent::prompt::PromptLoader;
 use crate::core::repository::Repository;
 
-const INSIGHT_COMPACTION_TOKEN_THRESHOLD: usize = 3_000;
+const MEMORY_COMPACTION_TOKEN_THRESHOLD: usize = 3_000;
 
 #[derive(Clone)]
 pub struct MemoryService {
     memory_repo: SurrealMemoryRepo,
-    insight_repo: SurrealInsightRepo,
+    memory_entry_repo: SurrealMemoryEntryRepo,
     message_repo: SurrealMessageRepo,
     provider_registry: Arc<ModelProviderRegistry>,
     prompts: PromptLoader,
@@ -41,7 +39,7 @@ pub struct MemoryService {
 impl MemoryService {
     pub fn new(
         memory_repo: SurrealMemoryRepo,
-        insight_repo: SurrealInsightRepo,
+        memory_entry_repo: SurrealMemoryEntryRepo,
         message_repo: SurrealMessageRepo,
         provider_registry: Arc<ModelProviderRegistry>,
         prompts: PromptLoader,
@@ -49,7 +47,7 @@ impl MemoryService {
     ) -> Self {
         Self {
             memory_repo,
-            insight_repo,
+            memory_entry_repo,
             message_repo,
             provider_registry,
             prompts,
@@ -209,15 +207,15 @@ impl MemoryService {
         Ok(())
     }
 
-    pub async fn store_insight(
+    pub async fn store_memory_entry(
         &self,
         agent_id: &str,
         content: &str,
         source_chat_id: Option<&str>,
-    ) -> Result<Insight, AppError> {
-        tracing::debug!(agent_id = %agent_id, insight = %content, "Storing agent insight");
+    ) -> Result<MemoryEntry, AppError> {
+        tracing::debug!(agent_id = %agent_id, content = %content, "Storing agent memory entry");
 
-        let insight = Insight {
+        let entry = MemoryEntry {
             id: uuid::Uuid::new_v4().to_string(),
             agent_id: agent_id.to_string(),
             user_id: None,
@@ -226,18 +224,18 @@ impl MemoryService {
             created_at: Utc::now(),
         };
 
-        self.insight_repo.create(&insight).await
+        self.memory_entry_repo.create(&entry).await
     }
 
-    pub async fn store_user_insight(
+    pub async fn store_user_memory_entry(
         &self,
         user_id: &str,
         content: &str,
         source_chat_id: Option<&str>,
-    ) -> Result<Insight, AppError> {
-        tracing::debug!(user_id = %user_id, insight = %content, "Storing user insight");
+    ) -> Result<MemoryEntry, AppError> {
+        tracing::debug!(user_id = %user_id, content = %content, "Storing user memory entry");
 
-        let insight = Insight {
+        let entry = MemoryEntry {
             id: uuid::Uuid::new_v4().to_string(),
             agent_id: String::new(),
             user_id: Some(user_id.to_string()),
@@ -246,91 +244,91 @@ impl MemoryService {
             created_at: Utc::now(),
         };
 
-        self.insight_repo.create(&insight).await
+        self.memory_entry_repo.create(&entry).await
     }
 
-    pub async fn compact_insights_if_needed(
+    pub async fn compact_entries_if_needed(
         &self,
         agent_id: &str,
         compaction_model_group: &ModelGroup,
     ) -> Result<(), AppError> {
-        let insights = self.insight_repo.find_by_agent_id(agent_id).await?;
-        let total_tokens: usize = insights.iter().map(|i| estimate_tokens(&i.content)).sum();
+        let entries = self.memory_entry_repo.find_by_agent_id(agent_id).await?;
+        let total_tokens: usize = entries.iter().map(|e| estimate_tokens(&e.content)).sum();
 
-        if total_tokens <= INSIGHT_COMPACTION_TOKEN_THRESHOLD {
+        if total_tokens <= MEMORY_COMPACTION_TOKEN_THRESHOLD {
             tracing::debug!(
                 agent_id = %agent_id,
                 token_count = total_tokens,
-                threshold = INSIGHT_COMPACTION_TOKEN_THRESHOLD,
-                "Skipping insight compaction (below threshold)"
+                threshold = MEMORY_COMPACTION_TOKEN_THRESHOLD,
+                "Skipping memory compaction (below threshold)"
             );
             return Ok(());
         }
 
-        self.compact_insights(agent_id, MemorySourceType::Agent, insights, compaction_model_group)
+        self.compact_entries(agent_id, MemorySourceType::Agent, entries, compaction_model_group)
             .await
     }
 
-    pub async fn compact_insights_forced(
+    pub async fn compact_entries_forced(
         &self,
         agent_id: &str,
         compaction_model_group: &ModelGroup,
     ) -> Result<(), AppError> {
-        let insights = self.insight_repo.find_by_agent_id(agent_id).await?;
-        if insights.is_empty() {
+        let entries = self.memory_entry_repo.find_by_agent_id(agent_id).await?;
+        if entries.is_empty() {
             return Ok(());
         }
-        self.compact_insights(agent_id, MemorySourceType::Agent, insights, compaction_model_group)
+        self.compact_entries(agent_id, MemorySourceType::Agent, entries, compaction_model_group)
             .await
     }
 
-    pub async fn compact_user_insights_if_needed(
+    pub async fn compact_user_entries_if_needed(
         &self,
         user_id: &str,
         compaction_model_group: &ModelGroup,
     ) -> Result<(), AppError> {
-        let insights = self.insight_repo.find_by_user_id(user_id).await?;
-        let total_tokens: usize = insights.iter().map(|i| estimate_tokens(&i.content)).sum();
+        let entries = self.memory_entry_repo.find_by_user_id(user_id).await?;
+        let total_tokens: usize = entries.iter().map(|e| estimate_tokens(&e.content)).sum();
 
-        if total_tokens <= INSIGHT_COMPACTION_TOKEN_THRESHOLD {
+        if total_tokens <= MEMORY_COMPACTION_TOKEN_THRESHOLD {
             tracing::debug!(
                 user_id = %user_id,
                 token_count = total_tokens,
-                threshold = INSIGHT_COMPACTION_TOKEN_THRESHOLD,
-                "Skipping user insight compaction (below threshold)"
+                threshold = MEMORY_COMPACTION_TOKEN_THRESHOLD,
+                "Skipping user memory compaction (below threshold)"
             );
             return Ok(());
         }
 
-        self.compact_user_insights(user_id, insights, compaction_model_group)
+        self.compact_user_entries(user_id, entries, compaction_model_group)
             .await
     }
 
-    pub async fn compact_user_insights_forced(
+    pub async fn compact_user_entries_forced(
         &self,
         user_id: &str,
         compaction_model_group: &ModelGroup,
     ) -> Result<(), AppError> {
-        let insights = self.insight_repo.find_by_user_id(user_id).await?;
-        if insights.is_empty() {
+        let entries = self.memory_entry_repo.find_by_user_id(user_id).await?;
+        if entries.is_empty() {
             return Ok(());
         }
-        self.compact_user_insights(user_id, insights, compaction_model_group)
+        self.compact_user_entries(user_id, entries, compaction_model_group)
             .await
     }
 
-    async fn compact_user_insights(
+    async fn compact_user_entries(
         &self,
         user_id: &str,
-        insights: Vec<Insight>,
+        entries: Vec<MemoryEntry>,
         compaction_model_group: &ModelGroup,
     ) -> Result<(), AppError> {
-        let token_count_before: usize = insights.iter().map(|i| estimate_tokens(&i.content)).sum();
+        let token_count_before: usize = entries.iter().map(|e| estimate_tokens(&e.content)).sum();
         tracing::info!(
             user_id = %user_id,
-            insight_count = insights.len(),
+            entry_count = entries.len(),
             token_count = token_count_before,
-            "Running user insight compaction"
+            "Running user memory compaction"
         );
 
         let existing_memory = self
@@ -342,14 +340,14 @@ impl MemoryService {
         if let Some(ref mem) = existing_memory {
             compaction_input.push_str("Previous user memory:\n");
             compaction_input.push_str(&mem.content);
-            compaction_input.push_str("\n\nNew facts to incorporate:\n");
+            compaction_input.push_str("\n\nNew memories to incorporate:\n");
         }
-        for insight in &insights {
-            compaction_input.push_str(&format!("- {}\n", insight.content));
+        for entry in &entries {
+            compaction_input.push_str(&format!("- {}\n", entry.content));
         }
 
-        let prompt = self.load_prompt("INSIGHT_COMPACTION.md", None)
-            .expect("built-in INSIGHT_COMPACTION.md missing");
+        let prompt = self.load_prompt("MEMORY_COMPACTION.md", None)
+            .expect("built-in MEMORY_COMPACTION.md missing");
         let summary = text_inference(
             &self.provider_registry,
             compaction_model_group,
@@ -358,18 +356,18 @@ impl MemoryService {
             &InferenceMetricsContext::default(),
         )
         .await
-        .map_err(|e| AppError::Internal(format!("User insight compaction failed: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("User memory compaction failed: {e}")))?;
 
         let token_count_after = estimate_tokens(&summary);
         tracing::info!(
             user_id = %user_id,
             token_count_before,
             token_count_after,
-            "User insight compaction complete"
+            "User memory compaction complete"
         );
 
         let now = Utc::now();
-        let last_insight_time = insights.last().map(|i| i.created_at).unwrap_or(now);
+        let last_entry_time = entries.last().map(|e| e.created_at).unwrap_or(now);
 
         let memory = Memory {
             id: existing_memory
@@ -380,8 +378,8 @@ impl MemoryService {
             source_id: user_id.to_string(),
             content: summary,
             metadata: serde_json::json!({
-                "compacted_until": last_insight_time,
-                "item_count": insights.len(),
+                "compacted_until": last_entry_time,
+                "item_count": entries.len(),
             }),
             created_at: existing_memory
                 .as_ref()
@@ -396,26 +394,26 @@ impl MemoryService {
             self.memory_repo.create(&memory).await?;
         }
 
-        self.insight_repo
-            .delete_by_user_id_before(user_id, last_insight_time)
+        self.memory_entry_repo
+            .delete_by_user_id_before(user_id, last_entry_time)
             .await?;
 
         Ok(())
     }
 
-    async fn compact_insights(
+    async fn compact_entries(
         &self,
         source_id: &str,
         source_type: MemorySourceType,
-        insights: Vec<Insight>,
+        entries: Vec<MemoryEntry>,
         compaction_model_group: &ModelGroup,
     ) -> Result<(), AppError> {
-        let token_count_before: usize = insights.iter().map(|i| estimate_tokens(&i.content)).sum();
+        let token_count_before: usize = entries.iter().map(|e| estimate_tokens(&e.content)).sum();
         tracing::info!(
             source_id = %source_id,
-            insight_count = insights.len(),
+            entry_count = entries.len(),
             token_count = token_count_before,
-            "Running insight compaction"
+            "Running memory compaction"
         );
 
         let existing_memory = self
@@ -427,15 +425,15 @@ impl MemoryService {
         if let Some(ref mem) = existing_memory {
             compaction_input.push_str("Previous agent memory:\n");
             compaction_input.push_str(&mem.content);
-            compaction_input.push_str("\n\nNew facts to incorporate:\n");
+            compaction_input.push_str("\n\nNew memories to incorporate:\n");
         }
-        for insight in &insights {
-            compaction_input.push_str(&format!("- {}\n", insight.content));
+        for entry in &entries {
+            compaction_input.push_str(&format!("- {}\n", entry.content));
         }
 
         let agent_id = if source_type == MemorySourceType::Agent { Some(source_id) } else { None };
-        let prompt = self.load_prompt("INSIGHT_COMPACTION.md", agent_id)
-            .expect("built-in INSIGHT_COMPACTION.md missing");
+        let prompt = self.load_prompt("MEMORY_COMPACTION.md", agent_id)
+            .expect("built-in MEMORY_COMPACTION.md missing");
         let summary = text_inference(
             &self.provider_registry,
             compaction_model_group,
@@ -444,18 +442,18 @@ impl MemoryService {
             &InferenceMetricsContext::default(),
         )
         .await
-        .map_err(|e| AppError::Internal(format!("Insight compaction failed: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("Memory compaction failed: {e}")))?;
 
         let token_count_after = estimate_tokens(&summary);
         tracing::info!(
             source_id = %source_id,
             token_count_before,
             token_count_after,
-            "Insight compaction complete"
+            "Memory compaction complete"
         );
 
         let now = Utc::now();
-        let last_insight_time = insights.last().map(|i| i.created_at).unwrap_or(now);
+        let last_entry_time = entries.last().map(|e| e.created_at).unwrap_or(now);
 
         let memory = Memory {
             id: existing_memory
@@ -466,8 +464,8 @@ impl MemoryService {
             source_id: source_id.to_string(),
             content: summary,
             metadata: serde_json::json!({
-                "compacted_until": last_insight_time,
-                "item_count": insights.len(),
+                "compacted_until": last_entry_time,
+                "item_count": entries.len(),
             }),
             created_at: existing_memory
                 .as_ref()
@@ -482,8 +480,8 @@ impl MemoryService {
             self.memory_repo.create(&memory).await?;
         }
 
-        self.insight_repo
-            .delete_by_agent_id_before(source_id, last_insight_time)
+        self.memory_entry_repo
+            .delete_by_agent_id_before(source_id, last_entry_time)
             .await?;
 
         Ok(())
@@ -689,33 +687,33 @@ impl MemoryService {
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.parse::<DateTime<Utc>>().ok());
 
-            let new_insights = match compacted_until {
+            let new_entries = match compacted_until {
                 Some(until) => {
-                    self.insight_repo
+                    self.memory_entry_repo
                         .find_by_user_id_after(user_id, until)
                         .await?
                 }
-                None => self.insight_repo.find_by_user_id(user_id).await?,
+                None => self.memory_entry_repo.find_by_user_id(user_id).await?,
             };
-            if !new_insights.is_empty() {
+            if !new_entries.is_empty() {
                 result.push('\n');
-                for insight in &new_insights {
-                    result.push_str(&format!("- {}\n", insight.content));
+                for entry in &new_entries {
+                    result.push_str(&format!("- {}\n", entry.content));
                 }
             }
 
             result.push_str("</user_memory>");
         } else {
-            let insights = self.insight_repo.find_by_user_id(user_id).await?;
-            if !insights.is_empty() {
+            let entries = self.memory_entry_repo.find_by_user_id(user_id).await?;
+            if !entries.is_empty() {
                 tracing::debug!(
                     user_id = %user_id,
-                    insight_count = insights.len(),
-                    "No compacted user memory, using raw insights"
+                    entry_count = entries.len(),
+                    "No compacted user memory, using raw entries"
                 );
                 result.push_str("\n\n<user_memory>\n");
-                for insight in &insights {
-                    result.push_str(&format!("- {}\n", insight.content));
+                for entry in &entries {
+                    result.push_str(&format!("- {}\n", entry.content));
                 }
                 result.push_str("</user_memory>");
             }
@@ -739,33 +737,33 @@ impl MemoryService {
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.parse::<DateTime<Utc>>().ok());
 
-            let new_insights = match compacted_until {
+            let new_entries = match compacted_until {
                 Some(until) => {
-                    self.insight_repo
+                    self.memory_entry_repo
                         .find_by_agent_id_after(agent_id, until)
                         .await?
                 }
-                None => self.insight_repo.find_by_agent_id(agent_id).await?,
+                None => self.memory_entry_repo.find_by_agent_id(agent_id).await?,
             };
-            if !new_insights.is_empty() {
+            if !new_entries.is_empty() {
                 result.push('\n');
-                for insight in &new_insights {
-                    result.push_str(&format!("- {}\n", insight.content));
+                for entry in &new_entries {
+                    result.push_str(&format!("- {}\n", entry.content));
                 }
             }
 
             result.push_str("</agent_memory>");
         } else {
-            let insights = self.insight_repo.find_by_agent_id(agent_id).await?;
+            let entries = self.memory_entry_repo.find_by_agent_id(agent_id).await?;
             tracing::debug!(
                 agent_id = %agent_id,
-                insight_count = insights.len(),
-                "No compacted agent memory, using raw insights"
+                entry_count = entries.len(),
+                "No compacted agent memory, using raw entries"
             );
-            if !insights.is_empty() {
+            if !entries.is_empty() {
                 result.push_str("\n\n<agent_memory>\n");
-                for insight in &insights {
-                    result.push_str(&format!("- {}\n", insight.content));
+                for entry in &entries {
+                    result.push_str(&format!("- {}\n", entry.content));
                 }
                 result.push_str("</agent_memory>");
             }

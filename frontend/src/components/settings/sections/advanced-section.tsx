@@ -69,10 +69,10 @@ export function AdvancedSection({ inference, scheduler, app, onChange }: Advance
         />
 
         <NumberInput
-          label="Insight Compaction Interval (hours)"
-          description="How often to run insight memory compaction"
-          value={Math.round(scheduler.insight_compaction_secs / 3600)}
-          onChange={(hours) => onChange({ scheduler: { ...scheduler, insight_compaction_secs: hours * 3600 } })}
+          label="Memory Compaction Interval (hours)"
+          description="How often to run memory compaction"
+          value={Math.round(scheduler.memory_compaction_secs / 3600)}
+          onChange={(hours) => onChange({ scheduler: { ...scheduler, memory_compaction_secs: hours * 3600 } })}
           min={1}
           placeholder="1"
         />

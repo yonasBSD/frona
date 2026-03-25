@@ -102,7 +102,7 @@ export interface InferenceConfig {
 
 export interface SchedulerConfig {
   space_compaction_secs: number;
-  insight_compaction_secs: number;
+  memory_compaction_secs: number;
   poll_secs: number;
 }
 

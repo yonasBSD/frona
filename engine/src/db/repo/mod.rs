@@ -3,7 +3,7 @@ pub mod apps;
 pub mod calls;
 pub mod chats;
 pub mod contacts;
-pub mod insights;
+pub mod memory_entries;
 pub mod generic;
 pub mod keypairs;
 pub mod memories;

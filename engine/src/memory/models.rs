@@ -26,3 +26,15 @@ pub struct Memory {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
+#[surreal(crate = "surrealdb::types")]
+#[entity(table = "memory_entry")]
+pub struct MemoryEntry {
+    pub id: String,
+    pub agent_id: String,
+    pub user_id: Option<String>,
+    pub content: String,
+    pub source_chat_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+}

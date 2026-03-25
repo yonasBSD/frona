@@ -41,9 +41,9 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE TABLE IF NOT EXISTS memory SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_memory_source ON TABLE memory COLUMNS source_type, source_id;
 
-        DEFINE TABLE IF NOT EXISTS insight SCHEMALESS;
-        DEFINE INDEX IF NOT EXISTS idx_insight_agent ON TABLE insight COLUMNS agent_id;
-        DEFINE INDEX IF NOT EXISTS idx_insight_user ON TABLE insight COLUMNS user_id;
+        DEFINE TABLE IF NOT EXISTS memory_entry SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_memory_entry_agent ON TABLE memory_entry COLUMNS agent_id;
+        DEFINE INDEX IF NOT EXISTS idx_memory_entry_user ON TABLE memory_entry COLUMNS user_id;
 
         DEFINE TABLE IF NOT EXISTS keypair SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_keypair_owner ON TABLE keypair COLUMNS owner UNIQUE;

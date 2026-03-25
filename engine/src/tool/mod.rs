@@ -6,7 +6,7 @@ pub mod manage_service;
 pub mod notify_human;
 pub mod produce_file;
 pub mod registry;
-pub mod remember;
+pub mod memory;
 pub mod request_credentials;
 pub mod schedule;
 pub mod task_control;

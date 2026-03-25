@@ -245,8 +245,8 @@ impl Default for StorageConfig {
 pub struct SchedulerConfig {
     #[schemars(description = "Interval in seconds between space memory compaction runs.")]
     pub space_compaction_secs: u64,
-    #[schemars(description = "Interval in seconds between insight compaction runs.")]
-    pub insight_compaction_secs: u64,
+    #[schemars(description = "Interval in seconds between memory compaction runs.")]
+    pub memory_compaction_secs: u64,
     #[schemars(description = "Scheduler poll interval in seconds.")]
     pub poll_secs: u64,
 }
@@ -255,7 +255,7 @@ impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
             space_compaction_secs: 3600,
-            insight_compaction_secs: 7200,
+            memory_compaction_secs: 7200,
             poll_secs: 60,
         }
     }
