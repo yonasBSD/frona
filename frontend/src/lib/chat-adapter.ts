@@ -145,43 +145,25 @@ export interface ChatAdapterOptions {
 
 /**
  * Shared event queue that persists across run() calls.
- * A single SSE subscriber pushes events into the queue.
- * Each run() drains from it via createDrain().
+ * Wraps a single sseBus subscription. Each run() drains from it via drain().
+ * Between drain() calls, events are buffered by the sseBus subscriber.
  */
 class ChatEventQueue {
-  private buffer: ChatSSEEvent[] = [];
-  private waiter: ((event: ChatSSEEvent) => void) | null = null;
   private controller: AbortController;
+  private iterator: AsyncIterator<ChatSSEEvent>;
+  private onChatMessage?: (msg: MessageResponse) => void;
+  // When a drain() is aborted while iterator.next() is still pending,
+  // the in-flight promise is kept here so the next drain() picks it up.
+  private pending: Promise<IteratorResult<ChatSSEEvent>> | null = null;
 
   constructor(chatId: string, onChatMessage?: (msg: MessageResponse) => void) {
     this.controller = new AbortController();
-    const self = this;
+    this.onChatMessage = onChatMessage;
     const events = sseBus.subscribe(chatId, this.controller.signal);
-
-    // Start consuming the subscription — push events into our buffer
-    (async () => {
-      for await (const event of events) {
-        // chat_message is an out-of-band message (e.g. task completion) that
-        // arrives after the streaming flow has exited. Deliver via callback
-        // instead of the drain queue which may have no active consumer.
-        if (event.type === "chat_message" && onChatMessage) {
-          console.log("[chat-adapter] queue: chat_message bypassed to callback");
-          onChatMessage(event.message);
-          continue;
-        }
-        console.log("[chat-adapter] queue: event", event.type, self.waiter ? "(has waiter)" : `(buffered, size=${self.buffer.length})`);
-        if (self.waiter) {
-          const resolve = self.waiter;
-          self.waiter = null;
-          resolve(event);
-        } else {
-          self.buffer.push(event);
-        }
-      }
-    })();
+    this.iterator = events[Symbol.asyncIterator]();
   }
 
-  /** Create an async iterable that drains events from the shared queue. */
+  /** Create an async iterable that drains events directly from the sseBus subscription. */
   drain(signal: AbortSignal): AsyncIterable<ChatSSEEvent> {
     const self = this;
     return {
@@ -191,19 +173,41 @@ class ChatEventQueue {
             if (signal.aborted) {
               return Promise.resolve({ value: undefined as unknown as ChatSSEEvent, done: true });
             }
-            if (self.buffer.length > 0) {
-              return Promise.resolve({ value: self.buffer.shift()!, done: false });
-            }
             return new Promise<IteratorResult<ChatSSEEvent>>((resolve) => {
+              let settled = false;
               const onAbort = () => {
-                self.waiter = null;
-                resolve({ value: undefined as unknown as ChatSSEEvent, done: true });
+                if (!settled) {
+                  settled = true;
+                  resolve({ value: undefined as unknown as ChatSSEEvent, done: true });
+                }
               };
               signal.addEventListener("abort", onAbort, { once: true });
-              self.waiter = (event) => {
-                signal.removeEventListener("abort", onAbort);
-                resolve({ value: event, done: false });
+
+              const pull = () => {
+                const p = self.pending ?? self.iterator.next();
+                self.pending = p;
+                p.then((result) => {
+                  if (settled) return; // abort won; pending stays for next drain()
+                  self.pending = null;
+                  if (result.done) {
+                    settled = true;
+                    signal.removeEventListener("abort", onAbort);
+                    resolve(result);
+                    return;
+                  }
+                  // chat_message is out-of-band (e.g. task completion) — deliver
+                  // via callback instead of the drain which may have no consumer.
+                  if (result.value.type === "chat_message" && self.onChatMessage) {
+                    self.onChatMessage(result.value.message);
+                    pull();
+                    return;
+                  }
+                  settled = true;
+                  signal.removeEventListener("abort", onAbort);
+                  resolve(result);
+                });
               };
+              pull();
             });
           },
         };

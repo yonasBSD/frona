@@ -35,10 +35,13 @@ interface ChatSubscriber {
 
 type GlobalListener = (event: GlobalSSEEvent) => void;
 
+type ReconnectListener = () => void;
+
 class SSEEventBus {
   private chatSubscribers = new Map<string, Set<ChatSubscriber>>();
   private chatBuffers = new Map<string, ChatSSEEvent[]>();
   private globalListeners = new Set<GlobalListener>();
+  private reconnectListeners = new Set<ReconnectListener>();
   private activeSignal: AbortSignal | null = null;
 
   connect(signal: AbortSignal): void {
@@ -46,6 +49,12 @@ class SSEEventBus {
     if (this.activeSignal && !this.activeSignal.aborted) return;
     this.activeSignal = signal;
     this.runLoop(signal);
+  }
+
+  /** Register a callback that fires when the SSE stream reconnects after a drop. */
+  onReconnect(callback: ReconnectListener): () => void {
+    this.reconnectListeners.add(callback);
+    return () => this.reconnectListeners.delete(callback);
   }
 
   subscribe(chatId: string, signal: AbortSignal): AsyncIterable<ChatSSEEvent> {
@@ -148,10 +157,17 @@ class SSEEventBus {
   private async runLoop(signal: AbortSignal) {
     let delay = 1000;
     const maxDelay = 30000;
+    let hadConnection = false;
 
     while (!signal.aborted) {
       try {
-        await this.connectStream(signal);
+        const isReconnect = hadConnection;
+        await this.connectStream(signal, isReconnect ? () => {
+          for (const listener of this.reconnectListeners) {
+            try { listener(); } catch { /* ignore */ }
+          }
+        } : undefined);
+        hadConnection = true;
         delay = 1000;
       } catch {
         if (signal.aborted) return;
@@ -165,7 +181,7 @@ class SSEEventBus {
     }
   }
 
-  private async connectStream(signal: AbortSignal): Promise<void> {
+  private async connectStream(signal: AbortSignal, onConnected?: () => void): Promise<void> {
     const token = await ensureAccessToken();
     const headers: Record<string, string> = {};
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -182,6 +198,8 @@ class SSEEventBus {
 
     const reader = res.body?.getReader();
     if (!reader) return;
+
+    onConnected?.();
 
     const decoder = new TextDecoder();
     let buffer = "";

@@ -200,25 +200,39 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
   // Load messages for existing chats and reset the runtime with them
   const [loaded, setLoaded] = useState(!chatId);
 
+  const loadMessages = useCallback((id: string) => {
+    return api.get<MessageResponse[]>(`/api/chats/${id}/messages`)
+      .then((msgs) => {
+        const converted = mergeConsecutive(msgs.map(convertMessage).filter(Boolean) as ThreadMessageLike[]);
+        handle.syncLastSentMessageId(converted);
+        runtime.thread.reset(converted);
+      });
+  }, [handle, runtime]);
+
   useEffect(() => {
     if (!chatId) {
       setLoaded(true);
       return;
     }
     let cancelled = false;
-    api.get<MessageResponse[]>(`/api/chats/${chatId}/messages`)
-      .then((msgs) => {
-        if (cancelled) return;
-        const converted = mergeConsecutive(msgs.map(convertMessage).filter(Boolean) as ThreadMessageLike[]);
-        handle.syncLastSentMessageId(converted);
-        runtime.thread.reset(converted);
-        setLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setLoaded(true);
-      });
+    loadMessages(chatId)
+      .then(() => { if (!cancelled) setLoaded(true); })
+      .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
-  }, [chatId, handle, runtime]);
+  }, [chatId, loadMessages]);
+
+  // Reload messages when SSE reconnects after a drop to pick up anything missed.
+  // Skip if a stream is active — it manages its own state.
+  useEffect(() => {
+    return sseBus.onReconnect(() => {
+      const id = chatId ?? handle.chatId();
+      if (!id) return;
+      try {
+        if (runtime.thread.getState().isRunning) return;
+      } catch { /* thread not initialized yet */ }
+      loadMessages(id).catch(() => {});
+    });
+  }, [chatId, handle, runtime, loadMessages]);
 
   /** Append to thread — used for programmatic sends (pending messages). */
   const sendMessage = useCallback((content: string, attachments?: Attachment[]) => {
