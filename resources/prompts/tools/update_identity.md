@@ -7,4 +7,4 @@ parameters:
 required:
   - attributes
 ---
-Update your identity attributes. Use this to save self-descriptive traits you discover during conversation — name, personality, style, communication preferences, emoji, creature type, vibe, or anything that defines who you are or how you behave. When the user tells you to change your tone, humor, or style, save it here. Check <agent_identity> first to see what's already set.
+Save identity attributes the user explicitly gives you. Only set attributes the user mentions — never invent or fill in attributes they didn't provide. When the user tells you to change your tone, humor, or style, save that here too. Check <agent_identity> first to see what's already set.
