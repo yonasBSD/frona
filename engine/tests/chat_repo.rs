@@ -51,6 +51,10 @@ fn test_chat_in_space(user_id: &str, space_id: &str) -> Chat {
 }
 
 fn test_message(chat_id: &str, content: &str) -> Message {
+    test_message_at(chat_id, content, Utc::now())
+}
+
+fn test_message_at(chat_id: &str, content: &str, created_at: chrono::DateTime<Utc>) -> Message {
     Message {
         id: uuid::Uuid::new_v4().to_string(),
         chat_id: chat_id.to_string(),
@@ -62,7 +66,7 @@ fn test_message(chat_id: &str, content: &str) -> Message {
         contact_id: None,
         status: None,
         reasoning: None,
-        created_at: Utc::now(),
+        created_at,
     }
 }
 
@@ -586,4 +590,100 @@ async fn test_message_reasoning_with_no_signature() {
     assert!(r.id.is_none());
     assert_eq!(r.content, "Quick thought");
     assert!(r.signature.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Pagination integration tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_page_no_cursor_returns_latest_messages() {
+    use chrono::Duration;
+
+    let db = test_db().await;
+    let msg_repo = SurrealMessageRepo::new(db.clone());
+    let chat_repo = SurrealChatRepo::new(db);
+
+    let chat = test_chat("user-1", "system", None);
+    chat_repo.create(&chat).await.unwrap();
+
+    let base = Utc::now() - Duration::seconds(10);
+    for i in 0..5 {
+        let msg = test_message_at(&chat.id, &format!("msg-{i}"), base + Duration::seconds(i));
+        msg_repo.create(&msg).await.unwrap();
+    }
+
+    let page = msg_repo.find_by_chat_id_page(&chat.id, None, None, 3).await.unwrap();
+    assert_eq!(page.len(), 3);
+    assert_eq!(page[0].content, "msg-2");
+    assert_eq!(page[1].content, "msg-3");
+    assert_eq!(page[2].content, "msg-4");
+}
+
+#[tokio::test]
+async fn test_page_before_cursor() {
+    use chrono::Duration;
+
+    let db = test_db().await;
+    let msg_repo = SurrealMessageRepo::new(db.clone());
+    let chat_repo = SurrealChatRepo::new(db);
+
+    let chat = test_chat("user-1", "system", None);
+    chat_repo.create(&chat).await.unwrap();
+
+    let base = Utc::now() - Duration::seconds(10);
+    let mut created = vec![];
+    for i in 0..5 {
+        let msg = test_message_at(&chat.id, &format!("msg-{i}"), base + Duration::seconds(i));
+        let m = msg_repo.create(&msg).await.unwrap();
+        created.push(m);
+    }
+
+    let cursor = created[3].created_at;
+    let page = msg_repo.find_by_chat_id_page(&chat.id, Some(cursor), None, 2).await.unwrap();
+    assert_eq!(page.len(), 2);
+    assert_eq!(page[0].content, "msg-1");
+    assert_eq!(page[1].content, "msg-2");
+}
+
+#[tokio::test]
+async fn test_page_after_cursor() {
+    use chrono::Duration;
+
+    let db = test_db().await;
+    let msg_repo = SurrealMessageRepo::new(db.clone());
+    let chat_repo = SurrealChatRepo::new(db);
+
+    let chat = test_chat("user-1", "system", None);
+    chat_repo.create(&chat).await.unwrap();
+
+    let base = Utc::now() - Duration::seconds(10);
+    let mut created = vec![];
+    for i in 0..5 {
+        let msg = test_message_at(&chat.id, &format!("msg-{i}"), base + Duration::seconds(i));
+        let m = msg_repo.create(&msg).await.unwrap();
+        created.push(m);
+    }
+
+    let cursor = created[1].created_at;
+    let page = msg_repo.find_by_chat_id_page(&chat.id, None, Some(cursor), 2).await.unwrap();
+    assert_eq!(page.len(), 2);
+    assert_eq!(page[0].content, "msg-2");
+    assert_eq!(page[1].content, "msg-3");
+}
+
+#[tokio::test]
+async fn test_page_limit_larger_than_result_set() {
+    let db = test_db().await;
+    let msg_repo = SurrealMessageRepo::new(db.clone());
+    let chat_repo = SurrealChatRepo::new(db);
+
+    let chat = test_chat("user-1", "system", None);
+    chat_repo.create(&chat).await.unwrap();
+
+    msg_repo.create(&test_message(&chat.id, "only one")).await.unwrap();
+
+    let page = msg_repo.find_by_chat_id_page(&chat.id, None, None, 50).await.unwrap();
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].content, "only one");
 }

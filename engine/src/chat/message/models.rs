@@ -151,6 +151,24 @@ impl MessageBuilder {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct MessageQuery {
+    pub before: Option<DateTime<Utc>>,
+    pub after: Option<DateTime<Utc>>,
+    #[serde(default = "default_message_limit")]
+    pub limit: u32,
+}
+
+fn default_message_limit() -> u32 {
+    50
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PaginatedMessagesResponse {
+    pub messages: Vec<MessageResponse>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
     pub content: String,
     #[serde(default)]

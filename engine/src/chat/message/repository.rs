@@ -24,4 +24,11 @@ pub trait MessageRepository: Repository<Message> {
         &self,
         chat_id: &str,
     ) -> Result<Vec<Attachment>, AppError>;
+    async fn find_by_chat_id_page(
+        &self,
+        chat_id: &str,
+        before: Option<DateTime<Utc>>,
+        after: Option<DateTime<Utc>>,
+        limit: u32,
+    ) -> Result<Vec<Message>, AppError>;
 }

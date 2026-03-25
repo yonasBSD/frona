@@ -28,7 +28,8 @@ async fn list_messages_empty_chat() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert!(json.is_array());
+    assert!(json["messages"].is_array());
+    assert_eq!(json["has_more"], false);
 }
 
 #[tokio::test]

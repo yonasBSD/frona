@@ -79,6 +79,57 @@ impl MessageRepository for SurrealRepo<Message> {
         Ok(())
     }
 
+    async fn find_by_chat_id_page(
+        &self,
+        chat_id: &str,
+        before: Option<DateTime<Utc>>,
+        after: Option<DateTime<Utc>>,
+        limit: u32,
+    ) -> Result<Vec<Message>, AppError> {
+        let mut query = format!("{SELECT_CLAUSE} FROM message WHERE chat_id = $chat_id");
+        let order_desc = after.is_none();
+
+        if before.is_some() {
+            query.push_str(" AND created_at < $before");
+        }
+        if after.is_some() {
+            query.push_str(" AND created_at > $after");
+        }
+
+        if order_desc {
+            query.push_str(" ORDER BY created_at DESC LIMIT $limit");
+        } else {
+            query.push_str(" ORDER BY created_at ASC LIMIT $limit");
+        }
+
+        let mut builder = self
+            .db()
+            .query(&query)
+            .bind(("chat_id", chat_id.to_string()))
+            .bind(("limit", limit));
+
+        if let Some(before) = before {
+            builder = builder.bind(("before", before));
+        }
+        if let Some(after) = after {
+            builder = builder.bind(("after", after));
+        }
+
+        let mut result = builder
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut messages: Vec<Message> = result
+            .take(0)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if order_desc {
+            messages.reverse();
+        }
+
+        Ok(messages)
+    }
+
     async fn find_attachments_by_chat_id(
         &self,
         chat_id: &str,

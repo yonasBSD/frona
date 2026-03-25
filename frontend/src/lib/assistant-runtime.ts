@@ -201,8 +201,8 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
   const [loaded, setLoaded] = useState(!chatId);
 
   const loadMessages = useCallback((id: string) => {
-    return api.get<MessageResponse[]>(`/api/chats/${id}/messages`)
-      .then((msgs) => {
+    return api.get<{ messages: MessageResponse[]; has_more: boolean }>(`/api/chats/${id}/messages`)
+      .then(({ messages: msgs }) => {
         const converted = mergeConsecutive(msgs.map(convertMessage).filter(Boolean) as ThreadMessageLike[]);
         handle.syncLastSentMessageId(converted);
         runtime.thread.reset(converted);

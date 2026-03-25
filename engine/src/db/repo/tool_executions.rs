@@ -13,6 +13,7 @@ const SELECT_CLAUSE: &str = "SELECT *, meta::id(id) as id";
 pub trait ToolExecutionRepository: Repository<ToolExecution> {
     async fn find_by_chat_id(&self, chat_id: &str) -> Result<Vec<ToolExecution>, AppError>;
     async fn find_by_message_id(&self, message_id: &str) -> Result<Vec<ToolExecution>, AppError>;
+    async fn find_by_message_ids(&self, message_ids: &[String]) -> Result<Vec<ToolExecution>, AppError>;
     async fn find_pending_by_chat_id(&self, chat_id: &str) -> Result<Option<ToolExecution>, AppError>;
 }
 
@@ -44,6 +45,24 @@ impl ToolExecutionRepository for SurrealRepo<ToolExecution> {
             .db()
             .query(&query)
             .bind(("message_id", message_id.to_string()))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let executions: Vec<ToolExecution> = result
+            .take(0)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(executions)
+    }
+
+    async fn find_by_message_ids(&self, message_ids: &[String]) -> Result<Vec<ToolExecution>, AppError> {
+        let query = format!(
+            "{SELECT_CLAUSE} FROM tool_execution WHERE message_id IN $message_ids ORDER BY created_at ASC"
+        );
+        let mut result = self
+            .db()
+            .query(&query)
+            .bind(("message_ids", message_ids.to_vec()))
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 

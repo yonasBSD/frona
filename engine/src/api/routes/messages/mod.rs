@@ -2,14 +2,14 @@ mod stream;
 
 use std::convert::Infallible;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::stream::Stream;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use crate::chat::message::models::{MessageResponse, ResolveToolRequest, SendMessageRequest};
+use crate::chat::message::models::{MessageQuery, MessageResponse, PaginatedMessagesResponse, ResolveToolRequest, SendMessageRequest};
 use crate::credential::presign::presign_response;
 
 use super::super::error::ApiError;
@@ -54,17 +54,18 @@ async fn list_messages(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
-) -> Result<Json<Vec<MessageResponse>>, ApiError> {
-    let mut messages = state
+    Query(query): Query<MessageQuery>,
+) -> Result<Json<PaginatedMessagesResponse>, ApiError> {
+    let mut result = state
         .chat_service
-        .list_messages(&auth.user_id, &chat_id)
+        .list_messages_paginated(&auth.user_id, &chat_id, query.before, query.after, query.limit)
         .await?;
 
-    for msg in &mut messages {
+    for msg in &mut result.messages {
         presign_response(&state.presign_service, msg, &auth.user_id, &auth.username).await;
     }
 
-    Ok(Json(messages))
+    Ok(Json(result))
 }
 
 async fn cancel_generation(

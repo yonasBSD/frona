@@ -27,7 +27,7 @@ pub struct AgentConfig {
 }
 
 use super::models::{ChatResponse, CreateChatRequest, UpdateChatRequest};
-use super::message::models::{MessageResponse, MessageStatus, SendMessageRequest, MessageEvent};
+use super::message::models::{MessageResponse, MessageStatus, SendMessageRequest, MessageEvent, PaginatedMessagesResponse};
 use super::message::models::{Message, MessageRole, Reasoning};
 use super::message::repository::MessageRepository;
 use super::models::Chat;
@@ -293,6 +293,58 @@ impl ChatService {
                 resp
             })
             .collect())
+    }
+
+    pub async fn list_messages_paginated(
+        &self,
+        user_id: &str,
+        chat_id: &str,
+        before: Option<chrono::DateTime<chrono::Utc>>,
+        after: Option<chrono::DateTime<chrono::Utc>>,
+        limit: u32,
+    ) -> Result<PaginatedMessagesResponse, AppError> {
+        self.get_chat(user_id, chat_id).await?;
+
+        let fetch_limit = limit + 1;
+        let mut messages = self
+            .message_repo
+            .find_by_chat_id_page(chat_id, before, after, fetch_limit)
+            .await?;
+
+        let has_more = messages.len() > limit as usize;
+        if has_more {
+            messages.truncate(limit as usize);
+        }
+
+        let message_ids: Vec<String> = messages.iter().map(|m| m.id.clone()).collect();
+        let tool_executions = self
+            .tool_execution_repo
+            .find_by_message_ids(&message_ids)
+            .await
+            .unwrap_or_default();
+
+        let mut te_map: std::collections::HashMap<String, Vec<ToolExecutionResponse>> =
+            std::collections::HashMap::new();
+        for te in tool_executions {
+            te_map
+                .entry(te.message_id.clone())
+                .or_default()
+                .push(te.into());
+        }
+
+        let messages = messages
+            .into_iter()
+            .map(|msg| {
+                let id = msg.id.clone();
+                let mut resp: MessageResponse = msg.into();
+                if let Some(tes) = te_map.remove(&id) {
+                    resp.tool_executions = tes;
+                }
+                resp
+            })
+            .collect();
+
+        Ok(PaginatedMessagesResponse { messages, has_more })
     }
 
     pub async fn create_stream_user_message(
