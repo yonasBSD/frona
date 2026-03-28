@@ -1,5 +1,6 @@
 ---
-name: update_identity
+id: update_identity
+group: identity
 parameters:
   attributes:
     type: object

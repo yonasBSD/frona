@@ -148,7 +148,8 @@ impl AgentTool for MockInternalTool {
 
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
-            name: self.tool_name.clone(),
+            id: self.tool_name.clone(),
+            group: self.tool_name.clone(),
             description: format!("Mock tool {}", self.tool_name),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }]
@@ -190,7 +191,8 @@ impl AgentTool for MockExternalTool {
 
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
-            name: self.tool_name.clone(),
+            id: self.tool_name.clone(),
+            group: self.tool_name.clone(),
             description: format!("External tool {}", self.tool_name),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }]
@@ -226,7 +228,8 @@ impl AgentTool for MockFailingTool {
 
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
-            name: self.tool_name.clone(),
+            id: self.tool_name.clone(),
+            group: self.tool_name.clone(),
             description: format!("Failing tool {}", self.tool_name),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }]
@@ -264,11 +267,12 @@ pub fn mock_context() -> InferenceContext {
             model_group: "primary".into(),
             enabled: true,
             tools: vec![],
-            skills: vec![],
+            skills: None,
             sandbox_config: None,
             max_concurrent_tasks: None,
             avatar: None,
             identity: Default::default(),
+            prompt: None,
             heartbeat_interval: None,
             next_heartbeat_at: None,
             heartbeat_chat_id: None,

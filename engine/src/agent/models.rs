@@ -47,12 +47,13 @@ pub struct Agent {
     #[serde(default)]
     pub max_concurrent_tasks: Option<u32>,
     #[serde(default)]
-    pub skills: Vec<String>,
+    pub skills: Option<Vec<String>>,
     #[serde(default)]
     pub avatar: Option<String>,
     #[serde(default)]
     pub identity: BTreeMap<String, String>,
     #[serde(default)]
+    pub prompt: Option<String>,
     pub heartbeat_interval: Option<u64>,
     pub next_heartbeat_at: Option<DateTime<Utc>>,
     pub heartbeat_chat_id: Option<String>,
@@ -79,6 +80,8 @@ pub struct UpdateAgentRequest {
     pub tools: Option<Vec<String>>,
     pub skills: Option<Vec<String>>,
     pub sandbox_config: Option<SandboxSettings>,
+    pub prompt: Option<String>,
+    pub identity: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,10 +92,13 @@ pub struct AgentResponse {
     pub model_group: String,
     pub enabled: bool,
     pub tools: Vec<String>,
-    pub skills: Vec<String>,
+    pub skills: Option<Vec<String>>,
     pub sandbox_config: Option<SandboxSettings>,
     pub avatar: Option<String>,
     pub identity: BTreeMap<String, String>,
+    pub prompt: Option<String>,
+    pub default_prompt: String,
+    pub is_shared: bool,
     pub chat_count: u64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -108,6 +114,7 @@ fn normalize_tools(tools: Vec<String>) -> Vec<String> {
 
 impl From<Agent> for AgentResponse {
     fn from(agent: Agent) -> Self {
+        let is_shared = agent.user_id.is_none();
         Self {
             id: agent.id,
             name: agent.name,
@@ -119,6 +126,9 @@ impl From<Agent> for AgentResponse {
             sandbox_config: agent.sandbox_config,
             avatar: agent.avatar,
             identity: agent.identity,
+            prompt: agent.prompt,
+            default_prompt: String::new(),
+            is_shared,
             chat_count: 0,
             created_at: agent.created_at,
             updated_at: agent.updated_at,

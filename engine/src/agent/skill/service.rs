@@ -11,7 +11,7 @@ use crate::core::error::AppError;
 use crate::storage::StorageService;
 
 use super::registry::{self, SkillRegistryClient};
-use super::resolver::{Skill, SkillResolver};
+use super::resolver::{Skill, SkillResolver, SkillScope};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillListItem {
@@ -19,6 +19,7 @@ pub struct SkillListItem {
     pub description: String,
     pub source: Option<String>,
     pub installed_at: Option<DateTime<Utc>>,
+    pub scope: SkillScope,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -175,7 +176,7 @@ impl SkillService {
         });
     }
 
-    pub async fn list(&self, agent_id: &str, agent_skills: &[String]) -> Vec<Skill> {
+    pub async fn list(&self, agent_id: &str, agent_skills: Option<&[String]>) -> Vec<Skill> {
         let cache_key = format!("{agent_id}:{}", skills_hash(agent_skills));
         if let Some(cached) = self.list_cache.get(&cache_key).await {
             return cached;
@@ -318,6 +319,7 @@ impl SkillService {
                 description: fetched.description,
                 source: Some(repo.to_string()),
                 installed_at: Some(Utc::now()),
+                scope: SkillScope::Agent,
             });
         }
 
@@ -354,6 +356,7 @@ impl SkillService {
             description: fetched.description,
             source: Some(repo.to_string()),
             installed_at: Some(now),
+            scope: SkillScope::Shared,
         })
     }
 
@@ -410,6 +413,7 @@ impl SkillService {
                 description: fetched.description,
                 source: Some(repo.to_string()),
                 installed_at: Some(now),
+                scope: SkillScope::Shared,
             });
         }
 
@@ -447,11 +451,25 @@ impl SkillService {
                     description,
                     source: lock_entry.map(|e| e.source.clone()),
                     installed_at: lock_entry.map(|e| e.installed_at),
+                    scope: SkillScope::Shared,
                 });
             }
         }
 
         Ok(items)
+    }
+
+    pub async fn uninstall_agent_skill(&self, agent_id: &str, name: &str) -> Result<(), AppError> {
+        let ws = self.storage.agent_workspace(agent_id);
+        let skill_dir = format!("skills/{name}");
+        if !ws.exists(&skill_dir) {
+            return Err(AppError::NotFound(format!("Skill '{name}' is not installed for this agent")));
+        }
+        let full_path = ws.base_path().join(&skill_dir);
+        std::fs::remove_dir_all(&full_path)
+            .map_err(|e| AppError::Internal(format!("Failed to remove agent skill directory: {e}")))?;
+        self.invalidate_caches().await;
+        Ok(())
     }
 
     pub async fn uninstall(&self, name: &str) -> Result<(), AppError> {
@@ -548,7 +566,7 @@ impl SkillService {
     }
 }
 
-fn skills_hash(skills: &[String]) -> u64 {
+fn skills_hash(skills: Option<&[String]>) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     skills.hash(&mut hasher);
@@ -676,15 +694,15 @@ mod tests {
 
     #[test]
     fn test_skills_hash_deterministic() {
-        let a = skills_hash(&["foo".to_string(), "bar".to_string()]);
-        let b = skills_hash(&["foo".to_string(), "bar".to_string()]);
+        let a = skills_hash(Some(&["foo".to_string(), "bar".to_string()]));
+        let b = skills_hash(Some(&["foo".to_string(), "bar".to_string()]));
         assert_eq!(a, b);
     }
 
     #[test]
     fn test_skills_hash_different_for_different_input() {
-        let a = skills_hash(&["foo".to_string()]);
-        let b = skills_hash(&["bar".to_string()]);
+        let a = skills_hash(Some(&["foo".to_string()]));
+        let b = skills_hash(Some(&["bar".to_string()]));
         assert_ne!(a, b);
     }
 

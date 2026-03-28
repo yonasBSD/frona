@@ -98,7 +98,7 @@ pub fn extract_reasoning(contents: &[AssistantContent]) -> Option<Reasoning> {
 fn to_rig_tool_definitions(defs: &[ToolDefinition]) -> Vec<RigToolDefinition> {
     defs.iter()
         .map(|d| RigToolDefinition {
-            name: d.name.clone(),
+            name: d.id.clone(),
             description: d.description.clone(),
             parameters: d.parameters.clone(),
         })

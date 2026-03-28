@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
+use crate::agent::config::parse_frontmatter;
 use crate::agent::models::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};
+use crate::chat::broadcast::{BroadcastEvent, BroadcastEventKind};
+use crate::inference::tool_loop::InferenceEventKind;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
@@ -16,6 +19,16 @@ pub fn router() -> Router<AppState> {
             "/api/agents/{id}",
             get(get_agent).put(update_agent).delete(delete_agent),
         )
+        .route("/api/agents/{id}/skills", get(list_agent_skills))
+}
+
+fn resolve_default_prompt(state: &AppState, agent_id: &str) -> String {
+    state
+        .storage_service
+        .agent_workspace(agent_id)
+        .read("AGENT.md")
+        .map(|c| parse_frontmatter(&c).template)
+        .unwrap_or_default()
 }
 
 async fn create_agent(
@@ -52,6 +65,7 @@ async fn list_agents(
         if let Some(&count) = count_map.get(agent.id.as_str()) {
             agent.chat_count = count;
         }
+        agent.default_prompt = resolve_default_prompt(&state, &agent.id);
     }
 
     Ok(Json(agents))
@@ -62,7 +76,8 @@ async fn get_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let agent = state.agent_service.get(&auth.user_id, &id).await?;
+    let mut agent = state.agent_service.get(&auth.user_id, &id).await?;
+    agent.default_prompt = resolve_default_prompt(&state, &id);
     Ok(Json(agent))
 }
 
@@ -72,7 +87,19 @@ async fn update_agent(
     Path(id): Path<String>,
     Json(req): Json<UpdateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let agent = state.agent_service.update(&auth.user_id, &id, req).await?;
+    let mut agent = state.agent_service.update(&auth.user_id, &id, req).await?;
+    agent.default_prompt = resolve_default_prompt(&state, &id);
+
+    state.broadcast_service.send(BroadcastEvent {
+        user_id: auth.user_id,
+        chat_id: None,
+        kind: BroadcastEventKind::Inference(InferenceEventKind::EntityUpdated {
+            table: "agent".to_string(),
+            record_id: id,
+            fields: serde_json::to_value(&agent).unwrap_or_default(),
+        }),
+    });
+
     Ok(Json(agent))
 }
 
@@ -84,3 +111,21 @@ async fn delete_agent(
     state.agent_service.delete(&auth.user_id, &id).await?;
     Ok(())
 }
+
+async fn list_agent_skills(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<crate::agent::skill::service::SkillListItem>>, ApiError> {
+    state.agent_service.get(&auth.user_id, &id).await?;
+    let skills = state.skill_service.list(&id, None).await;
+    let items = skills.into_iter().map(|s| crate::agent::skill::service::SkillListItem {
+        name: s.name,
+        description: s.description,
+        source: None,
+        installed_at: None,
+        scope: s.scope,
+    }).collect();
+    Ok(Json(items))
+}
+

@@ -20,7 +20,7 @@ impl NotifyHumanTool {
     }
 }
 
-#[agent_tool(files("request_user_takeover", "ask_user_question"))]
+#[agent_tool(files("ask_user_question", "request_user_takeover"))]
 impl NotifyHumanTool {
     async fn execute(&self, tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
         match tool_name {

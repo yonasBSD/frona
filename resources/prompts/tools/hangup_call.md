@@ -1,5 +1,6 @@
 ---
-name: hangup_call
+id: hangup_call
+group: voice_call
 parameters: {}
 required: []
 ---

@@ -1,5 +1,6 @@
 ---
-name: store_user_memory
+id: store_user_memory
+group: memory
 parameters:
   memory:
     type: string

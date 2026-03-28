@@ -25,11 +25,12 @@ fn test_agent(user_id: &str) -> Agent {
         model_group: "primary".to_string(),
         enabled: true,
         tools: vec!["browser".to_string()],
-        skills: vec![],
+        skills: None,
         sandbox_config: None,
         max_concurrent_tasks: None,
         avatar: None,
         identity: std::collections::BTreeMap::new(),
+        prompt: None,
         heartbeat_interval: None,
         next_heartbeat_at: None,
         heartbeat_chat_id: None,
@@ -207,6 +208,8 @@ async fn agent_service_update_invalidates_cache() {
             tools: None,
             skills: None,
             sandbox_config: None,
+            prompt: None,
+            identity: None,
         },
     )
     .await

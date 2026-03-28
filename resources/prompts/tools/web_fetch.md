@@ -1,5 +1,6 @@
 ---
-name: web_fetch
+id: web_fetch
+group: web_fetch
 parameters:
   url:
     type: string

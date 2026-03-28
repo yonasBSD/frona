@@ -1,5 +1,6 @@
 ---
-name: delegate_task
+id: delegate_task
+group: delegate
 parameters:
   target_agent:
     type: string

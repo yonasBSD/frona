@@ -50,7 +50,7 @@ impl ChatSessionContext {
 
         let skills = state
             .skill_service
-            .list(&chat.agent_id, &agent_config.skills)
+            .list(&chat.agent_id, agent_config.skills.as_deref())
             .await;
 
         let agent_summaries =

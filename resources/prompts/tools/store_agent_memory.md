@@ -1,5 +1,6 @@
 ---
-name: store_agent_memory
+id: store_agent_memory
+group: memory
 parameters:
   memory:
     type: string

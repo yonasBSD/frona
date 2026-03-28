@@ -21,7 +21,7 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub model_group: String,
     pub tools: Vec<String>,
-    pub skills: Vec<String>,
+    pub skills: Option<Vec<String>>,
     pub sandbox_config: Option<crate::agent::models::SandboxSettings>,
     pub identity: std::collections::BTreeMap<String, String>,
 }
@@ -754,9 +754,19 @@ impl ChatService {
                 agent.tools
             };
 
-            let raw_prompt = ws.read("AGENT.md")
-                .map(|c| parse_frontmatter(&c).template)
-                .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?;
+            let raw_prompt = if let Some(ref prompt) = agent.prompt {
+                if !prompt.is_empty() {
+                    prompt.clone()
+                } else {
+                    ws.read("AGENT.md")
+                        .map(|c| parse_frontmatter(&c).template)
+                        .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?
+                }
+            } else {
+                ws.read("AGENT.md")
+                    .map(|c| parse_frontmatter(&c).template)
+                    .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?
+            };
 
             let system_prompt = render_template(&raw_prompt, &[("agent_name", &agent.name)])
                 .unwrap_or(raw_prompt);
@@ -787,7 +797,7 @@ impl ChatService {
             system_prompt: parsed.template,
             model_group,
             tools,
-            skills: vec![],
+            skills: None,
             sandbox_config: None,
             identity: std::collections::BTreeMap::new(),
         })

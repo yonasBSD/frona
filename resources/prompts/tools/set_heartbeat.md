@@ -1,5 +1,6 @@
 ---
-name: set_heartbeat
+id: set_heartbeat
+group: heartbeat
 parameters:
   interval_minutes:
     type: integer

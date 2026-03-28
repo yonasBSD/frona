@@ -1,14 +1,26 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 use crate::agent::config::parse_frontmatter;
 use crate::storage::StorageService;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillScope {
+    Builtin,
+    Shared,
+    Agent,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Skill {
     pub name: String,
     pub description: String,
+    #[serde(skip)]
     pub path: String,
+    pub scope: SkillScope,
 }
 
 #[derive(Clone)]
@@ -42,9 +54,11 @@ impl SkillResolver {
 
     /// Resolution order:
     /// 1. Agent Workspace FS
-    /// 2. Installed skills dir (data/skills/) — filtered by agent_skills when non-empty
-    /// 3. Built-in FS (resources/skills/) — filtered by agent_skills when non-empty
-    pub fn list(&self, agent_id: &str, agent_skills: &[String]) -> Vec<Skill> {
+    /// 2. Installed skills dir (data/skills/) — filtered by agent_skills when Some
+    /// 3. Built-in FS (resources/skills/) — filtered by agent_skills when Some
+    ///
+    /// None = all enabled (default), Some([]) = none, Some([...]) = specific
+    pub fn list(&self, agent_id: &str, agent_skills: Option<&[String]>) -> Vec<Skill> {
         let mut seen = HashMap::new();
 
         // Tier 1: Agent workspace FS (always included)
@@ -72,32 +86,31 @@ impl SkillResolver {
                     name,
                     description,
                     path: dir_path,
+                    scope: SkillScope::Agent,
                 });
             }
         }
 
-        // Tier 2: Installed skills (filtered when agent_skills is non-empty)
+        // Tier 2: Installed skills (filtered when agent_skills is Some)
         if let Some(dir) = &self.installed_dir {
-            for skill in self.scan_fs_skills(dir) {
-                if !agent_skills.is_empty() && !agent_skills.contains(&skill.name) {
-                    continue;
-                }
+            for skill in self.scan_fs_skills(dir, SkillScope::Shared) {
+                if let Some(allowed) = agent_skills
+                    && !allowed.contains(&skill.name) { continue; }
                 seen.entry(skill.name.clone()).or_insert(skill);
             }
         }
 
-        // Tier 3: Built-in FS (filtered when agent_skills is non-empty)
-        for skill in self.scan_fs_skills(&self.config_dir.join("skills")) {
-            if !agent_skills.is_empty() && !agent_skills.contains(&skill.name) {
-                continue;
-            }
+        // Tier 3: Built-in FS (filtered when agent_skills is Some)
+        for skill in self.scan_fs_skills(&self.config_dir.join("skills"), SkillScope::Builtin) {
+            if let Some(allowed) = agent_skills
+                && !allowed.contains(&skill.name) { continue; }
             seen.entry(skill.name.clone()).or_insert(skill);
         }
 
         seen.into_values().collect()
     }
 
-    fn scan_fs_skills(&self, dir: &Path) -> Vec<Skill> {
+    fn scan_fs_skills(&self, dir: &Path, scope: SkillScope) -> Vec<Skill> {
         let mut results = Vec::new();
         let Ok(entries) = std::fs::read_dir(dir) else {
             return results;
@@ -124,6 +137,7 @@ impl SkillResolver {
                     .unwrap_or_else(|_| entry.path().to_string_lossy().into_owned());
 
                 results.push(Skill {
+                    scope,
                     name: skill_name,
                     description,
                     path: abs_dir,

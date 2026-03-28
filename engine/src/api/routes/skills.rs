@@ -88,12 +88,22 @@ async fn install_skill(
     Ok(Json(items))
 }
 
+#[derive(Deserialize)]
+struct UninstallQuery {
+    agent_id: Option<String>,
+}
+
 async fn uninstall_skill(
     _auth: AuthUser,
     State(state): State<AppState>,
     Path(name): Path<String>,
+    Query(params): Query<UninstallQuery>,
 ) -> Result<Json<()>, ApiError> {
-    state.skill_service.uninstall(&name).await?;
+    if let Some(agent_id) = &params.agent_id {
+        state.skill_service.uninstall_agent_skill(agent_id, &name).await?;
+    } else {
+        state.skill_service.uninstall(&name).await?;
+    }
     Ok(Json(()))
 }
 

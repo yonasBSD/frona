@@ -1,5 +1,6 @@
 ---
-name: request_user_takeover
+id: request_user_takeover
+group: human_in_the_loop
 parameters:
   reason:
     type: string

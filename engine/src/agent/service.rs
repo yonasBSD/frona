@@ -59,11 +59,12 @@ impl AgentService {
             model_group: req.model_group.unwrap_or_else(|| "primary".to_string()),
             enabled: true,
             tools,
-            skills: req.skills.unwrap_or_default(),
+            skills: req.skills,
             sandbox_config: req.sandbox_config,
             max_concurrent_tasks: None,
             avatar: None,
             identity: std::collections::BTreeMap::new(),
+            prompt: None,
             heartbeat_interval: None,
             next_heartbeat_at: None,
             heartbeat_chat_id: None,
@@ -128,8 +129,10 @@ impl AgentService {
             return Err(AppError::Forbidden("Not your agent".into()));
         }
 
-        if let Some(name) = req.name {
-            agent.name = name;
+        let explicit_name = req.name.is_some();
+        if let Some(ref name) = req.name {
+            agent.name = name.clone();
+            agent.identity.insert("name".to_string(), name.clone());
         }
         if let Some(description) = req.description {
             agent.description = description;
@@ -144,10 +147,26 @@ impl AgentService {
             agent.tools = tools;
         }
         if let Some(skills) = req.skills {
-            agent.skills = skills;
+            if skills.len() == 1 && skills[0] == "*" {
+                agent.skills = None;
+            } else {
+                agent.skills = Some(skills);
+            }
         }
         if let Some(sandbox_config) = req.sandbox_config {
             agent.sandbox_config = Some(sandbox_config);
+        }
+        if let Some(prompt) = req.prompt {
+            agent.prompt = if prompt.is_empty() { None } else { Some(prompt) };
+        }
+        if let Some(ref identity) = req.identity {
+            if !explicit_name
+                && let Some(new_name) = identity.get("name").filter(|n| !n.is_empty())
+                && agent.identity.get("name") != Some(new_name)
+            {
+                agent.name = new_name.clone();
+            }
+            agent.identity = req.identity.unwrap();
         }
         agent.updated_at = chrono::Utc::now();
 

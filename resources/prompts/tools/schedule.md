@@ -1,5 +1,6 @@
 ---
-name: schedule_task
+id: schedule_task
+group: schedule
 parameters:
   action:
     type: string

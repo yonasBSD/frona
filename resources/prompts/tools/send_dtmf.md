@@ -1,5 +1,6 @@
 ---
-name: send_dtmf
+id: send_dtmf
+group: voice_call
 parameters:
   digits:
     type: string

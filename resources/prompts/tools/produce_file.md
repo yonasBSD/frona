@@ -1,5 +1,6 @@
 ---
-name: produce_file
+id: produce_file
+group: file
 parameters:
   path:
     type: string

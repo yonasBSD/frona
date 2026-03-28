@@ -33,7 +33,7 @@ impl AgentToolRegistry {
         let owner_name = tool.name().to_string();
         for mut def in tool.definitions() {
             self.tool_name_to_owner
-                .insert(def.name.clone(), owner_name.clone());
+                .insert(def.id.clone(), owner_name.clone());
 
             if let Some(props) = def
                 .parameters
@@ -75,6 +75,10 @@ impl AgentToolRegistry {
         Ok(())
     }
 
+    pub fn owner_of(&self, tool_id: &str) -> Option<&str> {
+        self.tool_name_to_owner.get(tool_id).map(|s| s.as_str())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
@@ -95,7 +99,6 @@ pub fn build_tool_registry(
     use super::request_credentials::RequestCredentialsTool;
     use super::schedule::ScheduleTaskTool;
     use super::task_control::TaskControlTool;
-    use super::update_entity::UpdateEntityTool;
     use super::update_identity::UpdateIdentityTool;
     use super::web_fetch::WebFetchTool;
     use super::web_search::WebSearchTool;
@@ -110,12 +113,6 @@ pub fn build_tool_registry(
     registry.register(Arc::new(ProduceFileTool::new(
         workspaces_path,
         prompts.clone(),
-    )));
-
-    registry.register(Arc::new(UpdateEntityTool::new(
-        state.db.clone(),
-        "agent",
-        "update_agent",
     )));
 
     registry.register(Arc::new(UpdateIdentityTool::new(
@@ -149,7 +146,7 @@ pub fn build_tool_registry(
         )));
     }
 
-    if allowed_tools.iter().any(|t| t == "web_search") {
+    if allowed_tools.iter().any(|t| t == "search") {
         registry.register(Arc::new(WebSearchTool::new(state.search_provider.clone(), prompts.clone())));
     }
 
@@ -181,14 +178,14 @@ pub fn build_tool_registry(
         )));
     }
 
-    if allowed_tools.iter().any(|t| t == "request_credentials") {
+    if allowed_tools.iter().any(|t| t == "credentials") {
         registry.register(Arc::new(RequestCredentialsTool::new(
             state.vault_service.clone(),
             prompts.clone(),
         )));
     }
 
-    if allowed_tools.iter().any(|t| t == "manage_service") {
+    if allowed_tools.iter().any(|t| t == "app") {
         registry.register(Arc::new(crate::tool::manage_service::ManageServiceTool::new(
             state.app_service.clone(),
             prompts.clone(),
@@ -197,22 +194,16 @@ pub fn build_tool_registry(
         )));
     }
 
-    if allowed_tools.iter().any(|t| t == "make_voice_call") {
+    if allowed_tools.iter().any(|t| t == "voice_call") {
         registry.register(Arc::new(crate::tool::voice::VoiceCallTool {
             provider: state.voice_provider.clone(),
             prompts: prompts.clone(),
             contact_service: state.contact_service.clone(),
             call_service: state.call_service.clone(),
         }));
-    }
-
-    if allowed_tools.iter().any(|t| t == "send_dtmf") {
         registry.register(Arc::new(crate::tool::voice::SendDtmfTool {
             prompts: prompts.clone(),
         }));
-    }
-
-    if allowed_tools.iter().any(|t| t == "hangup_call") {
         registry.register(Arc::new(crate::tool::voice::HangupCallTool {
             prompts: prompts.clone(),
         }));
@@ -236,7 +227,7 @@ pub fn build_tool_registry(
         }
     }
 
-    let tool_names: Vec<&str> = registry.definitions.iter().map(|d| d.name.as_str()).collect();
+    let tool_names: Vec<&str> = registry.definitions.iter().map(|d| d.id.as_str()).collect();
     tracing::info!(
         ?tool_names,
         cli_configs = state.cli_tools_config.len(),
@@ -284,7 +275,8 @@ mod tests {
 
         fn definitions(&self) -> Vec<ToolDefinition> {
             vec![ToolDefinition {
-                name: "mock_action".to_string(),
+                id: "mock_action".to_string(),
+                group: String::new(),
                 description: "A mock action".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }]
@@ -317,11 +309,12 @@ mod tests {
                 model_group: "primary".into(),
                 enabled: true,
                 tools: vec![],
-                skills: vec![],
+                skills: None,
                 sandbox_config: None,
                 max_concurrent_tasks: None,
                 avatar: None,
                 identity: Default::default(),
+                prompt: None,
                 heartbeat_interval: None,
                 next_heartbeat_at: None,
                 heartbeat_chat_id: None,
@@ -351,7 +344,7 @@ mod tests {
 
         let defs = &registry.definitions;
         assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0].name, "mock_action");
+        assert_eq!(defs[0].id, "mock_action");
 
         let ctx = mock_context();
         let output = registry

@@ -1,5 +1,6 @@
 ---
-name: ask_user_question
+id: ask_user_question
+group: human_in_the_loop
 parameters:
   question:
     type: string

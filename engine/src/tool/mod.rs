@@ -10,7 +10,6 @@ pub mod memory;
 pub mod request_credentials;
 pub mod schedule;
 pub mod task_control;
-pub mod update_entity;
 pub mod update_identity;
 pub mod voice;
 pub mod web_fetch;
@@ -36,12 +35,12 @@ pub fn init_configurable_tools(cli_tools: &[CliToolConfig]) {
     let mut names: Vec<String> = cli_tools.iter().map(|t| t.name.clone()).collect();
     names.push("browser".to_string());
     names.push("web_fetch".to_string());
-    names.push("web_search".to_string());
+    names.push("search".to_string());
     names.push("delegate".to_string());
     names.push("schedule".to_string());
     names.push("heartbeat".to_string());
-    names.push("request_credentials".to_string());
-    names.push("manage_service".to_string());
+    names.push("credentials".to_string());
+    names.push("app".to_string());
     let _ = CONFIGURABLE_TOOLS.set(names);
 }
 
@@ -51,7 +50,8 @@ pub fn configurable_tools() -> &'static [String] {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
-    pub name: String,
+    pub id: String,
+    pub group: String,
     pub description: String,
     pub parameters: Value,
 }
@@ -223,10 +223,12 @@ pub fn load_tool_definition(prompts: &PromptLoader, path: &str) -> Option<ToolDe
 pub fn load_tool_definition_with_vars(prompts: &PromptLoader, path: &str, vars: &[(&str, &str)]) -> Option<ToolDefinition> {
     let raw = prompts.read_with_vars(path, vars)?;
     let (yaml, body) = parse_frontmatter(&raw)?;
-    let name = yaml.get("name")?.as_str()?.to_string();
+    let id = yaml.get("id")?.as_str()?.to_string();
+    let group = yaml.get("group").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let parameters = build_parameters_json(&yaml);
     Some(ToolDefinition {
-        name,
+        id,
+        group,
         description: body,
         parameters,
     })

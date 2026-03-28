@@ -1,5 +1,6 @@
 ---
-name: web_search
+id: web_search
+group: search
 parameters:
   query:
     type: string

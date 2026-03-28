@@ -1,5 +1,6 @@
 ---
-name: run_subtask
+id: run_subtask
+group: delegate
 parameters:
   target_agent:
     type: string

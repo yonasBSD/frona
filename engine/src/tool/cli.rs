@@ -78,7 +78,8 @@ impl AgentTool for CliTool {
         });
 
         vec![ToolDefinition {
-            name: self.config.name.clone(),
+            id: self.config.name.clone(),
+            group: self.config.name.clone(),
             description: self.config.description.clone(),
             parameters,
         }]
@@ -111,7 +112,7 @@ impl AgentTool for CliTool {
 
         let skill_read_paths: Vec<String> = self
             .skill_service
-            .list(agent_id, &ctx.agent.skills)
+            .list(agent_id, ctx.agent.skills.as_deref())
             .await
             .into_iter()
             .map(|s| s.path)
@@ -328,7 +329,7 @@ mod tests {
         let defs = tool.definitions();
 
         assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0].name, "shell");
+        assert_eq!(defs[0].id, "shell");
     }
 
     fn mock_context() -> InferenceContext {
@@ -353,11 +354,12 @@ mod tests {
                 model_group: "primary".into(),
                 enabled: true,
                 tools: vec![],
-                skills: vec![],
+                skills: None,
                 sandbox_config: None,
                 max_concurrent_tasks: None,
                 avatar: None,
                 identity: Default::default(),
+                prompt: None,
                 heartbeat_interval: None,
                 next_heartbeat_at: None,
                 heartbeat_chat_id: None,

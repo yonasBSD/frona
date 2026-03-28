@@ -1,5 +1,6 @@
 ---
-name: manage_service
+id: manage_service
+group: app
 parameters:
   action:
     type: string
