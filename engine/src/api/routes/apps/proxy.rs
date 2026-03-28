@@ -22,6 +22,7 @@ pub(crate) async fn auth_gate(
             q.split('&')
                 .find_map(|pair| pair.strip_prefix("redirect="))
         })
+        .filter(|u| u.starts_with('/') && !u.starts_with("//"))
         .unwrap_or("/");
 
     let cookie_header = headers
