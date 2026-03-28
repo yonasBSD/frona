@@ -25,6 +25,8 @@ services:
 
   frona-dev:
     profiles: [dev]
+    cap_add:
+      - SYS_PTRACE
     build:
       context: ..
       dockerfile: build/Dockerfile
@@ -64,6 +66,8 @@ services:
 
   frona:
     profiles: [prod]
+    cap_add:
+      - SYS_PTRACE
     build:
       context: ..
       dockerfile: build/Dockerfile

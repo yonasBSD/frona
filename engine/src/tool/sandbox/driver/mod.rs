@@ -1,6 +1,11 @@
-pub mod linux;
 pub mod macos;
 pub mod noop;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub mod landlock;
+#[cfg(target_os = "linux")]
+pub mod syd;
 
 use std::process::Command;
 
@@ -8,8 +13,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 /// Specific /etc paths allowed for read access.
-/// We intentionally exclude /etc/passwd, /etc/shadow, /etc/group,
-/// /etc/ssh/, and other sensitive files.
+/// We intentionally exclude /etc/shadow, /etc/ssh/, and other sensitive files.
 pub const ETC_READ_ALLOWLIST: &[&str] = &[
     // Dynamic linker
     "/etc/ld.so.cache",
@@ -56,6 +60,9 @@ pub const ETC_READ_ALLOWLIST: &[&str] = &[
     "/etc/pip.conf",
     // XDG base directory spec
     "/etc/xdg",
+    // User/group lookup (world-readable, needed by getpwnam/getgrnam)
+    "/etc/passwd",
+    "/etc/group",
 ];
 
 use crate::core::error::AppError;
@@ -110,25 +117,33 @@ pub trait SandboxDriver: Send + Sync {
 
 pub fn create_driver(disabled: bool) -> Box<dyn SandboxDriver> {
     if disabled {
+        tracing::warn!("Sandbox: disabled");
         return Box::new(noop::NoopDriver);
     }
     #[cfg(target_os = "macos")]
     {
+        tracing::info!("Sandbox: macOS sandbox-exec");
         Box::new(macos::MacosDriver)
     }
     #[cfg(target_os = "linux")]
     {
-        Box::new(linux::LandlockDriver)
+        if syd::syd_available() {
+            tracing::info!("Sandbox: syd (seccomp-notify)");
+            Box::new(syd::SydDriver::new())
+        } else {
+            tracing::info!("Sandbox: Landlock");
+            Box::new(landlock::LandlockDriver)
+        }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
+        tracing::warn!("Sandbox: unsupported platform");
         Box::new(noop::NoopDriver)
     }
 }
 
 pub fn verify_sandbox(workspace_base: &str, disabled: bool) -> Result<(), String> {
     if disabled {
-        tracing::warn!("Sandbox disabled by FRONA_SERVER_SANDBOX_DISABLED env var");
         return Ok(());
     }
 
@@ -215,7 +230,6 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
         );
     }
 
-    tracing::info!("Sandbox verified: enforcement is active");
     Ok(())
 }
 

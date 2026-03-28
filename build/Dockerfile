@@ -40,13 +40,13 @@ COPY Cargo.toml Cargo.lock ./
 COPY engine/ engine/
 RUN cargo build --release -p frona
 
-# Stage 4: CLI tools (op, bw)
+# Stage 4: CLI tools (op, bw, syd)
 FROM debian:bookworm-slim AS cli-tools
 ARG TARGETARCH
-RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN --mount=type=bind,source=build/pkgs/prod-cli.txt,target=/tmp/cli.txt \
-  OP_VER=$(grep '^op=' /tmp/cli.txt | cut -d= -f2) \
-  && BW_VER=$(grep '^bw=' /tmp/cli.txt | cut -d= -f2) \
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip xz-utils ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,source=build/pkgs/prod-pkgs.txt,target=/tmp/pkgs.txt \
+  OP_VER=$(grep '^op=' /tmp/pkgs.txt | cut -d= -f2) \
+  && BW_VER=$(grep '^bw=' /tmp/pkgs.txt | cut -d= -f2) \
   && curl -sSfLo /tmp/op.zip "https://cache.agilebits.com/dist/1P/op2/pkg/v${OP_VER}/op_linux_${TARGETARCH}_v${OP_VER}.zip" \
   && unzip -o /tmp/op.zip -d /usr/local/bin op \
   && chmod +x /usr/local/bin/op \
@@ -56,6 +56,14 @@ RUN --mount=type=bind,source=build/pkgs/prod-cli.txt,target=/tmp/cli.txt \
   && unzip -o /tmp/bw.zip -d /usr/local/bin \
   && chmod +x /usr/local/bin/bw \
   && rm /tmp/bw.zip
+RUN --mount=type=bind,source=build/pkgs/prod-pkgs.txt,target=/tmp/pkgs.txt \
+  SYD_VER=$(grep '^syd=' /tmp/pkgs.txt | cut -d= -f2) \
+  && curl -sSfL "https://distfiles.exherbo.org/sydbox%2Fsyd-${SYD_VER}.tar.xz" -o /tmp/syd.tar.xz \
+  && tar xf /tmp/syd.tar.xz -C /tmp \
+  && ARCH=$([ "$TARGETARCH" = "amd64" ] && echo "x86_64" || echo "aarch64") \
+  && cp /tmp/syd-${SYD_VER}/${ARCH}/syd /usr/local/bin/syd \
+  && chmod +x /usr/local/bin/syd \
+  && rm -rf /tmp/syd*
 COPY Cargo.lock /tmp/Cargo.lock
 RUN SURREAL_VER=$(grep -A1 'name = "surrealdb"' /tmp/Cargo.lock | grep version | sed 's/.*"\(.*\)".*/\1/') \
   && curl -sSfL "https://github.com/surrealdb/surrealdb/releases/download/v${SURREAL_VER}/surreal-v${SURREAL_VER}.linux-${TARGETARCH}.tgz" \
@@ -92,7 +100,7 @@ RUN --mount=type=bind,source=build/pkgs/dev-rust-cargo.txt,target=/tmp/cargo.txt
     cargo install "$crate" --version "$version"; \
   done
 
-COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/surreal /usr/local/bin/
+COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/surreal /usr/local/bin/syd /usr/local/bin/
 
 RUN groupadd -g 1000 frona && useradd -u 1000 -g frona -m -s /bin/bash frona
 RUN mkdir -p /app /app/target /app/frontend/node_modules /app/data \
@@ -113,7 +121,7 @@ RUN --mount=type=bind,source=build/pkgs/prod-apt.txt,target=/tmp/packages.txt \
   $(grep -vE '^\s*(#|$)' /tmp/packages.txt | tr '\n' ' ') \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/surreal /usr/local/bin/
+COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/surreal /usr/local/bin/syd /usr/local/bin/
 
 RUN groupadd -g 1000 frona && useradd -u 1000 -g frona -d /app -s /bin/bash frona
 RUN mkdir -p /app /data && chown -R frona:frona /app /data

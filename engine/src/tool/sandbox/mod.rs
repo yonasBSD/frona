@@ -1,6 +1,7 @@
 pub mod driver;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::core::error::AppError;
 
@@ -11,7 +12,7 @@ use self::driver::{SandboxConfig, SandboxOutput, create_driver, execute_sandboxe
 
 pub struct SandboxManager {
     base_path: PathBuf,
-    sandbox_disabled: bool,
+    driver: Arc<dyn driver::SandboxDriver>,
     shared_read_paths: Vec<String>,
 }
 
@@ -19,7 +20,7 @@ impl SandboxManager {
     pub fn new(base_path: impl Into<PathBuf>, sandbox_disabled: bool) -> Self {
         Self {
             base_path: base_path.into(),
-            sandbox_disabled,
+            driver: Arc::from(create_driver(sandbox_disabled)),
             shared_read_paths: Vec::new(),
         }
     }
@@ -39,7 +40,7 @@ impl SandboxManager {
         let path = self.base_path.join(&sanitized);
         Sandbox {
             path,
-            sandbox: create_driver(self.sandbox_disabled),
+            driver: Arc::clone(&self.driver),
             network_access,
             allowed_network_destinations,
             extra_env_vars: Vec::new(),
@@ -51,7 +52,7 @@ impl SandboxManager {
 
 pub struct Sandbox {
     path: PathBuf,
-    sandbox: Box<dyn driver::SandboxDriver>,
+    driver: Arc<dyn driver::SandboxDriver>,
     network_access: bool,
     allowed_network_destinations: Vec<String>,
     extra_env_vars: Vec<(String, String)>,
@@ -182,7 +183,7 @@ impl Sandbox {
             config.working_dir = Some(canonical_wd);
         }
 
-        let mut cmd = self.sandbox.sandboxed_command(program, args, &config)?;
+        let mut cmd = self.driver.sandboxed_command(program, args, &config)?;
 
         cmd.env_clear();
 
@@ -230,7 +231,7 @@ impl Sandbox {
         config.timeout_secs = timeout_secs;
 
         execute_sandboxed(
-            &*self.sandbox,
+            &*self.driver,
             program,
             args,
             &config,
@@ -258,7 +259,7 @@ mod tests {
         let dir = std::env::temp_dir().join("frona_test_workspace").join(name);
         Sandbox {
             path: dir,
-            sandbox: create_driver(false),
+            driver: Arc::from(create_driver(false)),
             network_access: false,
             allowed_network_destinations: Vec::new(),
 
@@ -299,7 +300,7 @@ mod tests {
 
         let ws = Sandbox {
             path: rel_path.clone(),
-            sandbox: create_driver(false),
+            driver: Arc::from(create_driver(false)),
             network_access: false,
             allowed_network_destinations: Vec::new(),
 

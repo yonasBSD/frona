@@ -1,132 +1,16 @@
-use std::process::Command;
+pub const SYSTEM_READ_DIRS: &[&str] = &[
+    "/usr", "/lib", "/lib64", "/bin", "/sbin",
+    "/usr/local/lib", "/usr/local/share",
+    "/usr/share/locale", "/usr/share/zoneinfo",
+];
 
-use crate::core::error::AppError;
+pub const PROC_READ_PATHS: &[&str] = &[
+    "/proc/self",
+    "/proc/cpuinfo", "/proc/meminfo",
+];
 
-use super::{SandboxDriver, SandboxConfig};
+pub const READ_WRITE_DIRS: &[&str] = &["/tmp"];
 
-pub struct LandlockDriver;
-
-impl SandboxDriver for LandlockDriver {
-    fn sandboxed_command(
-        &self,
-        program: &str,
-        args: &[&str],
-        config: &SandboxConfig,
-    ) -> Result<Command, AppError> {
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::process::CommandExt;
-
-            let workspace_dir = config.workspace_dir.clone();
-            let network_access = config.network_access;
-            let additional_read_paths = config.additional_read_paths.clone();
-            let additional_write_paths = config.additional_write_paths.clone();
-
-            let mut cmd = Command::new(program);
-            cmd.args(args);
-            cmd.current_dir(config.working_dir.as_deref().unwrap_or(&config.workspace_dir));
-
-            unsafe {
-                cmd.pre_exec(move || {
-                    apply_landlock(&workspace_dir, network_access, &additional_read_paths, &additional_write_paths)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-                });
-            }
-
-            Ok(cmd)
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = (program, args, config);
-            Err(AppError::Tool(
-                "Landlock sandbox is only available on Linux".to_string(),
-            ))
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn apply_landlock(workspace_dir: &str, network_access: bool, additional_read_paths: &[String], additional_write_paths: &[String]) -> Result<(), String> {
-    use landlock::{
-        Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr,
-        RulesetCreatedAttr, ABI,
-    };
-
-    let abi = ABI::V5;
-
-    let fs_access = AccessFs::from_all(abi);
-    let read_access = AccessFs::from_read(abi);
-
-    let mut ruleset = Ruleset::default()
-        .handle_access(fs_access)
-        .map_err(|e| format!("Landlock ruleset creation failed: {e}"))?;
-
-    if !network_access {
-        ruleset = ruleset
-            .handle_access(AccessNet::from_all(abi))
-            .map_err(|e| format!("Landlock network access failed: {e}"))?;
-    }
-
-    let mut ruleset = ruleset
-        .create()
-        .map_err(|e| format!("Landlock ruleset create failed: {e}"))?;
-
-    let read_only_paths = [
-        "/usr", "/lib", "/lib64", "/bin", "/sbin",
-        // Local package installs (pip, npm global, etc.)
-        "/usr/local/lib", "/usr/local/share",
-        // Locale and timezone data
-        "/usr/share/locale", "/usr/share/zoneinfo",
-        // Process self-introspection (Python, Go, Perl runtimes)
-        "/proc/self",
-        // System info (multiprocessing, memory-aware tools)
-        "/proc/cpuinfo", "/proc/meminfo",
-    ];
-    let read_write_paths = [
-        workspace_dir, "/tmp",
-        // Standard pseudo-devices
-        "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
-    ];
-
-    for path in &read_only_paths {
-        if let Ok(fd) = PathFd::new(path) {
-            ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))
-                .map_err(|e| format!("Landlock add_rule failed for {path}: {e}"))?;
-        }
-    }
-
-    for path in super::ETC_READ_ALLOWLIST {
-        if let Ok(fd) = PathFd::new(path) {
-            ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))
-                .map_err(|e| format!("Landlock add_rule failed for {path}: {e}"))?;
-        }
-    }
-
-    for path in additional_read_paths {
-        if let Ok(fd) = PathFd::new(path) {
-            ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))
-                .map_err(|e| format!("Landlock add_rule failed for {path}: {e}"))?;
-        }
-    }
-
-    for path in additional_write_paths {
-        if let Ok(fd) = PathFd::new(path) {
-            ruleset = ruleset.add_rule(PathBeneath::new(fd, fs_access))
-                .map_err(|e| format!("Landlock add_rule failed for {path}: {e}"))?;
-        }
-    }
-
-    for path in &read_write_paths {
-        if let Ok(fd) = PathFd::new(path) {
-            ruleset = ruleset.add_rule(PathBeneath::new(fd, fs_access))
-                .map_err(|e| format!("Landlock add_rule failed for {path}: {e}"))?;
-        }
-    }
-
-    ruleset
-        .restrict_self()
-        .map_err(|e| format!("Landlock restrict_self failed: {e}"))?;
-
-    Ok(())
-}
+pub const READ_WRITE_DEVICES: &[&str] = &[
+    "/dev/null", "/dev/zero", "/dev/urandom", "/dev/random",
+];
