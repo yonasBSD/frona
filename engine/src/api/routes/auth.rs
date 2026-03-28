@@ -8,7 +8,9 @@ use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::key_extractor::SmartIpKeyExtractor;
 
 use crate::api::cookie::{
-    extract_refresh_token_from_cookie_header, make_clear_refresh_cookie, make_refresh_cookie,
+    extract_refresh_token_from_cookie_header, extract_sso_csrf_from_cookie_header,
+    make_clear_refresh_cookie, make_clear_sso_csrf_cookie, make_refresh_cookie,
+    make_sso_csrf_cookie,
 };
 use crate::auth::models::{AuthResponse, LoginRequest, RegisterRequest, UpdateProfileRequest, UpdateUsernameRequest, UserInfo};
 use crate::auth::token::models::CreatePatRequest;
@@ -291,32 +293,47 @@ async fn sso_status(
 
 async fn sso_authorize(
     State(state): State<AppState>,
-) -> Result<axum::response::Redirect, ApiError> {
+) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], axum::response::Redirect), ApiError> {
     let oauth_svc = state
         .oauth_service
         .as_ref()
         .ok_or_else(|| AppError::Validation("SSO is not enabled".into()))?;
 
-    let (auth_url, _csrf, _nonce) = oauth_svc.get_authorization_url().await?;
-    Ok(axum::response::Redirect::temporary(&auth_url))
+    let (auth_url, csrf_secret, _nonce) = oauth_svc.get_authorization_url().await?;
+    let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
+    let cookie = make_sso_csrf_cookie(&csrf_secret, secure);
+    Ok(([(SET_COOKIE, cookie)], axum::response::Redirect::temporary(&auth_url)))
 }
 
 async fn sso_callback(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], axum::response::Redirect), ApiError>
+) -> Result<(axum::response::AppendHeaders<[(axum::http::HeaderName, axum::http::HeaderValue); 2]>, axum::response::Redirect), ApiError>
 {
     let oauth_svc = state
         .oauth_service
         .as_ref()
         .ok_or_else(|| AppError::Validation("SSO is not enabled".into()))?;
 
-    let code = params
-        .get("code")
-        .ok_or_else(|| AppError::Validation("Missing authorization code".into()))?;
     let callback_state = params
         .get("state")
         .ok_or_else(|| AppError::Validation("Missing state parameter".into()))?;
+
+    // Validate CSRF: the cookie set during sso_authorize must match the state param
+    let cookie_header = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let csrf_cookie = extract_sso_csrf_from_cookie_header(cookie_header)
+        .ok_or_else(|| AppError::Auth("Missing SSO CSRF cookie — please restart the login flow".into()))?;
+    if csrf_cookie != callback_state {
+        return Err(ApiError(AppError::Auth("SSO state mismatch".into())));
+    }
+
+    let code = params
+        .get("code")
+        .ok_or_else(|| AppError::Validation("Missing authorization code".into()))?;
 
     let (user, _is_new) = oauth_svc
         .handle_callback(
@@ -334,15 +351,16 @@ async fn sso_callback(
         .await?;
 
     let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
-    let cookie = make_refresh_cookie(
+    let refresh_cookie = make_refresh_cookie(
         &refresh_jwt,
         state.token_service.refresh_expiry_secs(),
         secure,
     );
+    let clear_csrf = make_clear_sso_csrf_cookie(secure);
 
     // Redirect to frontend callback page — the frontend will fetch a new access token via refresh
     Ok((
-        [(SET_COOKIE, cookie)],
+        axum::response::AppendHeaders([(SET_COOKIE, refresh_cookie), (SET_COOKIE, clear_csrf)]),
         axum::response::Redirect::temporary("/auth/sso/callback"),
     ))
 }

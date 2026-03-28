@@ -42,6 +42,32 @@ pub fn extract_app_session_from_cookie_header(header: &str) -> Option<&str> {
     extract_cookie_value(header, "app_session")
 }
 
+pub fn make_sso_csrf_cookie(token: &str, secure: bool) -> HeaderValue {
+    let c = Cookie::build(("sso_csrf", token))
+        .http_only(true)
+        .same_site(cookie::SameSite::Lax)
+        .path("/api/auth/sso")
+        .max_age(cookie::time::Duration::seconds(300))
+        .secure(secure)
+        .build();
+    HeaderValue::from_str(&c.to_string()).expect("valid cookie header")
+}
+
+pub fn make_clear_sso_csrf_cookie(secure: bool) -> HeaderValue {
+    let c = Cookie::build(("sso_csrf", ""))
+        .http_only(true)
+        .same_site(cookie::SameSite::Lax)
+        .path("/api/auth/sso")
+        .max_age(cookie::time::Duration::ZERO)
+        .secure(secure)
+        .build();
+    HeaderValue::from_str(&c.to_string()).expect("valid cookie header")
+}
+
+pub fn extract_sso_csrf_from_cookie_header(header: &str) -> Option<&str> {
+    extract_cookie_value(header, "sso_csrf")
+}
+
 pub fn make_clear_app_session_cookie(secure: bool) -> HeaderValue {
     let c = Cookie::build(("app_session", ""))
         .http_only(true)
