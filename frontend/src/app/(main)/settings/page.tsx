@@ -55,6 +55,12 @@ export default function SettingsPage() {
     setActiveTabState(tab);
     window.history.replaceState(null, "", `#${tab}`);
   }, []);
+
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (TABS.some((t) => t.id === hash)) setActiveTabState(hash as TabId);
+  }, []);
+
   const [saving, setSaving] = useState(false);
   const [showRestart, setShowRestart] = useState(false);
   const [error, setError] = useState<string | null>(null);

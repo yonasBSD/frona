@@ -274,6 +274,10 @@ export function deleteChat(chatId: string) {
   return request<void>(`/api/chats/${chatId}`, { method: "DELETE" });
 }
 
+export function deleteAgent(agentId: string) {
+  return request<void>(`/api/agents/${agentId}`, { method: "DELETE" });
+}
+
 export function getArchivedChats() {
   return request<import("./types").ChatResponse[]>("/api/chats/archived");
 }
@@ -283,6 +287,8 @@ export function getContacts() {
 }
 
 // Skill types
+export type SkillScope = "builtin" | "shared" | "agent";
+
 export interface SkillSearchResult {
   name: string;
   repo: string;
@@ -307,6 +313,7 @@ export interface SkillListItem {
   description: string;
   source: string | null;
   installed_at: string | null;
+  scope: SkillScope;
 }
 
 export async function searchSkills(query: string): Promise<SkillSearchResult[]> {
@@ -324,12 +331,18 @@ export async function installSkills(repo: string, skillNames: string[], agentId?
   });
 }
 
-export async function uninstallSkill(name: string): Promise<void> {
-  return request<void>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+export async function uninstallSkill(name: string, agentId?: string): Promise<void> {
+  let url = `/api/skills/${encodeURIComponent(name)}`;
+  if (agentId) url += `?agent_id=${encodeURIComponent(agentId)}`;
+  return request<void>(url, { method: "DELETE" });
 }
 
 export async function listInstalledSkills(): Promise<SkillListItem[]> {
   return request<SkillListItem[]>("/api/skills");
+}
+
+export async function listAgentSkills(agentId: string): Promise<SkillListItem[]> {
+  return request<SkillListItem[]>(`/api/agents/${agentId}/skills`);
 }
 
 export interface RepoBrowseSkill {

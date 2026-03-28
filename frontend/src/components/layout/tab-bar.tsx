@@ -1,12 +1,11 @@
 "use client";
 
-import { ChatBubbleLeftRightIcon, ClipboardDocumentListIcon, CpuChipIcon } from "@heroicons/react/24/outline";
+import { ChatBubbleLeftRightIcon, ClipboardDocumentListIcon } from "@heroicons/react/24/outline";
 import { useNavigation } from "@/lib/navigation-context";
 
 const tabs = [
   { id: "chat" as const, label: "Chat", Icon: ChatBubbleLeftRightIcon },
   { id: "tasks" as const, label: "Tasks", Icon: ClipboardDocumentListIcon },
-  { id: "agents" as const, label: "Agents", Icon: CpuChipIcon },
 ];
 
 export function TabBar() {

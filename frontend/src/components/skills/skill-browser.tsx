@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useMemo, useEffect } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect, forwardRef, useImperativeHandle } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -22,16 +22,27 @@ import {
   installSkills,
   uninstallSkill,
   listInstalledSkills,
+  listAgentSkills,
   browseRepo,
   type SkillSearchResult,
   type SkillPreview,
   type SkillListItem,
   type RepoBrowseResult,
   type RepoBrowseSkill,
+  type SkillScope,
 } from "@/lib/api-client";
+
+export interface SkillBrowserHandle {
+  confirmRemovals: (onConfirm: () => void) => void;
+  resetRemovals: () => void;
+}
 
 interface SkillBrowserProps {
   agentId?: string;
+  /** null = default (all enabled), [] = none, [...] = specific */
+  enabledSkills?: string[] | null;
+  onEnabledChange?: (skills: string[] | null) => void;
+  onAgentRemovalsChange?: (hasRemovals: boolean) => void;
 }
 
 function MetadataTable({ meta }: { meta: Record<string, string> }) {
@@ -58,7 +69,7 @@ function MetadataTable({ meta }: { meta: Record<string, string> }) {
   );
 }
 
-export function SkillBrowser({ agentId }: SkillBrowserProps) {
+export const SkillBrowser = forwardRef<SkillBrowserHandle, SkillBrowserProps>(function SkillBrowser({ agentId, enabledSkills, onEnabledChange, onAgentRemovalsChange }, ref) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SkillSearchResult[]>([]);
   const [preview, setPreview] = useState<SkillPreview | null>(null);
@@ -76,18 +87,104 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
   const [repoBrowse, setRepoBrowse] = useState<RepoBrowseResult | null>(null);
   const [installingAll, setInstallingAll] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [agentOnly, setAgentOnly] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const loadInstalled = useCallback(async () => {
+  // For shared+builtin: enabledSet tracks which are active (driven by enabledSkills prop)
+  // null/undefined = all enabled (default), [] = none, [...] = specific
+  const enabledSet = useMemo(() => {
+    if (!agentId) return new Set<string>();
+    const sharedBuiltin = installed.filter((s) => s.scope !== "agent").map((s) => s.name);
+    if (enabledSkills === null || enabledSkills === undefined) return new Set(sharedBuiltin);
+    return new Set(enabledSkills.filter((n) => sharedBuiltin.includes(n)));
+  }, [agentId, enabledSkills, installed]);
+
+  // For agent-scoped: track which ones user wants to uninstall (local state)
+  const [removedAgentSkills, setRemovedAgentSkills] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    onAgentRemovalsChange?.(removedAgentSkills.size > 0);
+  }, [removedAgentSkills, onAgentRemovalsChange]);
+
+  const pendingSaveRef = useRef<(() => void) | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    confirmRemovals(onConfirm: () => void) {
+      if (removedAgentSkills.size > 0) {
+        pendingSaveRef.current = onConfirm;
+        setConfirmUninstall(Array.from(removedAgentSkills));
+      } else {
+        onConfirm();
+      }
+    },
+    resetRemovals: () => setRemovedAgentSkills(new Set()),
+  }), [removedAgentSkills]);
+
+  const normalizeEnabled = useCallback((skills: string[]): string[] | null => {
+    const allDiscoverable = installed
+      .filter((s) => s.scope === "shared" || s.scope === "builtin")
+      .every((s) => skills.includes(s.name));
+    return allDiscoverable ? null : skills;
+  }, [installed]);
+
+  const isSkillEnabled = useCallback((skill: SkillListItem): boolean => {
+    if (skill.scope === "agent") return !removedAgentSkills.has(skill.name);
+    return enabledSet.has(skill.name);
+  }, [enabledSet, removedAgentSkills]);
+
+  const toggleEnabled = useCallback((name: string) => {
+    const skill = installed.find((s) => s.name === name);
+    if (!skill) return;
+
+    if (skill.scope === "agent") {
+      // Toggle local uninstall tracking
+      setRemovedAgentSkills((prev) => {
+        const next = new Set(prev);
+        if (next.has(name)) next.delete(name); else next.add(name);
+        return next;
+      });
+    } else {
+      // Toggle shared/builtin via parent
+      if (!onEnabledChange) return;
+      const current = Array.from(enabledSet);
+      const next = enabledSet.has(name)
+        ? current.filter((s) => s !== name)
+        : [...current, name];
+      onEnabledChange(normalizeEnabled(next));
+    }
+  }, [installed, enabledSet, onEnabledChange, normalizeEnabled]);
+
+  const sortSkills = (items: SkillListItem[]) => {
+    const order: Record<SkillScope, number> = { agent: 0, shared: 1, builtin: 2 };
+    return items.sort((a, b) => order[a.scope] - order[b.scope] || a.name.localeCompare(b.name));
+  };
+
+  const reload = useCallback(async () => {
     try {
-      const items = await listInstalledSkills();
-      setInstalled(items);
+      if (agentId) {
+        // Fetch agent skills + all installed to show everything
+        const [agentSkills, allInstalled] = await Promise.all([
+          listAgentSkills(agentId),
+          listInstalledSkills(),
+        ]);
+        // Merge: agent skills take priority, then add any shared/builtin not already present
+        const seen = new Set(agentSkills.map((s) => s.name));
+        const merged = [...agentSkills];
+        for (const s of allInstalled) {
+          if (!seen.has(s.name)) {
+            merged.push(s);
+          }
+        }
+        setInstalled(sortSkills(merged));
+      } else {
+        setInstalled(sortSkills(await listInstalledSkills()));
+      }
     } catch {
       // ignore
     }
-  }, []);
+  }, [agentId]);
 
-  useEffect(() => { loadInstalled(); }, [loadInstalled]);
+  useEffect(() => { reload(); }, [reload]);
 
   const installableSkills = useMemo(
     () => repoBrowse?.skills.filter((s) => !s.installed) ?? [],
@@ -150,13 +247,19 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
     try {
       await installSkills(repo, toInstall.map((s) => s.name), agentId);
       setRepoBrowse((prev) => prev ? { ...prev, skills: prev.skills.map((s) => ({ ...s, installed: true })) } : prev);
-      loadInstalled();
+      if (agentId && onEnabledChange) {
+        const newNames = toInstall.map((s) => s.name).filter((n) => !enabledSet.has(n));
+        if (newNames.length > 0) {
+          onEnabledChange(normalizeEnabled([...Array.from(enabledSet), ...newNames]));
+        }
+      }
+      reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Install failed");
     } finally {
       setInstallingAll(false);
     }
-  }, [agentId, loadInstalled]);
+  }, [agentId, reload, onEnabledChange, enabledSet]);
 
   const handleSearch = useCallback(async (q: string) => {
     setQuery(q);
@@ -191,7 +294,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
 
   const handleSelect = useCallback(async (result: SkillSearchResult) => {
     setSelectedName(result.name);
-    setSelectedInstalled(installed.some((s) => s.name === result.name && s.source === result.repo));
+    setSelectedInstalled(installed.some((s) => s.name === result.name));
     setPreview(null);
     setError(null);
     try {
@@ -215,13 +318,16 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
         setPreview(null);
         setSelectedName(null);
       }
-      loadInstalled();
+      if (agentId && onEnabledChange && !enabledSet.has(name)) {
+        onEnabledChange(normalizeEnabled([...Array.from(enabledSet), name]));
+      }
+      reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Install failed");
     } finally {
       setInstalling(null);
     }
-  }, [agentId, preview, loadInstalled]);
+  }, [agentId, preview, reload, onEnabledChange, enabledSet]);
 
   const handleUninstall = useCallback(async (name: string) => {
     setUninstalling(name);
@@ -234,13 +340,13 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
       setSelectedInstalled(false);
       setSelectedName(null);
       setPreview(null);
-      loadInstalled();
+      reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Uninstall failed");
     } finally {
       setUninstalling(null);
     }
-  }, [loadInstalled]);
+  }, [reload]);
 
   const handleUninstallBatch = useCallback(async (names: string[]) => {
     if (names.length === 0) return;
@@ -251,13 +357,13 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
         await uninstallSkill(name);
       }
       setSelected(new Set());
-      loadInstalled();
+      reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Uninstall failed");
     } finally {
       setUninstallingBatch(false);
     }
-  }, [loadInstalled]);
+  }, [reload]);
 
   const handleBack = useCallback(() => {
     setSelectedName(null);
@@ -346,7 +452,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
 
   const uninstallDialog = confirmUninstall && (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/50" onClick={() => setConfirmUninstall(null)} />
+      <div className="absolute inset-0 bg-black/50" onClick={() => { setConfirmUninstall(null); pendingSaveRef.current = null; }} />
       <div className="relative rounded-xl border border-border bg-surface-secondary p-4 space-y-4 max-w-lg w-full mx-4 shadow-xl">
         <div className="mb-5 pb-3 border-b border-border flex items-end justify-between gap-3">
           <div>
@@ -366,6 +472,13 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
               ? "This will remove the skill and all its files. The agent will no longer have access to it."
               : `This will remove ${confirmUninstall.length} skills and all their files. The agent will no longer have access to them.`}
           </p>
+          {confirmUninstall.length > 1 && (
+            <ul className="list-disc list-inside space-y-0.5 pl-1">
+              {confirmUninstall.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div className="flex gap-2">
@@ -373,7 +486,18 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
             onClick={() => {
               const names = confirmUninstall;
               setConfirmUninstall(null);
-              if (names.length === 1) {
+              if (pendingSaveRef.current) {
+                const onConfirm = pendingSaveRef.current;
+                pendingSaveRef.current = null;
+                (async () => {
+                  for (const name of names) {
+                    await uninstallSkill(name, agentId);
+                  }
+                  setRemovedAgentSkills(new Set());
+                  onConfirm();
+                  reload();
+                })();
+              } else if (names.length === 1) {
                 handleUninstall(names[0]);
               } else {
                 handleUninstallBatch(names);
@@ -385,7 +509,7 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
             Uninstall
           </button>
           <button
-            onClick={() => setConfirmUninstall(null)}
+            onClick={() => { setConfirmUninstall(null); pendingSaveRef.current = null; }}
             className="w-28 inline-flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-sm font-medium text-text-secondary shadow-sm hover:bg-surface-tertiary transition"
           >
             Cancel
@@ -681,39 +805,115 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
         </div>
       )}
 
-      {query.trim().length < 2 && installed.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-2 min-h-[36px]">
-            <h4 className="text-base font-medium text-text-secondary">Installed</h4>
-            <button
-              onClick={() => setConfirmUninstall(Array.from(selected))}
-              disabled={uninstallingBatch || selected.size === 0}
-              className={`inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-danger hover:bg-surface-tertiary disabled:opacity-50 transition ${selected.size === 0 ? "invisible" : ""}`}
-            >
-              <TrashIcon className="h-3.5 w-3.5" />
-              {uninstallingBatch ? "Removing..." : `Uninstall ${selected.size} selected`}
-            </button>
-          </div>
-          <div className="rounded-xl border border-border bg-surface-secondary divide-y divide-border">
-            <div className="px-4 py-2 flex items-center gap-3 bg-surface-tertiary/30">
-              <Checkbox.Root
-                checked={selected.size === installed.length ? true : selected.size > 0 ? "indeterminate" : false}
-                onCheckedChange={() => toggleSelectAll(installed)}
-                className="h-4 w-4 rounded border border-border bg-surface flex items-center justify-center data-[state=checked]:bg-accent data-[state=checked]:border-accent data-[state=indeterminate]:bg-accent data-[state=indeterminate]:border-accent transition shrink-0"
-              >
-                <Checkbox.Indicator>
-                  {selected.size === installed.length
-                    ? <CheckIcon className="h-3 w-3 text-surface" />
-                    : <MinusIcon className="h-3 w-3 text-surface" />}
-                </Checkbox.Indicator>
-              </Checkbox.Root>
-              <span className="text-xs text-text-secondary">
-                {selected.size > 0 && `${selected.size} of ${installed.length} selected`}
-              </span>
+      {query.trim().length < 2 && installed.length > 0 && (() => {
+        const scopeLabels: Record<SkillScope, string> = { agent: "Agent", shared: "Shared", builtin: "Built-in" };
+        const scopeColors: Record<SkillScope, string> = {
+          agent: "bg-accent/15 text-accent",
+          shared: "bg-info-bg text-info-text",
+          builtin: "bg-warning-bg text-warning-text",
+        };
+
+        if (agentId) {
+          const filtered = agentOnly ? installed.filter((s) => s.scope === "agent") : installed;
+          return (
+            <div>
+              <div className="flex items-center justify-between mb-2 min-h-[36px]">
+                <h4 className="text-base font-medium text-text-secondary">Installed</h4>
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex rounded-lg bg-surface-tertiary p-0.5 text-[11px] font-medium">
+                    <button
+                      type="button"
+                      onClick={() => setAgentOnly(false)}
+                      className={`rounded-md px-2.5 py-1 transition ${
+                        !agentOnly ? "bg-surface text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"
+                      }`}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAgentOnly(true)}
+                      className={`rounded-md px-2.5 py-1 transition ${
+                        agentOnly ? "bg-surface text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"
+                      }`}
+                    >
+                      Agent
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {filtered.length === 0 ? (
+                <p className="text-sm text-text-tertiary text-center py-8">No agent-scoped skills</p>
+              ) : (
+                <div className="rounded-xl border border-border bg-surface-secondary divide-y divide-border">
+                  {filtered.map((skill) => (
+                    <div
+                      key={skill.name}
+                      onClick={(e) => { if (!(e.target as HTMLElement).closest("button")) toggleEnabled(skill.name); }}
+                      className="px-4 py-3 flex items-center gap-3 transition hover:bg-surface-tertiary cursor-pointer"
+                    >
+                      <Checkbox.Root
+                        checked={isSkillEnabled(skill)}
+                        onCheckedChange={() => toggleEnabled(skill.name)}
+                        className="h-4 w-4 rounded border border-border bg-surface flex items-center justify-center data-[state=checked]:bg-accent data-[state=checked]:border-accent transition shrink-0"
+                      >
+                        <Checkbox.Indicator>
+                          <CheckIcon className="h-3 w-3 text-surface" />
+                        </Checkbox.Indicator>
+                      </Checkbox.Root>
+                      <PuzzlePieceIcon className="h-8 w-8 text-text-tertiary shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-text-primary truncate">{skill.name}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${scopeColors[skill.scope]}`}>
+                            {scopeLabels[skill.scope]}
+                          </span>
+                        </div>
+                        {skill.description && (
+                          <div className="text-xs text-text-tertiary line-clamp-3">{skill.description}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            {installed.map((skill) => {
-              const owner = skill.source?.split("/")[0];
-              return (
+          );
+        }
+
+        return (
+          <div>
+            <div className="flex items-center justify-between mb-2 min-h-[36px]">
+              <h4 className="text-base font-medium text-text-secondary">Installed</h4>
+              {selected.size > 0 && (
+                <button
+                  onClick={() => setConfirmUninstall(Array.from(selected))}
+                  disabled={uninstallingBatch}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-danger hover:bg-surface-tertiary disabled:opacity-50 transition"
+                >
+                  <TrashIcon className="h-3.5 w-3.5" />
+                  {uninstallingBatch ? "Removing..." : `Uninstall ${selected.size} selected`}
+                </button>
+              )}
+            </div>
+            <div className="rounded-xl border border-border bg-surface-secondary divide-y divide-border">
+              <div className="px-4 py-2 flex items-center gap-3 bg-surface-tertiary/30">
+                <Checkbox.Root
+                  checked={installed.length > 0 && installed.every((s) => selected.has(s.name)) ? true : installed.some((s) => selected.has(s.name)) ? "indeterminate" : false}
+                  onCheckedChange={() => toggleSelectAll(installed)}
+                  className="h-4 w-4 rounded border border-border bg-surface flex items-center justify-center data-[state=checked]:bg-accent data-[state=checked]:border-accent data-[state=indeterminate]:bg-accent data-[state=indeterminate]:border-accent transition shrink-0"
+                >
+                  <Checkbox.Indicator>
+                    {installed.every((s) => selected.has(s.name))
+                      ? <CheckIcon className="h-3 w-3 text-surface" />
+                      : <MinusIcon className="h-3 w-3 text-surface" />}
+                  </Checkbox.Indicator>
+                </Checkbox.Root>
+                <span className="text-xs text-text-secondary">
+                  {selected.size > 0 ? `${selected.size} selected` : "Select all"}
+                </span>
+              </div>
+              {installed.map((skill) => (
                 <div
                   key={skill.name}
                   className="px-4 py-3 flex items-center gap-3 transition hover:bg-surface-tertiary"
@@ -727,35 +927,24 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
                       <CheckIcon className="h-3 w-3 text-surface" />
                     </Checkbox.Indicator>
                   </Checkbox.Root>
-                  {owner ? (
-                    <img
-                      src={`https://github.com/${owner}.png`}
-                      alt=""
-                      className="h-8 w-8 rounded-lg shrink-0"
-                    />
-                  ) : (
-                    <PuzzlePieceIcon className="h-8 w-8 text-text-tertiary shrink-0" />
-                  )}
-                  <div
-                    className="flex-1 min-w-0 cursor-pointer"
-                    onClick={() => handleSelect({ name: skill.name, repo: skill.source || "", avatar_url: owner ? `https://github.com/${owner}.png` : "", installs: 0, installed: true })}
-                  >
+                  <PuzzlePieceIcon className="h-8 w-8 text-text-tertiary shrink-0" />
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-text-primary truncate hover:text-accent transition">{skill.name}</span>
-                      {skill.source && (
-                        <span className="rounded-full bg-surface-tertiary px-2 py-0.5 text-[11px] text-text-tertiary whitespace-nowrap">{skill.source}</span>
-                      )}
+                      <span className="text-sm font-medium text-text-primary truncate">{skill.name}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${scopeColors[skill.scope]}`}>
+                        {scopeLabels[skill.scope]}
+                      </span>
                     </div>
                     {skill.description && (
                       <div className="text-xs text-text-tertiary line-clamp-3">{skill.description}</div>
                     )}
                   </div>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {query.trim().length < 2 && installed.length === 0 && (
         <p className="text-sm text-text-tertiary text-center py-8">
@@ -764,4 +953,4 @@ export function SkillBrowser({ agentId }: SkillBrowserProps) {
       )}
     </div>
   );
-}
+});

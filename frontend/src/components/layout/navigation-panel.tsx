@@ -5,7 +5,6 @@ import { useNavigation } from "@/lib/navigation-context";
 import { TabBar } from "./tab-bar";
 import { ChatsTab } from "../nav/chats-tab";
 import { TasksTab } from "../nav/tasks-tab";
-import { AgentsTab } from "../nav/agents-tab";
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 480;
@@ -57,7 +56,6 @@ export function NavigationPanel() {
       <div className="flex-1 overflow-y-auto">
         {activeTab === "chat" && <ChatsTab />}
         {activeTab === "tasks" && <TasksTab />}
-        {activeTab === "agents" && <AgentsTab />}
       </div>
 
       {/* Resize handle */}

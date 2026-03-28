@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { useSession } from "@/lib/session-context";
 import { Logo } from "../logo";
 import { NotificationDropdown } from "./notification-dropdown";
+import { AgentDropdown } from "./agent-dropdown";
 
 const topTabs = [
   { id: "chat", label: "Assistant", href: "/chat" },
@@ -83,6 +84,7 @@ export function TopBar() {
 
       {/* Right: Notifications + User profile */}
       <div className="flex items-center gap-2">
+      <AgentDropdown />
       <NotificationDropdown />
       <div ref={menuRef} className="relative flex items-center">
         <button

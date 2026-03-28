@@ -39,6 +39,14 @@ export interface Agent {
   skills: string[];
   avatar: string | null;
   identity: Record<string, string>;
+  sandbox_config: {
+    network_access: boolean;
+    allowed_network_destinations: string[];
+    timeout_secs: number;
+  } | null;
+  prompt: string | null;
+  default_prompt: string;
+  is_shared: boolean;
   chat_count: number;
   created_at: string;
   updated_at: string;

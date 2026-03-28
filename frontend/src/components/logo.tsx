@@ -5,9 +5,10 @@ import { useRef, useCallback, useEffect } from "react";
 interface LogoProps {
   size?: number;
   animate?: boolean;
+  headOnly?: boolean;
 }
 
-export function Logo({ size = 32, animate = false }: LogoProps) {
+export function Logo({ size = 32, animate = false, headOnly = false }: LogoProps) {
   const arrowsRef = useRef<SVGGElement>(null);
   const headRef = useRef<SVGGElement>(null);
   const hoveringRef = useRef(false);
@@ -57,7 +58,7 @@ export function Logo({ size = 32, animate = false }: LogoProps) {
     <svg
       width={size}
       height={size}
-      viewBox="0 0 100 100"
+      viewBox={headOnly ? "22 20 56 56" : "0 0 100 100"}
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       onMouseEnter={play}
@@ -100,7 +101,7 @@ export function Logo({ size = 32, animate = false }: LogoProps) {
       `}</style>
 
       {/* Rotating arrows */}
-      <g ref={arrowsRef} className={`arrows${animate ? "" : " paused"}`}>
+      {!headOnly && <g ref={arrowsRef} className={`arrows${animate ? "" : " paused"}`}>
         <g className="arrow-a">
           {/* Top arrow */}
           <path
@@ -148,7 +149,7 @@ export function Logo({ size = 32, animate = false }: LogoProps) {
           />
           <polygon points="48,13 34,10 36,21" fill="#FFFFFF" />
         </g>
-      </g>
+      </g>}
 
       <g ref={headRef} className={`head${animate ? "" : " paused"}`}>
         {/* Antenna */}

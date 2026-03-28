@@ -8,7 +8,7 @@ import {
   useCallback,
   createElement,
 } from "react";
-import { api, archiveChat as apiArchiveChat, unarchiveChat as apiUnarchiveChat, deleteChat as apiDeleteChat, deleteTask as apiDeleteTask, getArchivedChats, getContacts, getTask } from "./api-client";
+import { api, archiveChat as apiArchiveChat, unarchiveChat as apiUnarchiveChat, deleteChat as apiDeleteChat, deleteAgent as apiDeleteAgent, deleteTask as apiDeleteTask, getArchivedChats, getContacts, getTask } from "./api-client";
 import type {
   SpaceWithChats,
   ChatResponse,
@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import { indexContactsById } from "./types";
 
-type ActiveTab = "chat" | "tasks" | "agents";
+type ActiveTab = "chat" | "tasks";
 
 interface NavigationContextValue {
   spaces: SpaceWithChats[];
@@ -36,6 +36,7 @@ interface NavigationContextValue {
   addStandaloneChat: (chat: ChatResponse) => void;
   updateChatTitle: (chatId: string, title: string) => void;
   updateAgent: (agentId: string, fields: Record<string, unknown>) => void;
+  deleteAgent: (agentId: string) => Promise<void>;
   archiveChat: (chatId: string) => Promise<void>;
   unarchiveChat: (chatId: string) => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
@@ -97,6 +98,11 @@ export function NavigationProvider({
     setAgents((prev) =>
       prev.map((a) => (a.id === agentId ? { ...a, ...fields } : a)),
     );
+  }, []);
+
+  const deleteAgentAction = useCallback(async (agentId: string) => {
+    await apiDeleteAgent(agentId);
+    setAgents((prev) => prev.filter((a) => a.id !== agentId));
   }, []);
 
   const archiveChat = useCallback(async (chatId: string) => {
@@ -208,6 +214,7 @@ export function NavigationProvider({
         addStandaloneChat,
         updateChatTitle,
         updateAgent,
+        deleteAgent: deleteAgentAction,
         archiveChat,
         unarchiveChat,
         deleteChat: deleteChatAction,
