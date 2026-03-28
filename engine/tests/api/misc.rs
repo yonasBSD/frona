@@ -11,16 +11,12 @@ use super::*;
 #[tokio::test]
 async fn list_tools_returns_builtin() {
     let (state, _tmp) = test_app_state().await;
+    let (token, _) =
+        register_user(&state, "tools-user", "tools@example.com", "password123").await;
 
     let app = build_app(state);
     let resp = app
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/api/tools")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(auth_get("/api/tools", &token))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);

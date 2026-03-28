@@ -42,7 +42,7 @@ fn registry_to_tool_infos(state: &AppState, allowed: &[String]) -> Vec<ToolInfo>
 }
 
 /// All configurable tools available in the system.
-async fn list_tools(State(state): State<AppState>) -> Json<Vec<ToolInfo>> {
+async fn list_tools(_auth: AuthUser, State(state): State<AppState>) -> Json<Vec<ToolInfo>> {
     let all = configurable_tools().to_vec();
     Json(registry_to_tool_infos(&state, &all))
 }
