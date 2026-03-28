@@ -1,6 +1,6 @@
 "use client";
 
-import { SectionHeader, SectionPanel, Toggle, NumberInput } from "@/components/settings/field";
+import { SectionHeader, SectionPanel, Toggle, Field } from "@/components/settings/field";
 import { ShieldCheckIcon, TrashIcon, PlusIcon } from "@heroicons/react/24/outline";
 
 interface SandboxSettings {
@@ -53,14 +53,16 @@ export function SandboxSection({ sandbox, onChange }: SandboxSectionProps) {
           value={current.network_access}
           onChange={(v) => onChange({ ...current, network_access: v })}
         />
-        <NumberInput
-          label="Timeout (seconds)"
-          description="Maximum execution time for tool calls"
-          value={current.timeout_secs}
-          onChange={(v) => onChange({ ...current, timeout_secs: v })}
-          min={1}
-          max={300}
-        />
+        <Field label="Timeout (seconds)" description="Maximum execution time for tool calls">
+          <input
+            type="number"
+            value={current.timeout_secs}
+            onChange={(e) => onChange({ ...current, timeout_secs: Number(e.target.value) })}
+            min={1}
+            max={300}
+            className="block w-24 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+          />
+        </Field>
         <div className="space-y-1">
           <label className="inline-flex items-center gap-1 text-sm font-medium text-text-secondary">
             Allowed Network Destinations
