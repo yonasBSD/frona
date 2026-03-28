@@ -56,6 +56,11 @@ RUN --mount=type=bind,source=build/pkgs/prod-cli.txt,target=/tmp/cli.txt \
   && unzip -o /tmp/bw.zip -d /usr/local/bin \
   && chmod +x /usr/local/bin/bw \
   && rm /tmp/bw.zip
+COPY Cargo.lock /tmp/Cargo.lock
+RUN SURREAL_VER=$(grep -A1 'name = "surrealdb"' /tmp/Cargo.lock | grep version | sed 's/.*"\(.*\)".*/\1/') \
+  && curl -sSfL "https://github.com/surrealdb/surrealdb/releases/download/v${SURREAL_VER}/surreal-v${SURREAL_VER}.linux-${TARGETARCH}.tgz" \
+  | tar xz -C /usr/local/bin surreal \
+  && chmod +x /usr/local/bin/surreal
 
 # Stage 5: python packages
 FROM python:3.12-slim-bookworm AS python-builder
@@ -87,7 +92,7 @@ RUN --mount=type=bind,source=build/pkgs/dev-rust-cargo.txt,target=/tmp/cargo.txt
     cargo install "$crate" --version "$version"; \
   done
 
-COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/
+COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/surreal /usr/local/bin/
 
 RUN groupadd -g 1000 frona && useradd -u 1000 -g frona -m -s /bin/bash frona
 RUN mkdir -p /app /app/target /app/frontend/node_modules /app/data \
@@ -108,7 +113,7 @@ RUN --mount=type=bind,source=build/pkgs/prod-apt.txt,target=/tmp/packages.txt \
   $(grep -vE '^\s*(#|$)' /tmp/packages.txt | tr '\n' ' ') \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/
+COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/surreal /usr/local/bin/
 
 RUN groupadd -g 1000 frona && useradd -u 1000 -g frona -d /app -s /bin/bash frona
 RUN mkdir -p /app /data && chown -R frona:frona /app /data
@@ -124,6 +129,7 @@ ENV FRONA_SERVER_DATA_DIR=/app/data
 ENV FRONA_SERVER_PORT=3001
 ENV FRONA_STORAGE_SHARED_CONFIG_DIR=/app/share
 ENV FRONA_LOG_LEVEL=info
+ENV SURREAL_SYNC_DATA=true
 
 VOLUME /app/data
 EXPOSE 3001
