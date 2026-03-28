@@ -17,6 +17,7 @@ use crate::agent::skill::service::SkillService;
 use crate::storage::StorageService;
 use crate::auth::AuthService;
 use crate::auth::jwt::JwtService;
+use crate::auth::lockout::LoginAttemptTracker;
 use crate::auth::oauth::service::OAuthService;
 use crate::auth::token::service::TokenService;
 use crate::call::CallService;
@@ -112,6 +113,7 @@ pub struct AppState {
     pub presign_service: PresignService,
     pub token_service: TokenService,
     pub oauth_service: Option<OAuthService>,
+    pub login_tracker: LoginAttemptTracker,
     pub metrics_handle: PrometheusHandle,
     pub task_resolution_notifiers: Arc<Mutex<HashMap<String, Arc<Notify>>>>,
     pub shutdown_token: CancellationToken,
@@ -289,6 +291,7 @@ impl AppState {
             presign_service,
             token_service,
             oauth_service,
+            login_tracker: LoginAttemptTracker::new(5, 15),
             metrics_handle,
             task_resolution_notifiers: Arc::new(Mutex::new(HashMap::new())),
             shutdown_token: CancellationToken::new(),

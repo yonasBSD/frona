@@ -21,23 +21,34 @@ use super::super::middleware::auth::AuthUser;
 use crate::core::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    let governor_conf = GovernorConfigBuilder::default()
-        .per_second(5)
-        .burst_size(10)
+    let auth_limit = GovernorConfigBuilder::default()
+        .per_second(2)
+        .burst_size(5)
         .key_extractor(SmartIpKeyExtractor)
         .finish()
         .unwrap();
 
-    let rate_limited = Router::new()
+    let refresh_limit = GovernorConfigBuilder::default()
+        .per_second(2)
+        .burst_size(5)
+        .key_extractor(SmartIpKeyExtractor)
+        .finish()
+        .unwrap();
+
+    let rate_limited_auth = Router::new()
         .route("/api/auth/login", post(login))
         .route("/api/auth/register", post(register))
-        .layer(GovernorLayer::new(governor_conf));
+        .layer(GovernorLayer::new(auth_limit));
+
+    let rate_limited_refresh = Router::new()
+        .route("/api/auth/refresh", post(refresh))
+        .layer(GovernorLayer::new(refresh_limit));
 
     Router::new()
-        .merge(rate_limited)
+        .merge(rate_limited_auth)
+        .merge(rate_limited_refresh)
         .route("/api/auth/me", get(me))
         .route("/api/auth/logout", post(logout))
-        .route("/api/auth/refresh", post(refresh))
         .route("/api/auth/username", put(change_username))
         .route("/api/auth/profile", put(update_profile))
         .route("/api/auth/tokens", post(create_pat).get(list_pats))
@@ -93,7 +104,15 @@ async fn login(
         )));
     }
 
-    let (response, refresh_jwt) = state
+    let identifier = req.identifier.clone();
+
+    if state.login_tracker.is_locked(&identifier).await {
+        return Err(ApiError(AppError::Auth(
+            "Too many failed attempts. Please try again later.".into(),
+        )));
+    }
+
+    let result = state
         .auth_service
         .login(
             &state.user_service,
@@ -101,7 +120,18 @@ async fn login(
             &state.token_service,
             req,
         )
-        .await?;
+        .await;
+
+    let (response, refresh_jwt) = match result {
+        Ok(v) => {
+            state.login_tracker.clear(&identifier).await;
+            v
+        }
+        Err(e) => {
+            state.login_tracker.record_failure(&identifier).await;
+            return Err(ApiError(e));
+        }
+    };
 
     let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
     let cookie = make_refresh_cookie(

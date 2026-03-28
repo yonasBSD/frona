@@ -327,17 +327,14 @@ async fn refresh_returns_new_token() {
     let cookie_value = cookie_header.split(';').next().unwrap();
 
     let app = build_app(state);
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/auth/refresh")
-                .header("cookie", cookie_value)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
+    let mut req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/refresh")
+        .header("cookie", cookie_value)
+        .body(Body::empty())
         .unwrap();
+    with_connect_info(&mut req);
+    let resp = app.oneshot(req).await.unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     let new_cookie = resp.headers().get("set-cookie").unwrap().to_str().unwrap();
@@ -350,16 +347,13 @@ async fn refresh_returns_new_token() {
 async fn refresh_without_cookie_returns_401() {
     let (state, _tmp) = test_app_state().await;
     let app = build_app(state);
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/auth/refresh")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
+    let mut req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/refresh")
+        .body(Body::empty())
         .unwrap();
+    with_connect_info(&mut req);
+    let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 

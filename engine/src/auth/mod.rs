@@ -1,4 +1,5 @@
 pub mod jwt;
+pub mod lockout;
 pub mod models;
 pub mod oauth;
 pub mod token;
