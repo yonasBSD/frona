@@ -133,19 +133,6 @@ async fn approve_service(
     let te_id = pending_te.id.clone();
     let te_message_id = pending_te.message_id.clone();
 
-    let resolved = state
-        .chat_service
-        .resolve_tool_execution(&te_id, Some("Deploying...".to_string()))
-        .await
-        .map_err(ApiError::from)?
-        .into_message();
-
-    state.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
-        user_id: auth.user_id.clone(),
-        chat_id: Some(req.chat_id.clone()),
-        kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: resolved },
-    });
-
     let user_id = auth.user_id.clone();
     let chat_id = req.chat_id.clone();
     let agent_id = chat.agent_id.clone();
