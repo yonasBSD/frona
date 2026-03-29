@@ -51,6 +51,12 @@ impl AppService {
 
         match kind.as_str() {
             "static" => {
+                if let Some(ref ex) = existing
+                    && matches!(ex.status, AppStatus::Running | AppStatus::Starting)
+                {
+                    let _ = self.manager.stop_app(&ex.id).await;
+                }
+
                 let static_dir = manifest
                     .static_dir
                     .as_ref()
