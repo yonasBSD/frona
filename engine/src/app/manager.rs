@@ -302,6 +302,7 @@ impl AppManager {
         let mut sandbox = self
             .sandbox_manager
             .get_sandbox(agent_id, true, network_dests)
+            .with_bind_ports(vec![port])
             .with_extra_env_vars(env_vars);
 
         if let Some(paths) = &manifest.read_paths {

@@ -68,6 +68,7 @@ impl SandboxManager {
             driver: Arc::clone(&self.driver),
             network_access,
             allowed_network_destinations,
+            allowed_bind_ports: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: self.shared_read_paths.clone(),
             shared_write_paths: Vec::new(),
@@ -81,6 +82,7 @@ pub struct Sandbox {
     driver: Arc<dyn driver::SandboxDriver>,
     network_access: bool,
     allowed_network_destinations: Vec<String>,
+    allowed_bind_ports: Vec<u16>,
     extra_env_vars: Vec<(String, String)>,
     shared_read_paths: Vec<String>,
     shared_write_paths: Vec<String>,
@@ -100,6 +102,11 @@ impl Sandbox {
 
     pub fn with_write_paths(mut self, paths: Vec<String>) -> Self {
         self.shared_write_paths.extend(paths);
+        self
+    }
+
+    pub fn with_bind_ports(mut self, ports: Vec<u16>) -> Self {
+        self.allowed_bind_ports = ports;
         self
     }
 }
@@ -180,6 +187,7 @@ impl Sandbox {
             workspace_dir: canonical_path.to_string_lossy().into_owned(),
             network_access: self.network_access,
             allowed_network_destinations: self.allowed_network_destinations.clone(),
+            allowed_bind_ports: self.allowed_bind_ports.clone(),
             additional_read_paths: self.shared_read_paths.clone(),
             additional_write_paths: self.shared_write_paths.clone(),
             additional_path_dirs,
@@ -297,6 +305,7 @@ mod tests {
             driver: Arc::from(create_driver(false)),
             network_access: false,
             allowed_network_destinations: Vec::new(),
+            allowed_bind_ports: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
             shared_write_paths: Vec::new(),
@@ -338,6 +347,7 @@ mod tests {
             driver: Arc::from(create_driver(false)),
             network_access: false,
             allowed_network_destinations: Vec::new(),
+            allowed_bind_ports: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
             shared_write_paths: Vec::new(),

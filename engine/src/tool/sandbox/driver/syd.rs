@@ -207,6 +207,12 @@ impl SydArgsBuilder {
             self.args.push("-m".into());
             self.args.push("sandbox/net:on".into());
 
+            // Allow ephemeral port binding (port 0) for outbound connections
+            self.args.push("-m".into());
+            self.args.push("allow/net/bind+0.0.0.0/0!0".into());
+            self.args.push("-m".into());
+            self.args.push("allow/net/bind+::/0!0".into());
+
             for ip in dns_servers {
                 let cidr = if ip.is_ipv4() { 32 } else { 128 };
                 self.args.push("-m".into());
@@ -218,6 +224,13 @@ impl SydArgsBuilder {
                     self.args.push("-m".into());
                     self.args.push(rule);
                 }
+            }
+
+            for port in &config.allowed_bind_ports {
+                self.args.push("-m".into());
+                self.args.push(format!("allow/net/bind+0.0.0.0/0!{port}"));
+                self.args.push("-m".into());
+                self.args.push(format!("allow/net/bind+::/0!{port}"));
             }
         }
         self
@@ -347,6 +360,9 @@ mod tests {
         assert!(args.contains(&"sandbox/net:on".to_string()));
         assert!(args.contains(&"allow/net/connect+1.2.3.4/32!0-65535".to_string()));
         assert!(args.contains(&"allow/net/connect+5.6.7.8/32!0-65535".to_string()));
+        // Ephemeral bind always allowed when destinations are set
+        assert!(args.contains(&"allow/net/bind+0.0.0.0/0!0".to_string()));
+        assert!(args.contains(&"allow/net/bind+::/0!0".to_string()));
     }
 
     #[test]
@@ -442,6 +458,32 @@ mod tests {
     fn test_resolve_destination_bracketed_ipv6_with_port() {
         let d = test_driver();
         assert_eq!(resolve_destination("[::1]:443", &d.dest_cache), vec!["allow/net/connect+::1/128!443"]);
+    }
+
+    #[test]
+    fn test_network_bind_ports() {
+        let driver = test_driver();
+        let mut config = test_config();
+        config.network_access = true;
+        config.allowed_network_destinations = vec!["127.0.0.1:8080".into()];
+        config.allowed_bind_ports = vec![8080];
+
+        let args = SydArgsBuilder::new().network_rules(&config, &driver.dns_servers, &driver.dest_cache).build();
+        assert!(args.contains(&"allow/net/bind+0.0.0.0/0!8080".to_string()));
+        assert!(args.contains(&"allow/net/bind+::/0!8080".to_string()));
+    }
+
+    #[test]
+    fn test_network_bind_ports_not_added_when_no_destinations() {
+        let driver = test_driver();
+        let mut config = test_config();
+        config.network_access = true;
+        config.allowed_network_destinations = vec![];
+        config.allowed_bind_ports = vec![8080];
+
+        let args = SydArgsBuilder::new().network_rules(&config, &driver.dns_servers, &driver.dest_cache).build();
+        // No sandbox/net:on means all network ops allowed, no bind rule needed
+        assert!(!args.iter().any(|a| a.starts_with("allow/net/bind")));
     }
 
     #[test]
