@@ -27,6 +27,16 @@ pub struct ServerConfig {
     pub max_concurrent_tasks: usize,
     #[schemars(description = "Disable filesystem sandboxing for CLI tools. Enable only if your OS does not support Landlock.")]
     pub sandbox_disabled: bool,
+    #[schemars(description = "Per-agent CPU usage limit as percentage of total system CPU. Kill sandboxed process if exceeded.")]
+    pub sandbox_max_agent_cpu_pct: f64,
+    #[schemars(description = "Per-agent memory usage limit as percentage of total system memory. Kill sandboxed process if exceeded.")]
+    pub sandbox_max_agent_memory_pct: f64,
+    #[schemars(description = "Global CPU usage limit across all agents as percentage of total system CPU.")]
+    pub sandbox_max_total_cpu_pct: f64,
+    #[schemars(description = "Global memory usage limit across all agents as percentage of total system memory.")]
+    pub sandbox_max_total_memory_pct: f64,
+    #[schemars(description = "Default timeout in seconds for sandboxed tool execution. 0 means no timeout. Per-agent settings override this.")]
+    pub sandbox_timeout_secs: u64,
     #[schemars(description = "Comma-separated list of allowed CORS origins.")]
     pub cors_origins: Option<String>,
     #[schemars(description = "Public base URL for the server (used for callbacks, links).")]
@@ -69,6 +79,11 @@ impl Default for ServerConfig {
             issuer_url: String::new(),
             max_concurrent_tasks: 10,
             sandbox_disabled: false,
+            sandbox_max_agent_cpu_pct: 80.0,
+            sandbox_max_agent_memory_pct: 80.0,
+            sandbox_max_total_cpu_pct: 90.0,
+            sandbox_max_total_memory_pct: 90.0,
+            sandbox_timeout_secs: 0,
             cors_origins: None,
             base_url: None,
             backend_url: None,

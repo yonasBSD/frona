@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use crate::Entity;
 use serde::{Deserialize, Serialize};
-use serde_aux::field_attributes::{deserialize_bool_from_anything, deserialize_number_from_string};
+use serde_aux::field_attributes::deserialize_bool_from_anything;
 use surrealdb::types::SurrealValue;
 
 use crate::tool::configurable_tools;
@@ -15,8 +15,14 @@ pub struct SandboxSettings {
     pub network_access: bool,
     #[serde(default)]
     pub allowed_network_destinations: Vec<String>,
-    #[serde(default = "serde_aux::field_attributes::default_u64::<30>", deserialize_with = "deserialize_number_from_string")]
-    pub timeout_secs: u64,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub max_cpu_pct: Option<f64>,
+    #[serde(default)]
+    pub max_memory_pct: Option<f64>,
+    #[serde(default)]
+    pub shared_paths: Vec<String>,
 }
 
 impl Default for SandboxSettings {
@@ -24,7 +30,10 @@ impl Default for SandboxSettings {
         Self {
             network_access: true,
             allowed_network_destinations: Vec::new(),
-            timeout_secs: 30,
+            timeout_secs: None,
+            max_cpu_pct: None,
+            max_memory_pct: None,
+            shared_paths: Vec::new(),
         }
     }
 }
