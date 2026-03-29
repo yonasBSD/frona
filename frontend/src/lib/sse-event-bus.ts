@@ -31,6 +31,8 @@ interface ChatSubscriber {
   chatId: string;
   push: (event: ChatSSEEvent) => void;
   close: () => void;
+  /** Soft-reset on SSE reconnect: clear buffered events, resolve any active read with done. */
+  notifyReconnect: () => void;
 }
 
 type GlobalListener = (event: GlobalSSEEvent) => void;
@@ -83,6 +85,14 @@ class SSEEventBus {
           },
           close() {
             done = true;
+            if (resolve) {
+              const r = resolve;
+              resolve = null;
+              r({ value: undefined as unknown as ChatSSEEvent, done: true });
+            }
+          },
+          notifyReconnect() {
+            queue.length = 0;
             if (resolve) {
               const r = resolve;
               resolve = null;
@@ -154,6 +164,15 @@ class SSEEventBus {
     }
   }
 
+  private notifySubscribersReconnect() {
+    for (const subs of this.chatSubscribers.values()) {
+      for (const sub of subs) {
+        sub.notifyReconnect();
+      }
+    }
+    this.chatBuffers.clear();
+  }
+
   private async runLoop(signal: AbortSignal) {
     let delay = 1000;
     const maxDelay = 30000;
@@ -163,6 +182,7 @@ class SSEEventBus {
       try {
         const isReconnect = hadConnection;
         await this.connectStream(signal, isReconnect ? () => {
+          this.notifySubscribersReconnect();
           for (const listener of this.reconnectListeners) {
             try { listener(); } catch { /* ignore */ }
           }

@@ -223,17 +223,15 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
   }, [chatId, loadMessages]);
 
   // Reload messages when SSE reconnects after a drop to pick up anything missed.
-  // Skip if a stream is active — it manages its own state.
+  // Active streams are terminated by sseBus.notifySubscribersReconnect() before
+  // this callback fires, so we always reload to recover from the gap.
   useEffect(() => {
     return sseBus.onReconnect(() => {
       const id = chatId ?? handle.chatId();
       if (!id) return;
-      try {
-        if (runtime.thread.getState().isRunning) return;
-      } catch { /* thread not initialized yet */ }
       loadMessages(id).catch(() => {});
     });
-  }, [chatId, handle, runtime, loadMessages]);
+  }, [chatId, handle, loadMessages]);
 
   /** Append to thread — used for programmatic sends (pending messages). */
   const sendMessage = useCallback((content: string, attachments?: Attachment[]) => {
