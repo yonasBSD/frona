@@ -367,10 +367,12 @@ async fn forward_to_port(
     app_id: &str,
     original_request: Request,
 ) -> Response {
-    let uri = if path.is_empty() {
-        format!("http://127.0.0.1:{port}/")
-    } else {
-        format!("http://127.0.0.1:{port}/{path}")
+    let query = original_request.uri().query();
+    let uri = match (path.is_empty(), query) {
+        (true, None) => format!("http://127.0.0.1:{port}/"),
+        (true, Some(q)) => format!("http://127.0.0.1:{port}/?{q}"),
+        (false, None) => format!("http://127.0.0.1:{port}/{path}"),
+        (false, Some(q)) => format!("http://127.0.0.1:{port}/{path}?{q}"),
     };
 
     let client = match reqwest::Client::builder()
@@ -381,12 +383,37 @@ async fn forward_to_port(
         Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
     };
 
-    let method = original_request.method().clone();
+    let (parts, body) = original_request.into_parts();
 
-    let reqwest_method = reqwest::Method::from_bytes(method.as_str().as_bytes())
+    let reqwest_method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
         .unwrap_or(reqwest::Method::GET);
 
-    let upstream_resp = match client.request(reqwest_method, &uri).send().await {
+    let mut upstream_req = client.request(reqwest_method, &uri);
+
+    // Forward request headers, skipping hop-by-hop and auth headers
+    for (key, value) in &parts.headers {
+        match key.as_str() {
+            "host" | "connection" | "transfer-encoding" | "authorization" | "cookie" => continue,
+            _ => {
+                if let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_ref())
+                    && let Ok(val) = reqwest::header::HeaderValue::from_bytes(value.as_bytes())
+                {
+                    upstream_req = upstream_req.header(name, val);
+                }
+            }
+        }
+    }
+
+    // Forward request body
+    let body_bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    if !body_bytes.is_empty() {
+        upstream_req = upstream_req.body(body_bytes);
+    }
+
+    let upstream_resp = match upstream_req.send().await {
         Ok(r) => r,
         Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
     };
