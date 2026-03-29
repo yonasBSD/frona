@@ -50,6 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     verify_sandbox(&config.storage.workspaces_path, config.server.sandbox_disabled)
         .expect("Sandbox verification failed — filesystem may not support sandboxing. Set FRONA_SERVER_SANDBOX_DISABLED=true to bypass.");
 
+    frona::tool::sandbox::driver::resource_monitor::log_system_resources();
+
     let storage = StorageService::new(&config);
 
     let metrics_handle = setup_metrics_recorder();

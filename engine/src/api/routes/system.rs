@@ -12,6 +12,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/system/health", get(health_handler))
         .route("/healthz", get(health_handler))
+        .route("/api/system/info", get(info_handler))
         .route("/api/system/version", get(version_handler))
         .route("/api/system/timezones", get(timezones_handler))
         .route("/api/system/restart", post(restart_handler))
@@ -23,6 +24,22 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
     } else {
         (StatusCode::OK, axum::Json(json!({"status": "ok"})))
     }
+}
+
+async fn info_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {
+    use sysinfo::System;
+    let mut sys = System::new();
+    sys.refresh_memory();
+    let total_memory = sys.cgroup_limits()
+        .map(|cg| cg.total_memory)
+        .unwrap_or_else(|| sys.total_memory());
+    let cpus = System::physical_core_count().unwrap_or(0);
+
+    axum::Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "cpus": cpus,
+        "total_memory_bytes": total_memory,
+    }))
 }
 
 async fn version_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {

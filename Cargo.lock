@@ -1826,6 +1826,7 @@ dependencies = [
  "config",
  "cookie",
  "cron",
+ "dashmap",
  "ed25519-dalek",
  "frona-derive",
  "futures",
@@ -1837,12 +1838,14 @@ dependencies = [
  "keepass",
  "keeper-secrets-manager-core",
  "landlock",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "minijinja",
  "moka",
  "notify",
  "openidconnect",
+ "procfs",
  "rand 0.8.5",
  "reqwest 0.12.28",
  "rig-core",
@@ -1853,6 +1856,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "surrealdb",
+ "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -3314,6 +3318,12 @@ dependencies = [
 
 [[package]]
 name = "linux-raw-sys"
+version = "0.4.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
+
+[[package]]
+name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
@@ -4436,6 +4446,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "procfs"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc5b72d8145275d844d4b5f6d4e1eef00c8cd889edb6035c21675d1bb1f45c9f"
+dependencies = [
+ "bitflags 2.11.0",
+ "chrono",
+ "flate2",
+ "hex",
+ "procfs-core",
+ "rustix 0.38.44",
+]
+
+[[package]]
+name = "procfs-core"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "239df02d8349b06fc07398a3a1697b06418223b1c7725085e801e7c0fc6a12ec"
+dependencies = [
+ "bitflags 2.11.0",
+ "chrono",
+ "hex",
+]
+
+[[package]]
 name = "prost"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5293,6 +5328,19 @@ dependencies = [
 
 [[package]]
 name = "rustix"
+version = "0.38.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
+dependencies = [
+ "bitflags 2.11.0",
+ "errno",
+ "libc",
+ "linux-raw-sys 0.4.15",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "rustix"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
@@ -5300,7 +5348,7 @@ dependencies = [
  "bitflags 2.11.0",
  "errno",
  "libc",
- "linux-raw-sys",
+ "linux-raw-sys 0.12.1",
  "windows-sys 0.61.2",
 ]
 
@@ -6356,7 +6404,7 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.1",
  "once_cell",
- "rustix",
+ "rustix 1.1.4",
  "windows-sys 0.61.2",
 ]
 
@@ -7392,7 +7440,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fabb953106c3c8eea8306e4393700d7657561cb43122571b172bbfb7c7ba1d"
 dependencies = [
  "env_home",
- "rustix",
+ "rustix 1.1.4",
  "winsafe",
 ]
 
