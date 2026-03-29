@@ -12,7 +12,7 @@ export function TabBar() {
   const { activeTab, setActiveTab } = useNavigation();
 
   return (
-    <div className="flex border-b border-border">
+    <div className="flex">
       {tabs.map(({ id, label, Icon }) => (
         <button
           key={id}
