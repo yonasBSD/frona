@@ -25,6 +25,7 @@ use frona::core::state::AppState;
 use frona::credential::key_rotation::KeyRotation;
 use frona::scheduler::Scheduler;
 use frona::tool::sandbox::driver::verify_sandbox;
+use frona::tool::sandbox::driver::resource_monitor::SystemResourceManager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -64,14 +65,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rotation.run().await?;
     }
 
+    let resource_manager = Arc::new(SystemResourceManager::new(
+        config.server.sandbox_max_agent_cpu_pct,
+        config.server.sandbox_max_agent_memory_pct,
+        config.server.sandbox_max_total_cpu_pct,
+        config.server.sandbox_max_total_memory_pct,
+    ));
+    resource_manager.start_polling();
+
     let shared_agents_dir = std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents");
     let agent_service = AgentService::new(
         frona::db::repo::generic::SurrealRepo::new(surreal.clone()),
         &config.cache,
         shared_agents_dir,
+        Arc::clone(&resource_manager),
     );
     db::seed_config_agents(&surreal, &agent_service, &storage).await?;
-    let state = AppState::new(surreal.clone(), &config, loaded.models, agent_service, storage, metrics_handle);
+    agent_service.sync_agent_limits().await?;
+    let state = AppState::new(surreal.clone(), &config, loaded.models, agent_service, storage, metrics_handle, resource_manager);
     state.vault_service.sync_config_connections().await?;
     state.browser_session_manager.kill_all_sessions().await;
     state.skill_service.start_watcher();

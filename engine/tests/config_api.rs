@@ -119,12 +119,16 @@ async fn test_runtime_config_operations() {
     let metrics_handle = frona::core::metrics::setup_metrics_recorder();
     let config = Config::default();
     let storage = frona::storage::StorageService::new(&config);
+    let resource_manager = std::sync::Arc::new(
+        frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(80.0, 80.0, 90.0, 90.0),
+    );
     let agent_service = frona::agent::service::AgentService::new(
         frona::db::repo::generic::SurrealRepo::new(db.clone()),
         &config.cache,
         std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+        resource_manager.clone(),
     );
-    let state = frona::core::state::AppState::new(db, &config, None, agent_service, storage, metrics_handle);
+    let state = frona::core::state::AppState::new(db, &config, None, agent_service, storage, metrics_handle, resource_manager);
 
     // Initially not set
     let val = state.get_runtime_config("setup_completed").await.unwrap();

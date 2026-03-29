@@ -57,13 +57,17 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
     let storage = StorageService::new(&config);
+    let resource_manager = std::sync::Arc::new(
+        frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(80.0, 80.0, 90.0, 90.0),
+    );
     let agent_service = AgentService::new(
         SurrealRepo::new(db.clone()),
         &config.cache,
         std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+        resource_manager.clone(),
     );
     let metrics_handle = frona::core::metrics::setup_metrics_recorder();
-    let state = AppState::new(db, &config, None, agent_service, storage, metrics_handle);
+    let state = AppState::new(db, &config, None, agent_service, storage, metrics_handle, resource_manager);
     (state, tmp)
 }
 

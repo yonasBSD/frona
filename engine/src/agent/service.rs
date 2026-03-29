@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
@@ -7,6 +8,7 @@ use crate::db::repo::agents::SurrealAgentRepo;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
 use crate::tool::configurable_tools;
+use crate::tool::sandbox::driver::resource_monitor::SystemResourceManager;
 
 use super::models::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};
 use super::models::Agent;
@@ -17,15 +19,37 @@ pub struct AgentService {
     repo: SurrealAgentRepo,
     cache: moka::future::Cache<String, Agent>,
     shared_agents_dir: PathBuf,
+    resource_manager: Arc<SystemResourceManager>,
 }
 
 impl AgentService {
-    pub fn new(repo: SurrealAgentRepo, cache_config: &CacheConfig, shared_agents_dir: PathBuf) -> Self {
+    pub fn new(
+        repo: SurrealAgentRepo,
+        cache_config: &CacheConfig,
+        shared_agents_dir: PathBuf,
+        resource_manager: Arc<SystemResourceManager>,
+    ) -> Self {
         let cache = moka::future::Cache::builder()
             .max_capacity(cache_config.entity_max_capacity)
             .time_to_live(std::time::Duration::from_secs(cache_config.entity_ttl_secs))
             .build();
-        Self { repo, cache, shared_agents_dir }
+        Self { repo, cache, shared_agents_dir, resource_manager }
+    }
+
+    pub async fn sync_agent_limits(&self) -> Result<(), AppError> {
+        let agents = self.repo.find_all().await?;
+        for agent in agents {
+            if let Some(ref cfg) = agent.sandbox_config {
+                self.resource_manager.set_agent_limits(&agent.id, cfg.max_cpu_pct, cfg.max_memory_pct);
+            }
+        }
+        Ok(())
+    }
+
+    fn push_agent_limits(&self, agent_id: &str, agent: &Agent) {
+        if let Some(ref cfg) = agent.sandbox_config {
+            self.resource_manager.set_agent_limits(agent_id, cfg.max_cpu_pct, cfg.max_memory_pct);
+        }
     }
 
     pub fn builtin_agent_ids(&self) -> Vec<String> {
@@ -73,6 +97,7 @@ impl AgentService {
         };
 
         let agent = self.repo.create(&agent).await?;
+        self.push_agent_limits(&agent.id, &agent);
         Ok(agent.into())
     }
 
@@ -171,6 +196,7 @@ impl AgentService {
         agent.updated_at = chrono::Utc::now();
 
         let agent = self.repo.update(&agent).await?;
+        self.push_agent_limits(agent_id, &agent);
         self.cache.invalidate(agent_id).await;
         Ok(agent.into())
     }

@@ -9,13 +9,13 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use self::driver::{SandboxConfig, SandboxOutput, create_driver, execute_sandboxed};
-use self::driver::resource_monitor::ResourceUsage;
+use self::driver::resource_monitor::SystemResourceManager;
 
 pub struct SandboxManager {
     base_path: PathBuf,
     driver: Arc<dyn driver::SandboxDriver>,
     shared_read_paths: Vec<String>,
-    resource_usage: ResourceUsage,
+    resource_manager: Arc<SystemResourceManager>,
     default_timeout_secs: u64,
 }
 
@@ -23,16 +23,13 @@ impl SandboxManager {
     pub fn new(
         base_path: impl Into<PathBuf>,
         sandbox_disabled: bool,
-        max_agent_cpu_pct: f64,
-        max_agent_memory_pct: f64,
-        max_total_cpu_pct: f64,
-        max_total_memory_pct: f64,
+        resource_manager: Arc<SystemResourceManager>,
     ) -> Self {
         Self {
             base_path: base_path.into(),
             driver: Arc::from(create_driver(sandbox_disabled)),
             shared_read_paths: Vec::new(),
-            resource_usage: ResourceUsage::new(max_agent_cpu_pct, max_agent_memory_pct, max_total_cpu_pct, max_total_memory_pct),
+            resource_manager,
             default_timeout_secs: 0,
         }
     }
@@ -46,8 +43,8 @@ impl SandboxManager {
         self.default_timeout_secs
     }
 
-    pub fn resource_usage(&self) -> &ResourceUsage {
-        &self.resource_usage
+    pub fn resource_manager(&self) -> &Arc<SystemResourceManager> {
+        &self.resource_manager
     }
 
     pub fn with_shared_read_paths(mut self, paths: Vec<String>) -> Self {
@@ -73,6 +70,7 @@ impl SandboxManager {
             shared_read_paths: self.shared_read_paths.clone(),
             shared_write_paths: Vec::new(),
             agent_id: agent_id.to_string(),
+            resource_manager: Arc::clone(&self.resource_manager),
         }
     }
 }
@@ -87,6 +85,7 @@ pub struct Sandbox {
     shared_read_paths: Vec<String>,
     shared_write_paths: Vec<String>,
     agent_id: String,
+    resource_manager: Arc<SystemResourceManager>,
 }
 
 impl Sandbox {
@@ -248,12 +247,29 @@ impl Sandbox {
         cmd.stdout(stdout);
         cmd.stderr(stderr);
 
-        tokio::process::Command::from(cmd)
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+        }
+
+        let child = tokio::process::Command::from(cmd)
             .spawn()
-            .map_err(|e| AppError::Tool(format!("Failed to spawn process: {e}")))
+            .map_err(|e| AppError::Tool(format!("Failed to spawn process: {e}")))?;
+
+        // Register process for resource monitoring
+        if let Some(pid) = child.id() {
+            self.resource_manager.register(pid, &self.agent_id);
+        }
+
+        Ok(child)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn execute(
         &self,
         program: &str,
@@ -262,9 +278,6 @@ impl Sandbox {
         on_stdout: Option<mpsc::Sender<String>>,
         stdin_rx: Option<mpsc::Receiver<String>>,
         cancel_token: Option<CancellationToken>,
-        resource_usage: Option<&ResourceUsage>,
-        agent_max_cpu_pct: Option<f64>,
-        agent_max_memory_pct: Option<f64>,
     ) -> Result<SandboxOutput, AppError> {
         let mut config = self.base_config()?;
         config.timeout_secs = timeout_secs;
@@ -277,10 +290,8 @@ impl Sandbox {
             on_stdout,
             stdin_rx,
             cancel_token,
-            resource_usage,
+            Some(&self.resource_manager),
             Some(&self.agent_id),
-            agent_max_cpu_pct,
-            agent_max_memory_pct,
         )
         .await
     }
@@ -310,6 +321,7 @@ mod tests {
             shared_read_paths: Vec::new(),
             shared_write_paths: Vec::new(),
             agent_id: "test".to_string(),
+            resource_manager: Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),
         }
     }
 
@@ -352,6 +364,7 @@ mod tests {
             shared_read_paths: Vec::new(),
             shared_write_paths: Vec::new(),
             agent_id: "test".to_string(),
+            resource_manager: Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),
         };
         ws.setup().unwrap();
 
@@ -381,9 +394,6 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
-                None,
-                None,
             )
             .await
             .unwrap();
@@ -405,7 +415,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&ws.path);
 
         let result = ws
-            .execute("bash", &["-c", "echo $FRONA_TEST_SECRET"], 10, None, None, None, None, None, None)
+            .execute("bash", &["-c", "echo $FRONA_TEST_SECRET"], 10, None, None, None)
             .await
             .unwrap();
 
@@ -444,9 +454,6 @@ mod tests {
                 &["-c", "echo hello; echo world"],
                 10,
                 Some(tx),
-                None,
-                None,
-                None,
                 None,
                 None,
             )

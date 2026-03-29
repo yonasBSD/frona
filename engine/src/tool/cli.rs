@@ -162,18 +162,15 @@ impl AgentTool for CliTool {
         let timeout = defaults.timeout_secs
             .unwrap_or_else(|| self.sandbox_manager.default_timeout_secs());
 
-        let ru = self.sandbox_manager.resource_usage();
-        let effective_cpu = defaults.max_cpu_pct.unwrap_or(ru.max_agent_cpu_pct);
-        let effective_mem = defaults.max_memory_pct.unwrap_or(ru.max_agent_memory_pct);
+        let rm = self.sandbox_manager.resource_manager();
+        let (eff_cpu, eff_mem) = rm.effective_agent_limits(agent_id);
 
         tracing::info!(
             agent = %agent_id,
             tool = %self.config.name,
             timeout_secs = timeout,
-            max_cpu_pct = effective_cpu,
-            max_memory_pct = effective_mem,
-            max_total_cpu_pct = ru.max_total_cpu_pct,
-            max_total_memory_pct = ru.max_total_memory_pct,
+            max_cpu_pct = eff_cpu,
+            max_memory_pct = eff_mem,
             "Executing sandboxed command"
         );
 
@@ -185,9 +182,6 @@ impl AgentTool for CliTool {
                 None,
                 None,
                 None,
-                Some(ru),
-                defaults.max_cpu_pct,
-                defaults.max_memory_pct,
             )
             .await?;
 
@@ -365,7 +359,7 @@ mod tests {
             timeout_secs: Some(30),
         };
 
-        let wm = Arc::new(SandboxManager::new("/tmp/test", false, 60.0, 60.0, 60.0, 60.0));
+        let wm = Arc::new(SandboxManager::new("/tmp/test", false, Arc::new(crate::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(60.0, 60.0, 60.0, 60.0))));
         let service = mock_skill_service();
         let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
         let tool = CliTool::new(config, wm, service, storage);
@@ -448,7 +442,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("frona_test_cli_tool");
         let _ = std::fs::create_dir_all(&tmp);
 
-        let wm = Arc::new(SandboxManager::new(&tmp, false, 60.0, 60.0, 60.0, 60.0));
+        let wm = Arc::new(SandboxManager::new(&tmp, false, Arc::new(crate::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(60.0, 60.0, 60.0, 60.0))));
         let service = mock_skill_service();
         let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
         let tool = CliTool::new(config, wm, service, storage);

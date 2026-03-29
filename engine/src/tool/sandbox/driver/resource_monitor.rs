@@ -1,254 +1,315 @@
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::Arc;
 
 use dashmap::DashMap;
+use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
-#[cfg(target_os = "linux")]
-use procfs::CurrentSI;
-
-#[derive(Debug, Clone, Default)]
-pub struct ResourceUsageSample {
-    pub cpu: f64,
-    pub mem: f64,
+#[derive(Debug, Clone)]
+pub struct AgentLimits {
+    pub cpu_pct: f64,
+    pub mem_pct: f64,
 }
 
-#[derive(Default)]
-pub struct ResourceUsage {
-    agents: DashMap<String, (AtomicU64, AtomicU64)>,
-    global_cpu: AtomicU64,
-    global_mem: AtomicU64,
+pub struct TrackedProcess {
+    pub agent_id: String,
+    pub killed: AtomicBool,
+}
+
+pub struct SystemResourceManager {
     pub max_agent_cpu_pct: f64,
     pub max_agent_memory_pct: f64,
     pub max_total_cpu_pct: f64,
     pub max_total_memory_pct: f64,
+    agent_limits: DashMap<String, AgentLimits>,
+    tracked: DashMap<u32, TrackedProcess>,
+    cancel_token: CancellationToken,
 }
 
-impl ResourceUsage {
-    pub fn new(max_agent_cpu_pct: f64, max_agent_memory_pct: f64, max_total_cpu_pct: f64, max_total_memory_pct: f64) -> Self {
+impl SystemResourceManager {
+    pub fn new(
+        max_agent_cpu_pct: f64,
+        max_agent_memory_pct: f64,
+        max_total_cpu_pct: f64,
+        max_total_memory_pct: f64,
+    ) -> Self {
         Self {
             max_agent_cpu_pct,
             max_agent_memory_pct,
             max_total_cpu_pct,
             max_total_memory_pct,
-            ..Default::default()
+            agent_limits: DashMap::new(),
+            tracked: DashMap::new(),
+            cancel_token: CancellationToken::new(),
         }
     }
 
-    pub fn track(
-        &self,
-        agent_id: &str,
-        prev: &ResourceUsageSample,
-        cur: &ResourceUsageSample,
-    ) -> (ResourceUsageSample, ResourceUsageSample) {
-        let delta_cpu = to_fixed(cur.cpu - prev.cpu);
-        let delta_mem = to_fixed(cur.mem - prev.mem);
-
-        // Ensure entry exists (short write lock), then release it
-        if !self.agents.contains_key(agent_id) {
-            self.agents.insert(agent_id.to_string(), (AtomicU64::new(0), AtomicU64::new(0)));
-        }
-        // Read lock only — safe to hold alongside other read locks
-        let entry = self.agents.get(agent_id).unwrap();
-        let agent_cpu = entry.0.fetch_add(delta_cpu, Relaxed) + delta_cpu;
-        let agent_mem = entry.1.fetch_add(delta_mem, Relaxed) + delta_mem;
-        drop(entry);
-
-        let global_cpu = self.global_cpu.fetch_add(delta_cpu, Relaxed) + delta_cpu;
-        let global_mem = self.global_mem.fetch_add(delta_mem, Relaxed) + delta_mem;
-
-        (
-            ResourceUsageSample {
-                cpu: from_fixed(agent_cpu),
-                mem: from_fixed(agent_mem),
-            },
-            ResourceUsageSample {
-                cpu: from_fixed(global_cpu),
-                mem: from_fixed(global_mem),
-            },
-        )
-    }
-
-    pub fn clear_agent(&self, agent_id: &str) {
-        if let Some(entry) = self.agents.get(agent_id) {
-            let cpu = entry.0.swap(0, Relaxed);
-            let mem = entry.1.swap(0, Relaxed);
-            drop(entry);
-            self.global_cpu.fetch_sub(cpu, Relaxed);
-            self.global_mem.fetch_sub(mem, Relaxed);
-        }
-    }
-}
-
-fn to_fixed(v: f64) -> u64 {
-    (v.max(0.0) * 1000.0) as u64
-}
-
-fn from_fixed(v: u64) -> f64 {
-    v as f64 / 1000.0
-}
-
-#[cfg(target_os = "linux")]
-pub struct ResourceMonitor {
-    pid: u32,
-    agent_id: String,
-    max_cpu_pct: f64,
-    max_memory_pct: f64,
-    prev: ResourceUsageSample,
-    prev_process_ticks: u64,
-    prev_system_ticks: u64,
-    total_memory_bytes: u64,
-}
-
-#[cfg(target_os = "linux")]
-impl ResourceMonitor {
-    pub fn new(pid: u32, agent_id: String, max_cpu_pct: f64, max_memory_pct: f64) -> Result<Self, String> {
-        let process_ticks = read_tree_ticks(pid);
-        let system_ticks = read_system_ticks()?;
-        let total_memory_bytes = read_total_memory()?;
-
-        Ok(Self {
-            pid,
-            agent_id,
-            max_cpu_pct,
-            max_memory_pct,
-            prev: ResourceUsageSample::default(),
-            prev_process_ticks: process_ticks,
-            prev_system_ticks: system_ticks,
-            total_memory_bytes,
-        })
-    }
-
-    pub fn check(&mut self, usage: &ResourceUsage) -> bool {
-        let cur = match self.read_proc() {
-            Ok(sample) => sample,
-            Err(_) => return false,
-        };
-        let (a, g) = usage.track(&self.agent_id, &self.prev, &cur);
-        self.prev = cur;
-
-        let exceeded = if a.cpu > self.max_cpu_pct {
-            Some(format!("agent CPU {:.1}% > {:.1}%", a.cpu, self.max_cpu_pct))
-        } else if a.mem > self.max_memory_pct {
-            Some(format!("agent memory {:.1}% > {:.1}%", a.mem, self.max_memory_pct))
-        } else if g.cpu > usage.max_total_cpu_pct {
-            Some(format!("global CPU {:.1}% > {:.1}%", g.cpu, usage.max_total_cpu_pct))
-        } else if g.mem > usage.max_total_memory_pct {
-            Some(format!("global memory {:.1}% > {:.1}%", g.mem, usage.max_total_memory_pct))
-        } else {
-            None
-        };
-
-        if let Some(reason) = &exceeded {
-            tracing::warn!(
-                agent_id = %self.agent_id,
-                pid = self.pid,
-                "Killing process: {reason}"
+    pub fn set_agent_limits(&self, agent_id: &str, cpu_pct: Option<f64>, mem_pct: Option<f64>) {
+        if cpu_pct.is_some() || mem_pct.is_some() {
+            self.agent_limits.insert(
+                agent_id.to_string(),
+                AgentLimits {
+                    cpu_pct: cpu_pct.unwrap_or(self.max_agent_cpu_pct),
+                    mem_pct: mem_pct.unwrap_or(self.max_agent_memory_pct),
+                },
             );
         }
-
-        exceeded.is_some()
     }
 
-    fn read_proc(&mut self) -> Result<ResourceUsageSample, String> {
-        let tree_pids = collect_tree_pids(self.pid);
-        let tree_ticks = read_tree_ticks_from_pids(&tree_pids);
-        let tree_rss = read_tree_rss(&tree_pids);
-        let system_ticks = read_system_ticks()?;
+    pub fn effective_agent_limits(&self, agent_id: &str) -> (f64, f64) {
+        match self.agent_limits.get(agent_id) {
+            Some(l) => (l.cpu_pct, l.mem_pct),
+            None => (self.max_agent_cpu_pct, self.max_agent_memory_pct),
+        }
+    }
 
-        let process_delta = tree_ticks.saturating_sub(self.prev_process_ticks);
-        let system_delta = system_ticks.saturating_sub(self.prev_system_ticks);
+    pub fn register(&self, pid: u32, agent_id: &str) {
+        self.tracked.insert(
+            pid,
+            TrackedProcess {
+                agent_id: agent_id.to_string(),
+                killed: AtomicBool::new(false),
+            },
+        );
+    }
 
-        self.prev_process_ticks = tree_ticks;
-        self.prev_system_ticks = system_ticks;
+    pub fn unregister(&self, pid: u32) {
+        self.tracked.remove(&pid);
+    }
 
-        let cpu_pct = if system_delta > 0 {
-            (process_delta as f64 / system_delta as f64) * 100.0
-        } else {
-            0.0
-        };
+    pub fn is_killed(&self, pid: u32) -> bool {
+        self.tracked
+            .get(&pid)
+            .map(|p| p.killed.load(Relaxed))
+            .unwrap_or(false)
+    }
 
-        let mem_pct = if self.total_memory_bytes > 0 {
-            (tree_rss as f64 / self.total_memory_bytes as f64) * 100.0
-        } else {
-            0.0
-        };
+    pub fn stop_polling(&self) {
+        self.cancel_token.cancel();
+    }
 
-        Ok(ResourceUsageSample {
-            cpu: cpu_pct,
-            mem: mem_pct,
+    pub fn start_polling(self: &Arc<Self>) -> JoinHandle<()> {
+        let manager = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut sys = System::new();
+            sys.refresh_memory();
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = manager.cancel_token.cancelled() => break,
+                    _ = interval.tick() => {
+                        manager.poll_once(&mut sys);
+                    }
+                }
+            }
         })
     }
-}
 
-#[cfg(target_os = "linux")]
-fn collect_tree_pids(root_pid: u32) -> Vec<u32> {
-    let mut pids = vec![root_pid];
-    let Ok(all) = procfs::process::all_processes() else {
-        return pids;
-    };
-    for entry in all.flatten() {
-        if let Ok(stat) = entry.stat() {
-            if stat.ppid > 0 && pids.contains(&(stat.ppid as u32)) {
-                pids.push(stat.pid as u32);
+    fn poll_once(&self, sys: &mut System) {
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_cpu().with_memory(),
+        );
+        sys.refresh_cpu_usage();
+        sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
+
+        if self.tracked.is_empty() {
+            return;
+        }
+
+        let total_memory = sys.total_memory();
+
+        let mut children_map: HashMap<Pid, Vec<Pid>> = HashMap::new();
+        for (pid, process) in sys.processes() {
+            if let Some(parent) = process.parent() {
+                children_map.entry(parent).or_default().push(*pid);
+            }
+        }
+
+        let mut per_pid: HashMap<u32, (f64, u64)> = HashMap::new();
+        let mut dead_pids: Vec<u32> = Vec::new();
+
+        for entry in self.tracked.iter() {
+            let pid = *entry.key();
+            let sysinfo_pid = Pid::from_u32(pid);
+
+            if sys.process(sysinfo_pid).is_none() {
+                dead_pids.push(pid);
+                continue;
+            }
+
+            if total_memory > 0 {
+                let (cpu, mem_bytes) = collect_tree_usage(sys, sysinfo_pid, &children_map);
+                per_pid.insert(pid, (cpu, mem_bytes));
+            }
+        }
+
+        for pid in &dead_pids {
+            self.tracked.remove(pid);
+        }
+
+        if total_memory == 0 {
+            return;
+        }
+
+        let mut pid_usage: Vec<(u32, String, f64, f64, u64)> = Vec::new();
+        for entry in self.tracked.iter() {
+            let pid = *entry.key();
+            let tracked = entry.value();
+            if tracked.killed.load(Relaxed) {
+                continue;
+            }
+            if let Some(&(cpu, mem_bytes)) = per_pid.get(&pid) {
+                let mem_pct = (mem_bytes as f64 / total_memory as f64) * 100.0;
+                pid_usage.push((pid, tracked.agent_id.clone(), cpu, mem_pct, mem_bytes));
+            }
+        }
+
+        self.enforce_agent_limits(&pid_usage);
+        self.enforce_global_limits(sys, total_memory, &pid_usage);
+    }
+
+    fn enforce_agent_limits(&self, pid_usage: &[(u32, String, f64, f64, u64)]) {
+        let mut agent_ids: Vec<String> = pid_usage.iter().map(|(_, a, _, _, _)| a.clone()).collect();
+        agent_ids.sort();
+        agent_ids.dedup();
+
+        for agent_id in &agent_ids {
+            let (max_cpu, max_mem) = self.effective_agent_limits(agent_id);
+
+            loop {
+                let mut total_cpu = 0.0f64;
+                let mut total_mem = 0.0f64;
+                let mut largest_mem_pid: Option<(u32, u64)> = None;
+                let mut largest_cpu_pid: Option<(u32, f64)> = None;
+
+                for &(pid, ref aid, cpu, mem_pct, mem_bytes) in pid_usage {
+                    if aid != agent_id {
+                        continue;
+                    }
+                    if self.tracked.get(&pid).is_some_and(|t| t.killed.load(Relaxed)) {
+                        continue;
+                    }
+                    total_cpu += cpu;
+                    total_mem += mem_pct;
+                    if largest_mem_pid.is_none_or(|(_, prev)| mem_bytes > prev) {
+                        largest_mem_pid = Some((pid, mem_bytes));
+                    }
+                    if largest_cpu_pid.is_none_or(|(_, prev)| cpu > prev) {
+                        largest_cpu_pid = Some((pid, cpu));
+                    }
+                }
+
+                if total_mem > max_mem
+                    && let Some((pid, _)) = largest_mem_pid
+                {
+                    tracing::warn!(
+                        pid, agent = %agent_id,
+                        "Killing process: agent memory {total_mem:.1}% > {max_mem:.1}%"
+                    );
+                    if let Some(entry) = self.tracked.get(&pid) {
+                        entry.killed.store(true, Relaxed);
+                    }
+                    kill_process(pid);
+                    continue;
+                } else if total_cpu > max_cpu
+                    && let Some((pid, _)) = largest_cpu_pid
+                {
+                    tracing::warn!(
+                        pid, agent = %agent_id,
+                        "Killing process: agent CPU {total_cpu:.1}% > {max_cpu:.1}%"
+                    );
+                    if let Some(entry) = self.tracked.get(&pid) {
+                        entry.killed.store(true, Relaxed);
+                    }
+                    kill_process(pid);
+                    continue;
+                }
+                break;
             }
         }
     }
-    pids
-}
 
-#[cfg(target_os = "linux")]
-fn read_tree_ticks(root_pid: u32) -> u64 {
-    let pids = collect_tree_pids(root_pid);
-    read_tree_ticks_from_pids(&pids)
-}
+    fn enforce_global_limits(
+        &self,
+        sys: &System,
+        total_memory: u64,
+        pid_usage: &[(u32, String, f64, f64, u64)],
+    ) {
+        let global_cpu = sys.global_cpu_usage() as f64;
+        let global_mem = (sys.used_memory() as f64 / total_memory as f64) * 100.0;
 
-#[cfg(target_os = "linux")]
-fn read_tree_ticks_from_pids(pids: &[u32]) -> u64 {
-    let mut total = 0u64;
-    for &pid in pids {
-        if let Ok(proc) = procfs::process::Process::new(pid as i32) {
-            if let Ok(stat) = proc.stat() {
-                total += stat.utime + stat.stime;
+        if global_cpu <= self.max_total_cpu_pct && global_mem <= self.max_total_memory_pct {
+            return;
+        }
+
+        let exceeded_cpu = global_cpu > self.max_total_cpu_pct;
+        let reason = if exceeded_cpu {
+            format!("global CPU {global_cpu:.1}% > {:.1}%", self.max_total_cpu_pct)
+        } else {
+            format!("global memory {global_mem:.1}% > {:.1}%", self.max_total_memory_pct)
+        };
+
+        let mut candidates: Vec<(u32, String, f64, u64)> = pid_usage.iter()
+            .filter(|(pid, _, _, _, _)| {
+                !self.tracked.get(pid).is_some_and(|t| t.killed.load(Relaxed))
+            })
+            .map(|&(pid, ref aid, cpu, _, mem_bytes)| (pid, aid.clone(), cpu, mem_bytes))
+            .collect();
+
+        if exceeded_cpu {
+            candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        } else {
+            candidates.sort_by(|a, b| b.3.cmp(&a.3));
+        }
+
+        if let Some((pid, agent_id, _, _)) = candidates.into_iter().next() {
+            tracing::warn!(pid, agent = %agent_id, "Killing process: {reason}");
+            if let Some(entry) = self.tracked.get(&pid) {
+                entry.killed.store(true, Relaxed);
             }
+            kill_process(pid);
         }
     }
-    total
 }
 
-#[cfg(target_os = "linux")]
-fn read_tree_rss(pids: &[u32]) -> u64 {
-    let mut total = 0u64;
-    for &pid in pids {
-        if let Ok(proc) = procfs::process::Process::new(pid as i32) {
-            if let Ok(stat) = proc.stat() {
-                total += stat.rss * procfs::page_size();
-            }
+fn collect_tree_usage(
+    sys: &System,
+    root: Pid,
+    children_map: &HashMap<Pid, Vec<Pid>>,
+) -> (f64, u64) {
+    let mut total_cpu = 0.0f64;
+    let mut total_mem = 0u64;
+    let mut stack = vec![root];
+
+    while let Some(pid) = stack.pop() {
+        if let Some(process) = sys.process(pid) {
+            total_cpu += process.cpu_usage() as f64;
+            total_mem += process.memory();
+        }
+        if let Some(children) = children_map.get(&pid) {
+            stack.extend(children);
         }
     }
-    total
+
+    (total_cpu, total_mem)
 }
 
-#[cfg(target_os = "linux")]
-fn read_system_ticks() -> Result<u64, String> {
-    let stats = procfs::KernelStats::current().map_err(|e| format!("read /proc/stat: {e}"))?;
-    let cpu = &stats.total;
-    Ok(cpu.user + cpu.nice + cpu.system + cpu.idle
-        + cpu.iowait.unwrap_or(0)
-        + cpu.irq.unwrap_or(0)
-        + cpu.softirq.unwrap_or(0))
-}
-
-fn effective_total_memory() -> u64 {
-    use sysinfo::System;
-    let mut sys = System::new();
-    sys.refresh_memory();
-    sys.cgroup_limits()
-        .map(|cg| cg.total_memory)
-        .unwrap_or_else(|| sys.total_memory())
-}
-
-#[cfg(target_os = "linux")]
-fn read_total_memory() -> Result<u64, String> {
-    Ok(effective_total_memory())
+fn kill_process(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        tracing::warn!("Process kill not supported on this platform");
+    }
 }
 
 pub fn log_system_resources() {
@@ -258,73 +319,94 @@ pub fn log_system_resources() {
     tracing::info!("System resources: {cpus} CPUs, {mem_gb:.1} GB memory");
 }
 
+fn effective_total_memory() -> u64 {
+    let mut sys = System::new();
+    sys.refresh_memory();
+    sys.cgroup_limits()
+        .map(|cg| cg.total_memory)
+        .unwrap_or_else(|| sys.total_memory())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_resource_usage_tracks_deltas() {
-        let ru = ResourceUsage::default();
-        let prev = ResourceUsageSample { cpu: 0.0, mem: 0.0 };
-        let cur = ResourceUsageSample { cpu: 10.0, mem: 5.0 };
-
-        let (agent, global) = ru.track("agent_1", &prev, &cur);
-        assert!((agent.cpu - 10.0).abs() < 0.1);
-        assert!((agent.mem - 5.0).abs() < 0.1);
-        assert!((global.cpu - 10.0).abs() < 0.1);
-        assert!((global.mem - 5.0).abs() < 0.1);
+    fn test_register_and_unregister() {
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(1234, "agent_1");
+        assert!(manager.tracked.contains_key(&1234));
+        manager.unregister(1234);
+        assert!(!manager.tracked.contains_key(&1234));
     }
 
     #[test]
-    fn test_resource_usage_accumulates() {
-        let ru = ResourceUsage::default();
-
-        let prev = ResourceUsageSample { cpu: 0.0, mem: 0.0 };
-        let cur = ResourceUsageSample { cpu: 10.0, mem: 5.0 };
-        ru.track("agent_1", &prev, &cur);
-
-        let prev2 = ResourceUsageSample { cpu: 10.0, mem: 5.0 };
-        let cur2 = ResourceUsageSample { cpu: 25.0, mem: 12.0 };
-        let (agent, _) = ru.track("agent_1", &prev2, &cur2);
-
-        assert!((agent.cpu - 25.0).abs() < 0.1);
-        assert!((agent.mem - 12.0).abs() < 0.1);
+    fn test_is_killed_default_false() {
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(1234, "agent_1");
+        assert!(!manager.is_killed(1234));
     }
 
     #[test]
-    fn test_resource_usage_multiple_agents() {
-        let ru = ResourceUsage::default();
-        let zero = ResourceUsageSample { cpu: 0.0, mem: 0.0 };
-
-        let cur1 = ResourceUsageSample { cpu: 30.0, mem: 20.0 };
-        let cur2 = ResourceUsageSample { cpu: 40.0, mem: 10.0 };
-
-        let (a1, g1) = ru.track("agent_1", &zero, &cur1);
-        let (a2, g2) = ru.track("agent_2", &zero, &cur2);
-
-        assert!((a1.cpu - 30.0).abs() < 0.1);
-        assert!((a2.cpu - 40.0).abs() < 0.1);
-        assert!((g1.cpu - 30.0).abs() < 0.1);
-        assert!((g2.cpu - 70.0).abs() < 0.1);
+    fn test_is_killed_unregistered() {
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        assert!(!manager.is_killed(9999));
     }
 
     #[test]
-    fn test_resource_usage_negative_delta_clamped() {
-        let ru = ResourceUsage::default();
-        let prev = ResourceUsageSample { cpu: 10.0, mem: 5.0 };
-        let cur = ResourceUsageSample { cpu: 5.0, mem: 2.0 };
+    fn test_set_agent_limits() {
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.set_agent_limits("agent_1", Some(50.0), Some(60.0));
 
-        let (agent, _) = ru.track("agent_1", &prev, &cur);
-        assert!((agent.cpu - 0.0).abs() < 0.1);
-        assert!((agent.mem - 0.0).abs() < 0.1);
+        let limits = manager.agent_limits.get("agent_1").unwrap();
+        assert!((limits.cpu_pct - 50.0).abs() < f64::EPSILON);
+        assert!((limits.mem_pct - 60.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_fixed_point_roundtrip() {
-        let values = [0.0, 1.5, 99.999, 100.0, 0.001];
-        for v in values {
-            let rt = from_fixed(to_fixed(v));
-            assert!((rt - v).abs() < 0.002, "roundtrip failed for {v}: got {rt}");
-        }
+    fn test_set_agent_limits_partial() {
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.set_agent_limits("agent_1", Some(50.0), None);
+
+        let limits = manager.agent_limits.get("agent_1").unwrap();
+        assert!((limits.cpu_pct - 50.0).abs() < f64::EPSILON);
+        assert!((limits.mem_pct - 80.0).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn test_set_agent_limits_no_overrides() {
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.set_agent_limits("agent_1", None, None);
+        assert!(!manager.agent_limits.contains_key("agent_1"));
+    }
+
+    #[tokio::test]
+    async fn test_stop_polling() {
+        let manager = Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0));
+        let handle = manager.start_polling();
+        manager.stop_polling();
+        handle.await.unwrap();
+    }
+
+    #[test]
+    fn test_poll_once_auto_cleans_dead_pids() {
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(999_999_999, "agent_1");
+        assert!(manager.tracked.contains_key(&999_999_999));
+
+        let mut sys = System::new();
+        manager.poll_once(&mut sys);
+
+        assert!(!manager.tracked.contains_key(&999_999_999));
+    }
+
+    #[test]
+    fn test_collect_tree_usage_empty() {
+        let sys = System::new();
+        let children_map = HashMap::new();
+        let (cpu, mem) = collect_tree_usage(&sys, Pid::from_u32(999_999_999), &children_map);
+        assert!((cpu - 0.0).abs() < f64::EPSILON);
+        assert_eq!(mem, 0);
+    }
+
 }

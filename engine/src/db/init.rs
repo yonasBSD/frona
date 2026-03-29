@@ -122,7 +122,6 @@ pub async fn seed_config_agents(db: &Surreal<Db>, agent_service: &AgentService, 
 
         let existing: Option<serde_json::Value> = result.take(0)?;
         if existing.is_some() {
-            info!(agent_id = %agent_id, "Config agent already exists, skipping");
             continue;
         }
 

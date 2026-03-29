@@ -442,10 +442,14 @@ pub async fn test_chat_service() -> frona::chat::service::ChatService {
     };
 
     let storage = frona::storage::StorageService::new(&config);
+    let resource_manager = std::sync::Arc::new(
+        frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(80.0, 80.0, 90.0, 90.0),
+    );
     let agent_service = frona::agent::service::AgentService::new(
         SurrealRepo::new(db.clone()),
         &config.cache,
         std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+        resource_manager.clone(),
     );
     let provider_registry = frona::inference::registry::ModelProviderRegistry::for_testing(
         HashMap::new(),

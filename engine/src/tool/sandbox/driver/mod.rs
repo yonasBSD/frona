@@ -200,8 +200,6 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
         None,
         None,
         None,
-        None,
-        None,
     )
     .await
     .map_err(|e| format!("Sandbox probe spawn failed: {e}"))?;
@@ -224,8 +222,6 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
         "bash",
         &["-c", &forbidden_cmd],
         &config,
-        None,
-        None,
         None,
         None,
         None,
@@ -254,10 +250,8 @@ pub async fn execute_sandboxed(
     on_stdout: Option<mpsc::Sender<String>>,
     stdin_rx: Option<mpsc::Receiver<String>>,
     cancel_token: Option<CancellationToken>,
-    resource_usage: Option<&resource_monitor::ResourceUsage>,
+    resource_manager: Option<&resource_monitor::SystemResourceManager>,
     agent_id: Option<&str>,
-    agent_max_cpu_pct: Option<f64>,
-    agent_max_memory_pct: Option<f64>,
 ) -> Result<SandboxOutput, AppError> {
     let mut std_cmd = sandbox.sandboxed_command(program, args, config)?;
 
@@ -334,25 +328,15 @@ pub async fn execute_sandboxed(
     let mut stdout_lines: Vec<String> = Vec::new();
     let mut timed_out = false;
     let mut cancelled = false;
-    #[allow(unused_mut)]
     let mut resource_killed = false;
 
-    #[cfg(target_os = "linux")]
-    let mut resource_monitor = resource_usage.and_then(|ru| {
-        child.id().and_then(|pid| {
-            let cpu = agent_max_cpu_pct.unwrap_or(ru.max_agent_cpu_pct);
-            let mem = agent_max_memory_pct.unwrap_or(ru.max_agent_memory_pct);
-            resource_monitor::ResourceMonitor::new(pid, agent_id?.to_string(), cpu, mem).ok()
-        })
-    });
-
-    #[cfg(not(target_os = "linux"))]
-    let _ = (resource_usage, agent_id, agent_max_cpu_pct, agent_max_memory_pct);
+    // Register process for resource monitoring
+    let tracked_pid = child.id();
+    if let (Some(rm), Some(aid), Some(pid)) = (resource_manager, agent_id, tracked_pid) {
+        rm.register(pid, aid);
+    }
 
     use tokio::io::AsyncBufReadExt;
-
-    let mut resource_interval = tokio::time::interval(std::time::Duration::from_millis(250));
-    resource_interval.tick().await; // consume the immediate first tick
 
     let timeout_sleep = tokio::time::sleep(timeout);
     tokio::pin!(timeout_sleep);
@@ -376,16 +360,6 @@ pub async fn execute_sandboxed(
                 kill_process_group(&mut child).await;
                 break;
             }
-            _ = resource_interval.tick() => {
-                #[cfg(target_os = "linux")]
-                if let (Some(monitor), Some(ru)) = (&mut resource_monitor, resource_usage) {
-                    if monitor.check(ru) {
-                        resource_killed = true;
-                        kill_process_group(&mut child).await;
-                        break;
-                    }
-                }
-            }
             line = stdout_reader.next_line() => {
                 match line {
                     Ok(Some(line)) => {
@@ -401,8 +375,10 @@ pub async fn execute_sandboxed(
         }
     }
 
-    if let (Some(ru), Some(aid)) = (resource_usage, agent_id) {
-        ru.clear_agent(aid);
+    // Unregister and check if killed by resource monitor
+    if let (Some(rm), Some(pid)) = (resource_manager, tracked_pid) {
+        resource_killed = rm.is_killed(pid);
+        rm.unregister(pid);
     }
 
     let status = child.wait().await.ok();
@@ -488,7 +464,7 @@ mod tests {
         let sandbox = test_sandbox();
         let config = test_config(10);
 
-        let output = execute_sandboxed(&*sandbox, "echo", &["hello"], &config, None, None, None, None, None, None, None)
+        let output = execute_sandboxed(&*sandbox, "echo", &["hello"], &config, None, None, None, None, None)
             .await
             .unwrap();
 
@@ -505,17 +481,8 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(16);
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "bash",
-            &["-c", "echo line1; echo line2; echo line3"],
-            &config,
-            Some(tx),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "bash", &["-c", "echo line1; echo line2; echo line3"],
+            &config, Some(tx), None, None, None, None,
         )
         .await
         .unwrap();
@@ -548,17 +515,8 @@ mod tests {
         });
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "bash",
-            &["-c", "for i in 1 2 3; do echo $i; sleep 0.1; done"],
-            &config,
-            Some(tx),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "bash", &["-c", "for i in 1 2 3; do echo $i; sleep 0.1; done"],
+            &config, Some(tx), None, None, None, None,
         )
         .await
         .unwrap();
@@ -581,17 +539,7 @@ mod tests {
         let config = test_config(1);
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "sleep",
-            &["60"],
-            &config,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "sleep", &["60"], &config, None, None, None, None, None,
         )
         .await
         .unwrap();
@@ -607,17 +555,8 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(16);
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "bash",
-            &["-c", "echo partial; sleep 60"],
-            &config,
-            Some(tx),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "bash", &["-c", "echo partial; sleep 60"],
+            &config, Some(tx), None, None, None, None,
         )
         .await
         .unwrap();
@@ -645,17 +584,7 @@ mod tests {
         });
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "sleep",
-            &["60"],
-            &config,
-            None,
-            None,
-            Some(token),
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "sleep", &["60"], &config, None, None, Some(token), None, None,
         )
         .await
         .unwrap();
@@ -677,17 +606,8 @@ mod tests {
         });
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "bash",
-            &["-c", "echo before_cancel; sleep 60"],
-            &config,
-            None,
-            None,
-            Some(token),
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "bash", &["-c", "echo before_cancel; sleep 60"],
+            &config, None, None, Some(token), None, None,
         )
         .await
         .unwrap();
@@ -706,17 +626,7 @@ mod tests {
         drop(tx);
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "cat",
-            &[],
-            &config,
-            None,
-            Some(rx),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "cat", &[], &config, None, Some(rx), None, None, None,
         )
         .await
         .unwrap();
@@ -735,17 +645,7 @@ mod tests {
         drop(tx);
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "head",
-            &["-1"],
-            &config,
-            None,
-            Some(rx),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "head", &["-1"], &config, None, Some(rx), None, None, None,
         )
         .await
         .unwrap();
@@ -761,17 +661,8 @@ mod tests {
         config.max_output_bytes = 50;
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "bash",
-            &["-c", "yes | head -100"],
-            &config,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "bash", &["-c", "yes | head -100"],
+            &config, None, None, None, None, None,
         )
         .await
         .unwrap();
@@ -785,17 +676,8 @@ mod tests {
         let config = test_config(10);
 
         let output = execute_sandboxed(
-            &*sandbox,
-            "bash",
-            &["-c", "exit 42"],
-            &config,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &*sandbox, "bash", &["-c", "exit 42"],
+            &config, None, None, None, None, None,
         )
         .await
         .unwrap();

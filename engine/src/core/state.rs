@@ -39,6 +39,7 @@ use crate::tool::cli::{CliToolConfig, load_cli_tool_configs};
 use crate::tool::voice::{VoiceProvider, create_voice_provider};
 use crate::tool::web_search::{SearchProvider, create_search_provider};
 use crate::tool::sandbox::SandboxManager;
+use crate::tool::sandbox::driver::resource_monitor::SystemResourceManager;
 use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 
@@ -127,6 +128,7 @@ impl AppState {
         agent_service: AgentService,
         storage: StorageService,
         metrics_handle: PrometheusHandle,
+        resource_manager: Arc<SystemResourceManager>,
     ) -> Self {
         let broadcast_service = BroadcastService::new();
         let llm_config = load_models_config(models_config);
@@ -144,10 +146,7 @@ impl AppState {
         let sandbox_manager = Arc::new(SandboxManager::new(
             &config.storage.workspaces_path,
             config.server.sandbox_disabled,
-            config.server.sandbox_max_agent_cpu_pct,
-            config.server.sandbox_max_agent_memory_pct,
-            config.server.sandbox_max_total_cpu_pct,
-            config.server.sandbox_max_total_memory_pct,
+            resource_manager,
         ).with_default_timeout(config.server.sandbox_timeout_secs)
          .with_shared_read_paths(vec![shared_config_abs.to_string_lossy().into_owned()]));
         let search_provider = create_search_provider(&config.search);

@@ -12,6 +12,21 @@ const SELECT_CLAUSE: &str = "SELECT *, meta::id(id) as id";
 
 #[async_trait]
 impl AgentRepository for SurrealRepo<Agent> {
+    async fn find_all(&self) -> Result<Vec<Agent>, AppError> {
+        let query = format!("{SELECT_CLAUSE} FROM agent ORDER BY created_at DESC");
+        let mut result = self
+            .db()
+            .query(&query)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let agents: Vec<Agent> = result
+            .take(0)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(agents)
+    }
+
     async fn find_by_user_id(&self, user_id: &str) -> Result<Vec<Agent>, AppError> {
         let query = format!("{SELECT_CLAUSE} FROM agent WHERE user_id = $user_id OR user_id IS NONE ORDER BY created_at DESC");
         let mut result = self

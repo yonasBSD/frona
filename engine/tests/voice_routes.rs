@@ -34,13 +34,17 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
         ..Default::default()
     };
     let storage = StorageService::new(&config);
+    let resource_manager = std::sync::Arc::new(
+        frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(80.0, 80.0, 90.0, 90.0),
+    );
     let agent_service = frona::agent::service::AgentService::new(
         frona::db::repo::generic::SurrealRepo::new(db.clone()),
         &config.cache,
         std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+        resource_manager.clone(),
     );
     let metrics = setup_metrics_recorder();
-    let state = AppState::new(db, &config, None, agent_service, storage, metrics);
+    let state = AppState::new(db, &config, None, agent_service, storage, metrics, resource_manager);
     (state, tmp)
 }
 
@@ -133,13 +137,17 @@ async fn twilio_callback_valid_token_returns_xml() {
     let token = jwt_svc.sign(&claims, &enc_key, &kid).unwrap();
 
     let storage = StorageService::new(&config);
+    let resource_manager = std::sync::Arc::new(
+        frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(80.0, 80.0, 90.0, 90.0),
+    );
     let agent_service = frona::agent::service::AgentService::new(
         frona::db::repo::generic::SurrealRepo::new(db.clone()),
         &config.cache,
         std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
+        resource_manager.clone(),
     );
     let metrics = setup_metrics_recorder();
-    let state = AppState::new(db, &config, None, agent_service, storage, metrics);
+    let state = AppState::new(db, &config, None, agent_service, storage, metrics, resource_manager);
 
     let app = voice::router().with_state(state);
 
