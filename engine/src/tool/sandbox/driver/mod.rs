@@ -344,16 +344,13 @@ pub async fn execute_sandboxed(
     let mut resource_interval = tokio::time::interval(std::time::Duration::from_millis(250));
     resource_interval.tick().await; // consume the immediate first tick
 
+    let timeout_sleep = tokio::time::sleep(timeout);
+    tokio::pin!(timeout_sleep);
+
     loop {
         tokio::select! {
             biased;
-            _ = async {
-                if timeout.is_zero() {
-                    std::future::pending::<()>().await;
-                } else {
-                    tokio::time::sleep(timeout).await;
-                }
-            } => {
+            _ = &mut timeout_sleep, if !timeout.is_zero() => {
                 timed_out = true;
                 kill_process_group(&mut child).await;
                 break;
