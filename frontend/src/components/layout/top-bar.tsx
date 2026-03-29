@@ -69,9 +69,9 @@ export function TopBar() {
           <button
             key={tab.id}
             onClick={() => router.push(tab.href)}
-            className={`w-28 text-center py-2 text-base font-medium transition rounded-t-lg border border-b-0 ${
+            className={`w-28 text-center py-2 text-base font-medium transition rounded-t-lg border border-b-0 relative ${
               activeTab === tab.id
-                ? "bg-surface border-border text-text-primary"
+                ? "bg-surface border-border text-text-primary mb-[-1px] pb-[calc(0.5rem+1px)]"
                 : "bg-transparent border-transparent text-text-secondary hover:text-text-primary hover:bg-surface-tertiary/50"
             }`}
           >
