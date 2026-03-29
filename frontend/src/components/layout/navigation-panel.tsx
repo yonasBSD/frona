@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
+import { ChevronLeftIcon, ChevronRightIcon, Bars3Icon } from "@heroicons/react/24/outline";
 import { useNavigation } from "@/lib/navigation-context";
 import { TabBar } from "./tab-bar";
 import { ChatsTab } from "../nav/chats-tab";
@@ -70,10 +70,9 @@ export function NavigationPanel() {
     return (
       <div
         onClick={toggleCollapsed}
-        className="relative flex h-full flex-col items-center border-r border-border bg-surface-nav w-10 shrink-0 cursor-pointer hover:bg-surface-tertiary/50 transition"
-        title="Expand panel"
+        className="group/nav relative flex h-full flex-col items-center border-r border-border bg-surface-nav w-6 shrink-0 cursor-pointer transition-colors hover:bg-surface-tertiary/30"
       >
-        <ChevronRightIcon className="h-4 w-4 mt-3 text-text-tertiary" />
+        <Bars3Icon className="h-4 w-4 mt-3 text-text-tertiary" />
       </div>
     );
   }
@@ -81,19 +80,21 @@ export function NavigationPanel() {
   return (
     <div
       ref={panelRef}
-      className="relative flex h-full flex-col border-r border-border bg-surface-nav shrink-0"
+      className="group/nav relative flex h-full flex-col border-r border-border bg-surface-nav shrink-0"
       style={{ width }}
     >
       <div className="flex items-center border-b border-border">
         <div className="flex-1"><TabBar /></div>
-        <button
-          onClick={toggleCollapsed}
-          className="mr-2 p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-surface-tertiary transition"
-          title="Collapse panel"
-        >
-          <ChevronLeftIcon className="h-4 w-4" />
-        </button>
       </div>
+
+      {/* Collapse button — visible on hover */}
+      <button
+        onClick={toggleCollapsed}
+        className="absolute top-1/2 -translate-y-1/2 -right-3 z-10 flex items-center justify-center h-6 w-6 rounded-full border border-border bg-surface shadow-sm text-text-tertiary hover:text-text-primary hover:bg-surface-secondary transition opacity-0 group-hover/nav:opacity-100"
+        title="Collapse panel"
+      >
+        <ChevronLeftIcon className="h-3 w-3" />
+      </button>
 
       <div className="flex-1 overflow-y-auto">
         {activeTab === "chat" && <ChatsTab />}
