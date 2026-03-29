@@ -48,6 +48,13 @@ pub fn configurable_tools() -> &'static [String] {
     CONFIGURABLE_TOOLS.get().map(|v| v.as_slice()).unwrap_or(&[])
 }
 
+pub fn is_tool_available(state: &crate::core::state::AppState, tool_name: &str) -> bool {
+    match tool_name {
+        "voice_call" => state.voice_provider.is_some(),
+        _ => true,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub id: String,

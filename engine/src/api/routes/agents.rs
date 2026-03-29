@@ -45,6 +45,9 @@ async fn list_agents(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AgentResponse>>, ApiError> {
     let mut agents = state.agent_service.list(&auth.user_id).await?;
+    agents.retain(|agent| {
+        !agent.is_shared || agent.tools.iter().all(|t| crate::tool::is_tool_available(&state, t))
+    });
 
     let count_map: HashMap<String, u64> = state
         .db
