@@ -1,5 +1,6 @@
 pub mod macos;
 pub mod noop;
+pub mod resource_monitor;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -91,7 +92,7 @@ impl Default for SandboxConfig {
             additional_write_paths: Vec::new(),
             additional_path_dirs: Vec::new(),
             env_vars: Vec::new(),
-            timeout_secs: 30,
+            timeout_secs: 0,
             max_output_bytes: 512 * 1024,
         }
     }
@@ -104,6 +105,7 @@ pub struct SandboxOutput {
     pub exit_code: Option<i32>,
     pub timed_out: bool,
     pub cancelled: bool,
+    pub resource_killed: bool,
 }
 
 pub trait SandboxDriver: Send + Sync {
@@ -194,6 +196,8 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
         None,
         None,
         None,
+        None,
+        None,
     )
     .await
     .map_err(|e| format!("Sandbox probe spawn failed: {e}"))?;
@@ -219,6 +223,8 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
         None,
         None,
         None,
+        None,
+        None,
     )
     .await
     .map_err(|e| format!("Sandbox probe spawn failed: {e}"))?;
@@ -233,6 +239,7 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_sandboxed(
     sandbox: &dyn SandboxDriver,
     program: &str,
@@ -241,6 +248,8 @@ pub async fn execute_sandboxed(
     on_stdout: Option<mpsc::Sender<String>>,
     stdin_rx: Option<mpsc::Receiver<String>>,
     cancel_token: Option<CancellationToken>,
+    resource_usage: Option<&resource_monitor::ResourceUsage>,
+    agent_id: Option<&str>,
 ) -> Result<SandboxOutput, AppError> {
     let mut std_cmd = sandbox.sandboxed_command(program, args, config)?;
 
@@ -268,6 +277,17 @@ pub async fn execute_sandboxed(
 
     for (key, value) in &config.env_vars {
         std_cmd.env(key, value);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            std_cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
     }
 
     if stdin_rx.is_some() {
@@ -306,11 +326,59 @@ pub async fn execute_sandboxed(
     let mut stdout_lines: Vec<String> = Vec::new();
     let mut timed_out = false;
     let mut cancelled = false;
+    #[allow(unused_mut)]
+    let mut resource_killed = false;
+
+    #[cfg(target_os = "linux")]
+    let mut resource_monitor = resource_usage.and_then(|_| {
+        child.id().and_then(|pid| {
+            resource_monitor::ResourceMonitor::new(pid, agent_id?.to_string()).ok()
+        })
+    });
+
+    #[cfg(not(target_os = "linux"))]
+    let _ = (resource_usage, agent_id);
 
     use tokio::io::AsyncBufReadExt;
 
+    let mut resource_interval = tokio::time::interval(std::time::Duration::from_millis(250));
+    resource_interval.tick().await; // consume the immediate first tick
+
     loop {
         tokio::select! {
+            biased;
+            _ = async {
+                if timeout.is_zero() {
+                    std::future::pending::<()>().await;
+                } else {
+                    tokio::time::sleep(timeout).await;
+                }
+            } => {
+                timed_out = true;
+                kill_process_group(&mut child).await;
+                break;
+            }
+            _ = async {
+                if let Some(token) = &cancel_token {
+                    token.cancelled().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {
+                cancelled = true;
+                kill_process_group(&mut child).await;
+                break;
+            }
+            _ = resource_interval.tick() => {
+                #[cfg(target_os = "linux")]
+                if let (Some(monitor), Some(ru)) = (&mut resource_monitor, resource_usage) {
+                    if monitor.check(ru) {
+                        resource_killed = true;
+                        kill_process_group(&mut child).await;
+                        break;
+                    }
+                }
+            }
             line = stdout_reader.next_line() => {
                 match line {
                     Ok(Some(line)) => {
@@ -323,23 +391,11 @@ pub async fn execute_sandboxed(
                     Err(_) => break,
                 }
             }
-            _ = tokio::time::sleep(timeout) => {
-                timed_out = true;
-                let _ = child.kill().await;
-                break;
-            }
-            _ = async {
-                if let Some(token) = &cancel_token {
-                    token.cancelled().await;
-                } else {
-                    std::future::pending::<()>().await;
-                }
-            } => {
-                cancelled = true;
-                let _ = child.kill().await;
-                break;
-            }
         }
+    }
+
+    if let (Some(ru), Some(aid)) = (resource_usage, agent_id) {
+        ru.clear_agent(aid);
     }
 
     let status = child.wait().await.ok();
@@ -366,14 +422,28 @@ pub async fn execute_sandboxed(
     Ok(SandboxOutput {
         stdout: truncate_output(stdout, max_bytes),
         stderr: truncate_output(stderr, max_bytes),
-        exit_code: if timed_out || cancelled {
+        exit_code: if timed_out || cancelled || resource_killed {
             None
         } else {
             status.and_then(|s| s.code())
         },
         timed_out,
         cancelled,
+        resource_killed,
     })
+}
+
+async fn kill_process_group(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill().await;
+    }
 }
 
 fn truncate_output(s: String, max_bytes: usize) -> String {
@@ -411,7 +481,7 @@ mod tests {
         let sandbox = test_sandbox();
         let config = test_config(10);
 
-        let output = execute_sandboxed(&*sandbox, "echo", &["hello"], &config, None, None, None)
+        let output = execute_sandboxed(&*sandbox, "echo", &["hello"], &config, None, None, None, None, None)
             .await
             .unwrap();
 
@@ -433,6 +503,8 @@ mod tests {
             &["-c", "echo line1; echo line2; echo line3"],
             &config,
             Some(tx),
+            None,
+            None,
             None,
             None,
         )
@@ -474,6 +546,8 @@ mod tests {
             Some(tx),
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -503,6 +577,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -523,6 +599,8 @@ mod tests {
             &["-c", "echo partial; sleep 60"],
             &config,
             Some(tx),
+            None,
+            None,
             None,
             None,
         )
@@ -559,6 +637,8 @@ mod tests {
             None,
             None,
             Some(token),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -587,6 +667,8 @@ mod tests {
             None,
             None,
             Some(token),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -611,6 +693,8 @@ mod tests {
             &config,
             None,
             Some(rx),
+            None,
+            None,
             None,
         )
         .await
@@ -637,6 +721,8 @@ mod tests {
             None,
             Some(rx),
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -659,6 +745,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -676,6 +764,8 @@ mod tests {
             "bash",
             &["-c", "exit 42"],
             &config,
+            None,
+            None,
             None,
             None,
             None,
