@@ -72,6 +72,7 @@ pub struct Agent {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateAgentRequest {
+    pub id: Option<String>,
     pub name: String,
     pub description: String,
     pub model_group: Option<String>,

@@ -47,16 +47,19 @@ impl ScheduleTaskTool {
     async fn resolve_agent_id(&self, user_id: &str, agent_id: &str, target_agent: Option<&str>) -> Result<String, AppError> {
         match target_agent {
             Some(name) => {
-                let agent = self
-                    .agent_service
-                    .find_by_name(user_id, name)
-                    .await?
-                    .ok_or_else(|| {
-                        AppError::Validation(format!(
-                            "Agent '{}' not found. Check <available_agents> for valid agent names.",
-                            name
-                        ))
-                    })?;
+                let agent = match self.agent_service.find_by_name(user_id, name).await? {
+                    Some(a) => a,
+                    None => self
+                        .agent_service
+                        .find_by_id(name)
+                        .await?
+                        .ok_or_else(|| {
+                            AppError::Validation(format!(
+                                "Agent '{}' not found. Check <available_agents> for valid agent names.",
+                                name
+                            ))
+                        })?,
+                };
                 if !agent.enabled {
                     return Err(AppError::Validation(format!(
                         "Agent '{}' is disabled.",

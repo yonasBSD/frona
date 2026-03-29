@@ -15,7 +15,7 @@ import { agentDisplayName, type Attachment, type ChatResponse } from "@/lib/type
 const quickActions = [
   { label: "Build an app", prompt: "Help me build a web application" },
   { label: "Analyze data", prompt: "Help me analyze some data" },
-  { label: "Write code", prompt: "Help me write some code" },
+  { label: "Create agent", prompt: "I want to create a new agent" },
   { label: "Research", prompt: "Help me research a topic" },
   { label: "Brainstorm", prompt: "Let's brainstorm ideas" },
 ];

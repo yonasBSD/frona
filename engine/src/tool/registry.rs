@@ -86,6 +86,7 @@ impl AgentToolRegistry {
 
 pub fn build_tool_registry(
     state: &AppState,
+    agent_id: &str,
     allowed_tools: &[String],
     is_task: bool,
 ) -> AgentToolRegistry {
@@ -207,6 +208,15 @@ pub fn build_tool_registry(
         registry.register(Arc::new(crate::tool::voice::HangupCallTool {
             prompts: prompts.clone(),
         }));
+    }
+
+    if agent_id == "system" {
+        registry.register(Arc::new(super::create_agent::CreateAgentTool::new(
+            state.agent_service.clone(),
+            state.storage_service.clone(),
+            state.broadcast_service.clone(),
+            prompts.clone(),
+        )));
     }
 
     if is_task {

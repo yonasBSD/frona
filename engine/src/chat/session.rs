@@ -148,6 +148,7 @@ impl ChatSessionContext {
 
         let tool_registry = crate::tool::registry::build_tool_registry(
             state,
+            &chat.agent_id,
             &agent_config.tools,
             is_task,
         );

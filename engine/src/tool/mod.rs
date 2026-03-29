@@ -1,5 +1,6 @@
 pub mod browser;
 pub mod cli;
+pub mod create_agent;
 pub mod delegate;
 pub mod heartbeat;
 pub mod manage_service;

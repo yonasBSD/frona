@@ -72,11 +72,24 @@ impl AgentService {
         user_id: &str,
         req: CreateAgentRequest,
     ) -> Result<AgentResponse, AppError> {
+        let id = if let Some(custom_id) = req.id {
+            let custom_id = custom_id.to_lowercase();
+            if !custom_id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') || custom_id.is_empty() {
+                return Err(AppError::Validation("Agent ID must contain only lowercase letters, digits, and hyphens".into()));
+            }
+            if self.repo.find_by_id(&custom_id).await?.is_some() {
+                return Err(AppError::Validation(format!("Agent with ID '{custom_id}' already exists")));
+            }
+            custom_id
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        };
+
         let now = chrono::Utc::now();
         let tools = req.tools.unwrap_or_else(|| configurable_tools().to_vec());
 
         let agent = Agent {
-            id: uuid::Uuid::new_v4().to_string(),
+            id,
             user_id: Some(user_id.to_string()),
             name: req.name,
             description: req.description,

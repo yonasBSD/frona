@@ -24,9 +24,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/agents/{id}/tools", get(agent_tools))
 }
 
-fn registry_to_tool_infos(state: &AppState, allowed: &[String]) -> Vec<ToolInfo> {
+fn registry_to_tool_infos(state: &AppState, agent_id: &str, allowed: &[String]) -> Vec<ToolInfo> {
     let configurable: Vec<&str> = configurable_tools().iter().map(|s| s.as_str()).collect();
-    let registry = build_tool_registry(state, allowed, false);
+    let registry = build_tool_registry(state, agent_id, allowed, false);
     registry
         .definitions
         .iter()
@@ -44,7 +44,7 @@ fn registry_to_tool_infos(state: &AppState, allowed: &[String]) -> Vec<ToolInfo>
 /// All configurable tools available in the system.
 async fn list_tools(_auth: AuthUser, State(state): State<AppState>) -> Json<Vec<ToolInfo>> {
     let all = configurable_tools().to_vec();
-    Json(registry_to_tool_infos(&state, &all))
+    Json(registry_to_tool_infos(&state, "", &all))
 }
 
 /// Tools currently assigned to a specific agent.
@@ -54,5 +54,5 @@ async fn agent_tools(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<ToolInfo>>, ApiError> {
     let agent = state.agent_service.get(&auth.user_id, &id).await?;
-    Ok(Json(registry_to_tool_infos(&state, &agent.tools)))
+    Ok(Json(registry_to_tool_infos(&state, &id, &agent.tools)))
 }

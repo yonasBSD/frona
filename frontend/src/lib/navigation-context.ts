@@ -95,9 +95,20 @@ export function NavigationProvider({
   }, []);
 
   const updateAgent = useCallback((agentId: string, fields: Record<string, unknown>) => {
-    setAgents((prev) =>
-      prev.map((a) => (a.id === agentId ? { ...a, ...fields } : a)),
-    );
+    setAgents((prev) => {
+      const exists = prev.some((a) => a.id === agentId);
+      if (exists) {
+        return prev.map((a) => (a.id === agentId ? { ...a, ...fields } : a));
+      }
+      // New agent — fetch it from the API and add to state
+      api.get<Agent>(`/api/agents/${agentId}`).then((agent) => {
+        setAgents((curr) => {
+          if (curr.some((a) => a.id === agentId)) return curr;
+          return [...curr, agent];
+        });
+      }).catch(() => {});
+      return prev;
+    });
   }, []);
 
   const deleteAgentAction = useCallback(async (agentId: string) => {
