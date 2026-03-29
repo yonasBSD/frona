@@ -200,6 +200,7 @@ async fn attempt_fix_app_on_crash(state: &AppState, app: &super::models::App) {
     let state = state.clone();
     let user_id = app.user_id.clone();
     let chat_id = app.chat_id.clone();
+    let agent_id = app.agent_id.clone();
     tokio::spawn(async move {
         let message_id = match state.chat_service
             .find_executing_message_for_chat(&chat_id)
@@ -207,8 +208,17 @@ async fn attempt_fix_app_on_crash(state: &AppState, app: &super::models::App) {
         {
             Ok(Some(msg)) => msg.id,
             Ok(None) => {
-                tracing::warn!(chat_id = %chat_id, "No executing message found for crash fix resume");
-                return;
+                info!(chat_id = %chat_id, "Creating agent message for crash fix");
+                match state.chat_service
+                    .create_executing_agent_message(&chat_id, &agent_id)
+                    .await
+                {
+                    Ok(msg) => msg.id,
+                    Err(e) => {
+                        tracing::error!(error = %e, chat_id = %chat_id, "Failed to create agent message for crash fix");
+                        return;
+                    }
+                }
             }
             Err(e) => {
                 tracing::error!(error = %e, chat_id = %chat_id, "Failed to find executing message");
