@@ -80,8 +80,7 @@ async fn event_stream_receives_chat_message_broadcast() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // Small delay to let register_session complete
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
 
     // Broadcast a chat message for this user
     let msg = MessageResponse {
@@ -164,8 +163,7 @@ async fn event_stream_receives_task_update_broadcast() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // Small delay to let register_session complete
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
 
     broadcast.broadcast_task_update(
         &user_id,
@@ -212,8 +210,7 @@ async fn event_stream_filters_other_user_task_updates() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // Small delay to let register_session complete
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
 
     // Broadcast task update for a different user
     broadcast.broadcast_task_update(

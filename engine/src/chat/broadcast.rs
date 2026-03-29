@@ -344,17 +344,13 @@ impl BroadcastService {
         }
     }
 
-    pub fn register_session(
+    pub async fn register_session(
         &self,
         user_id: &str,
         sender: SseSender,
     ) {
-        let sessions = self.sessions.clone();
-        let user_id = user_id.to_string();
-        tokio::spawn(async move {
-            let mut registry = sessions.write().await;
-            registry.entry(user_id).or_default().push(sender);
-        });
+        let mut registry = self.sessions.write().await;
+        registry.entry(user_id.to_string()).or_default().push(sender);
     }
 
     pub fn send(&self, event: BroadcastEvent) {

@@ -131,7 +131,7 @@ async fn event_stream(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, Infallible>>();
 
-    state.broadcast_service.register_session(&auth.user_id, tx);
+    state.broadcast_service.register_session(&auth.user_id, tx).await;
 
     let stream = UnboundedReceiverStream::new(rx);
     Sse::new(stream).keep_alive(KeepAlive::default())

@@ -391,10 +391,7 @@ async fn broadcast_task_status_emits_event() {
     let executor = make_executor(&state);
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    state.broadcast_service.register_session("user-1", tx);
-
-    // Small delay to let register_session complete (it spawns a task)
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    state.broadcast_service.register_session("user-1", tx).await;
 
     let mut task = make_task(TaskKind::Direct);
     task.chat_id = Some("chat-123".to_string());

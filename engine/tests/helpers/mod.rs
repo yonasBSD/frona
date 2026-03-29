@@ -481,7 +481,7 @@ pub async fn test_chat_service() -> frona::chat::service::ChatService {
 /// Create an `EventSender` backed by a real `BroadcastService` with a
 /// registered SSE session, returning both the sender and the SSE receiver.
 /// This exercises the full production path: serialize → dispatch → fan-out.
-pub fn test_event_sender() -> (
+pub async fn test_event_sender() -> (
     frona::chat::broadcast::EventSender,
     mpsc::UnboundedReceiver<Result<axum::response::sse::Event, std::convert::Infallible>>,
     frona::chat::broadcast::BroadcastService,
@@ -490,7 +490,7 @@ pub fn test_event_sender() -> (
     let event_sender = broadcast.create_event_sender("test-user", "test-chat");
 
     let (tx, rx) = mpsc::unbounded_channel();
-    broadcast.register_session("test-user", tx);
+    broadcast.register_session("test-user", tx).await;
 
     (event_sender, rx, broadcast)
 }
