@@ -255,6 +255,8 @@ impl Sandbox {
         stdin_rx: Option<mpsc::Receiver<String>>,
         cancel_token: Option<CancellationToken>,
         resource_usage: Option<&ResourceUsage>,
+        agent_max_cpu_pct: Option<f64>,
+        agent_max_memory_pct: Option<f64>,
     ) -> Result<SandboxOutput, AppError> {
         let mut config = self.base_config()?;
         config.timeout_secs = timeout_secs;
@@ -269,6 +271,8 @@ impl Sandbox {
             cancel_token,
             resource_usage,
             Some(&self.agent_id),
+            agent_max_cpu_pct,
+            agent_max_memory_pct,
         )
         .await
     }
@@ -368,6 +372,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -389,7 +395,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&ws.path);
 
         let result = ws
-            .execute("bash", &["-c", "echo $FRONA_TEST_SECRET"], 10, None, None, None, None)
+            .execute("bash", &["-c", "echo $FRONA_TEST_SECRET"], 10, None, None, None, None, None, None)
             .await
             .unwrap();
 
@@ -428,6 +434,8 @@ mod tests {
                 &["-c", "echo hello; echo world"],
                 10,
                 Some(tx),
+                None,
+                None,
                 None,
                 None,
                 None,

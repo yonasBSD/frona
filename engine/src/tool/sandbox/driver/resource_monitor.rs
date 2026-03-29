@@ -90,6 +90,8 @@ fn from_fixed(v: u64) -> f64 {
 pub struct ResourceMonitor {
     pid: u32,
     agent_id: String,
+    max_cpu_pct: f64,
+    max_memory_pct: f64,
     prev: ResourceUsageSample,
     prev_process_ticks: u64,
     prev_system_ticks: u64,
@@ -98,7 +100,7 @@ pub struct ResourceMonitor {
 
 #[cfg(target_os = "linux")]
 impl ResourceMonitor {
-    pub fn new(pid: u32, agent_id: String) -> Result<Self, String> {
+    pub fn new(pid: u32, agent_id: String, max_cpu_pct: f64, max_memory_pct: f64) -> Result<Self, String> {
         let process_ticks = read_tree_ticks(pid);
         let system_ticks = read_system_ticks()?;
         let total_memory_bytes = read_total_memory()?;
@@ -106,6 +108,8 @@ impl ResourceMonitor {
         Ok(Self {
             pid,
             agent_id,
+            max_cpu_pct,
+            max_memory_pct,
             prev: ResourceUsageSample::default(),
             prev_process_ticks: process_ticks,
             prev_system_ticks: system_ticks,
@@ -121,10 +125,10 @@ impl ResourceMonitor {
         let (a, g) = usage.track(&self.agent_id, &self.prev, &cur);
         self.prev = cur;
 
-        let exceeded = if a.cpu > usage.max_agent_cpu_pct {
-            Some(format!("agent CPU {:.1}% > {:.1}%", a.cpu, usage.max_agent_cpu_pct))
-        } else if a.mem > usage.max_agent_memory_pct {
-            Some(format!("agent memory {:.1}% > {:.1}%", a.mem, usage.max_agent_memory_pct))
+        let exceeded = if a.cpu > self.max_cpu_pct {
+            Some(format!("agent CPU {:.1}% > {:.1}%", a.cpu, self.max_cpu_pct))
+        } else if a.mem > self.max_memory_pct {
+            Some(format!("agent memory {:.1}% > {:.1}%", a.mem, self.max_memory_pct))
         } else if g.cpu > usage.max_total_cpu_pct {
             Some(format!("global CPU {:.1}% > {:.1}%", g.cpu, usage.max_total_cpu_pct))
         } else if g.mem > usage.max_total_memory_pct {

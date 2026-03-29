@@ -162,6 +162,21 @@ impl AgentTool for CliTool {
         let timeout = defaults.timeout_secs
             .unwrap_or_else(|| self.sandbox_manager.default_timeout_secs());
 
+        let ru = self.sandbox_manager.resource_usage();
+        let effective_cpu = defaults.max_cpu_pct.unwrap_or(ru.max_agent_cpu_pct);
+        let effective_mem = defaults.max_memory_pct.unwrap_or(ru.max_agent_memory_pct);
+
+        tracing::info!(
+            agent = %agent_id,
+            tool = %self.config.name,
+            timeout_secs = timeout,
+            max_cpu_pct = effective_cpu,
+            max_memory_pct = effective_mem,
+            max_total_cpu_pct = ru.max_total_cpu_pct,
+            max_total_memory_pct = ru.max_total_memory_pct,
+            "Executing sandboxed command"
+        );
+
         let output = sandbox
             .execute(
                 &self.config.program,
@@ -170,7 +185,9 @@ impl AgentTool for CliTool {
                 None,
                 None,
                 None,
-                Some(self.sandbox_manager.resource_usage()),
+                Some(ru),
+                defaults.max_cpu_pct,
+                defaults.max_memory_pct,
             )
             .await?;
 

@@ -198,6 +198,8 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
         None,
         None,
         None,
+        None,
+        None,
     )
     .await
     .map_err(|e| format!("Sandbox probe spawn failed: {e}"))?;
@@ -220,6 +222,8 @@ async fn run_sandbox_probe(probe_dir: &std::path::Path) -> Result<(), String> {
         "bash",
         &["-c", &forbidden_cmd],
         &config,
+        None,
+        None,
         None,
         None,
         None,
@@ -250,6 +254,8 @@ pub async fn execute_sandboxed(
     cancel_token: Option<CancellationToken>,
     resource_usage: Option<&resource_monitor::ResourceUsage>,
     agent_id: Option<&str>,
+    agent_max_cpu_pct: Option<f64>,
+    agent_max_memory_pct: Option<f64>,
 ) -> Result<SandboxOutput, AppError> {
     let mut std_cmd = sandbox.sandboxed_command(program, args, config)?;
 
@@ -330,14 +336,16 @@ pub async fn execute_sandboxed(
     let mut resource_killed = false;
 
     #[cfg(target_os = "linux")]
-    let mut resource_monitor = resource_usage.and_then(|_| {
+    let mut resource_monitor = resource_usage.and_then(|ru| {
         child.id().and_then(|pid| {
-            resource_monitor::ResourceMonitor::new(pid, agent_id?.to_string()).ok()
+            let cpu = agent_max_cpu_pct.unwrap_or(ru.max_agent_cpu_pct);
+            let mem = agent_max_memory_pct.unwrap_or(ru.max_agent_memory_pct);
+            resource_monitor::ResourceMonitor::new(pid, agent_id?.to_string(), cpu, mem).ok()
         })
     });
 
     #[cfg(not(target_os = "linux"))]
-    let _ = (resource_usage, agent_id);
+    let _ = (resource_usage, agent_id, agent_max_cpu_pct, agent_max_memory_pct);
 
     use tokio::io::AsyncBufReadExt;
 
@@ -478,7 +486,7 @@ mod tests {
         let sandbox = test_sandbox();
         let config = test_config(10);
 
-        let output = execute_sandboxed(&*sandbox, "echo", &["hello"], &config, None, None, None, None, None)
+        let output = execute_sandboxed(&*sandbox, "echo", &["hello"], &config, None, None, None, None, None, None, None)
             .await
             .unwrap();
 
@@ -500,6 +508,8 @@ mod tests {
             &["-c", "echo line1; echo line2; echo line3"],
             &config,
             Some(tx),
+            None,
+            None,
             None,
             None,
             None,
@@ -545,6 +555,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -576,6 +588,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -596,6 +610,8 @@ mod tests {
             &["-c", "echo partial; sleep 60"],
             &config,
             Some(tx),
+            None,
+            None,
             None,
             None,
             None,
@@ -636,6 +652,8 @@ mod tests {
             Some(token),
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -666,6 +684,8 @@ mod tests {
             Some(token),
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -690,6 +710,8 @@ mod tests {
             &config,
             None,
             Some(rx),
+            None,
+            None,
             None,
             None,
             None,
@@ -720,6 +742,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -744,6 +768,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -761,6 +787,8 @@ mod tests {
             "bash",
             &["-c", "exit 42"],
             &config,
+            None,
+            None,
             None,
             None,
             None,
