@@ -8,6 +8,8 @@ use serde_json::{Map, Value};
 use crate::agent::prompt::PromptLoader;
 use crate::agent::skill::service::SkillService;
 use crate::core::error::AppError;
+use crate::storage::StorageService;
+use crate::storage::path::VirtualPath;
 
 use super::sandbox::SandboxManager;
 use super::{AgentTool, InferenceContext, ToolDefinition, ToolOutput, parse_frontmatter};
@@ -30,6 +32,7 @@ pub struct CliTool {
     config: CliToolConfig,
     sandbox_manager: Arc<SandboxManager>,
     skill_service: SkillService,
+    storage: StorageService,
 }
 
 impl CliTool {
@@ -37,11 +40,13 @@ impl CliTool {
         config: CliToolConfig,
         sandbox_manager: Arc<SandboxManager>,
         skill_service: SkillService,
+        storage: StorageService,
     ) -> Self {
         Self {
             config,
             sandbox_manager,
             skill_service,
+            storage,
         }
     }
 
@@ -118,11 +123,27 @@ impl AgentTool for CliTool {
             .map(|s| s.path)
             .collect();
 
+        let resolved_shared: Vec<String> = defaults
+            .shared_paths
+            .iter()
+            .filter_map(|p| {
+                if p.starts_with('/') {
+                    Some(p.clone())
+                } else {
+                    VirtualPath::parse(p)
+                        .ok()
+                        .and_then(|vp| self.storage.resolve(&vp).ok())
+                        .map(|pb| pb.to_string_lossy().into_owned())
+                }
+            })
+            .collect();
+
         let mut sandbox = self.sandbox_manager.get_sandbox(
             agent_id,
             defaults.network_access,
             defaults.allowed_network_destinations,
-        ).with_read_paths(skill_read_paths);
+        ).with_read_paths(skill_read_paths)
+         .with_read_paths(resolved_shared);
 
         if !ctx.file_paths.is_empty() {
             sandbox = sandbox.with_write_paths(ctx.file_paths.clone());
@@ -138,7 +159,8 @@ impl AgentTool for CliTool {
             }
         }
 
-        let timeout = self.config.timeout_secs.unwrap_or(30);
+        let timeout = defaults.timeout_secs
+            .unwrap_or_else(|| self.sandbox_manager.default_timeout_secs());
 
         let output = sandbox
             .execute(
@@ -148,12 +170,15 @@ impl AgentTool for CliTool {
                 None,
                 None,
                 None,
+                Some(self.sandbox_manager.resource_usage()),
             )
             .await?;
 
         let mut result = String::new();
 
-        if output.timed_out {
+        if output.resource_killed {
+            result.push_str("Process killed: resource limit exceeded.\n");
+        } else if output.timed_out {
             result.push_str(&format!(
                 "Process timed out after {timeout} seconds.\n"
             ));
@@ -323,9 +348,10 @@ mod tests {
             timeout_secs: Some(30),
         };
 
-        let wm = Arc::new(SandboxManager::new("/tmp/test", false));
+        let wm = Arc::new(SandboxManager::new("/tmp/test", false, 60.0, 60.0, 60.0, 60.0));
         let service = mock_skill_service();
-        let tool = CliTool::new(config, wm, service);
+        let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
+        let tool = CliTool::new(config, wm, service, storage);
         let defs = tool.definitions();
 
         assert_eq!(defs.len(), 1);
@@ -405,9 +431,10 @@ mod tests {
         let tmp = std::env::temp_dir().join("frona_test_cli_tool");
         let _ = std::fs::create_dir_all(&tmp);
 
-        let wm = Arc::new(SandboxManager::new(&tmp, false));
+        let wm = Arc::new(SandboxManager::new(&tmp, false, 60.0, 60.0, 60.0, 60.0));
         let service = mock_skill_service();
-        let tool = CliTool::new(config, wm, service);
+        let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
+        let tool = CliTool::new(config, wm, service, storage);
         let ctx = mock_context();
 
         let result = tool

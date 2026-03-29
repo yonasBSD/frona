@@ -9,20 +9,45 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use self::driver::{SandboxConfig, SandboxOutput, create_driver, execute_sandboxed};
+use self::driver::resource_monitor::ResourceUsage;
 
 pub struct SandboxManager {
     base_path: PathBuf,
     driver: Arc<dyn driver::SandboxDriver>,
     shared_read_paths: Vec<String>,
+    resource_usage: ResourceUsage,
+    default_timeout_secs: u64,
 }
 
 impl SandboxManager {
-    pub fn new(base_path: impl Into<PathBuf>, sandbox_disabled: bool) -> Self {
+    pub fn new(
+        base_path: impl Into<PathBuf>,
+        sandbox_disabled: bool,
+        max_agent_cpu_pct: f64,
+        max_agent_memory_pct: f64,
+        max_total_cpu_pct: f64,
+        max_total_memory_pct: f64,
+    ) -> Self {
         Self {
             base_path: base_path.into(),
             driver: Arc::from(create_driver(sandbox_disabled)),
             shared_read_paths: Vec::new(),
+            resource_usage: ResourceUsage::new(max_agent_cpu_pct, max_agent_memory_pct, max_total_cpu_pct, max_total_memory_pct),
+            default_timeout_secs: 0,
         }
+    }
+
+    pub fn with_default_timeout(mut self, secs: u64) -> Self {
+        self.default_timeout_secs = secs;
+        self
+    }
+
+    pub fn default_timeout_secs(&self) -> u64 {
+        self.default_timeout_secs
+    }
+
+    pub fn resource_usage(&self) -> &ResourceUsage {
+        &self.resource_usage
     }
 
     pub fn with_shared_read_paths(mut self, paths: Vec<String>) -> Self {
@@ -46,6 +71,7 @@ impl SandboxManager {
             extra_env_vars: Vec::new(),
             shared_read_paths: self.shared_read_paths.clone(),
             shared_write_paths: Vec::new(),
+            agent_id: agent_id.to_string(),
         }
     }
 }
@@ -58,6 +84,7 @@ pub struct Sandbox {
     extra_env_vars: Vec<(String, String)>,
     shared_read_paths: Vec<String>,
     shared_write_paths: Vec<String>,
+    agent_id: String,
 }
 
 impl Sandbox {
@@ -218,6 +245,7 @@ impl Sandbox {
             .map_err(|e| AppError::Tool(format!("Failed to spawn process: {e}")))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute(
         &self,
         program: &str,
@@ -226,6 +254,7 @@ impl Sandbox {
         on_stdout: Option<mpsc::Sender<String>>,
         stdin_rx: Option<mpsc::Receiver<String>>,
         cancel_token: Option<CancellationToken>,
+        resource_usage: Option<&ResourceUsage>,
     ) -> Result<SandboxOutput, AppError> {
         let mut config = self.base_config()?;
         config.timeout_secs = timeout_secs;
@@ -238,6 +267,8 @@ impl Sandbox {
             on_stdout,
             stdin_rx,
             cancel_token,
+            resource_usage,
+            Some(&self.agent_id),
         )
         .await
     }
@@ -262,10 +293,10 @@ mod tests {
             driver: Arc::from(create_driver(false)),
             network_access: false,
             allowed_network_destinations: Vec::new(),
-
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
             shared_write_paths: Vec::new(),
+            agent_id: "test".to_string(),
         }
     }
 
@@ -303,10 +334,10 @@ mod tests {
             driver: Arc::from(create_driver(false)),
             network_access: false,
             allowed_network_destinations: Vec::new(),
-
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
             shared_write_paths: Vec::new(),
+            agent_id: "test".to_string(),
         };
         ws.setup().unwrap();
 
@@ -336,6 +367,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -357,7 +389,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&ws.path);
 
         let result = ws
-            .execute("bash", &["-c", "echo $FRONA_TEST_SECRET"], 10, None, None, None)
+            .execute("bash", &["-c", "echo $FRONA_TEST_SECRET"], 10, None, None, None, None)
             .await
             .unwrap();
 
@@ -396,6 +428,7 @@ mod tests {
                 &["-c", "echo hello; echo world"],
                 10,
                 Some(tx),
+                None,
                 None,
                 None,
             )

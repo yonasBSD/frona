@@ -144,7 +144,12 @@ impl AppState {
         let sandbox_manager = Arc::new(SandboxManager::new(
             &config.storage.workspaces_path,
             config.server.sandbox_disabled,
-        ).with_shared_read_paths(vec![shared_config_abs.to_string_lossy().into_owned()]));
+            config.server.sandbox_max_agent_cpu_pct,
+            config.server.sandbox_max_agent_memory_pct,
+            config.server.sandbox_max_total_cpu_pct,
+            config.server.sandbox_max_total_memory_pct,
+        ).with_default_timeout(config.server.sandbox_timeout_secs)
+         .with_shared_read_paths(vec![shared_config_abs.to_string_lossy().into_owned()]));
         let search_provider = create_search_provider(&config.search);
         let local_base_url = config.server.base_url.clone()
             .unwrap_or_else(|| format!("http://localhost:{}", config.server.port));

@@ -384,7 +384,7 @@ mod tests {
 
     fn test_manager(port_start: u16, port_end: u16) -> AppManager {
         AppManager::new(
-            Arc::new(SandboxManager::new("/tmp/test_workspaces", true)),
+            Arc::new(SandboxManager::new("/tmp/test_workspaces", true, 60.0, 60.0, 60.0, 60.0)),
             port_start,
             port_end,
         )
@@ -453,7 +453,7 @@ mod tests {
         std::fs::write(app_dir.join("run.sh"), "#!/bin/sh\ntrue").unwrap();
 
         let manager = AppManager::new(
-            Arc::new(SandboxManager::new(workspaces, true)),
+            Arc::new(SandboxManager::new(workspaces, true, 60.0, 60.0, 60.0, 60.0)),
             6000,
             6010,
         );

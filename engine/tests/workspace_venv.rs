@@ -12,7 +12,7 @@ fn test_manager() -> SandboxManager {
     let base = std::env::temp_dir()
         .join("frona_test_venv_integration")
         .join(uuid::Uuid::new_v4().to_string());
-    SandboxManager::new(base, false)
+    SandboxManager::new(base, false, 60.0, 60.0, 60.0, 60.0)
 }
 
 #[tokio::test]
@@ -30,6 +30,7 @@ async fn test_execute_uses_venv_python() {
             "python3",
             &["-c", "import sys; print(sys.prefix)"],
             30,
+            None,
             None,
             None,
             None,
@@ -63,7 +64,7 @@ async fn test_shell_uses_venv_python() {
     let ws = mgr.get_sandbox("agent-venv-which", false, vec![]);
 
     let output = ws
-        .execute("which", &["python3"], 30, None, None, None)
+        .execute("which", &["python3"], 30, None, None, None, None)
         .await
         .unwrap();
 
@@ -88,7 +89,7 @@ async fn test_pip_install_isolated() {
     let ws_b = mgr.get_sandbox("agent-pip-b", false, vec![]);
 
     let install = ws_a
-        .execute("pip", &["install", "cowsay"], 60, None, None, None)
+        .execute("pip", &["install", "cowsay"], 60, None, None, None, None)
         .await
         .unwrap();
     assert!(
@@ -105,6 +106,7 @@ async fn test_pip_install_isolated() {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -115,6 +117,7 @@ async fn test_pip_install_isolated() {
             "python3",
             &["-c", "import cowsay; print('ok')"],
             30,
+            None,
             None,
             None,
             None,

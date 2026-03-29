@@ -223,6 +223,7 @@ pub fn build_tool_registry(
                 tool_config.clone(),
                 state.sandbox_manager.clone(),
                 state.skill_service.clone(),
+                state.storage_service.clone(),
             )));
         }
     }

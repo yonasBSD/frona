@@ -2,7 +2,6 @@
 name: shell
 program: /bin/bash
 args: ["-c", "${command}"]
-timeout_secs: 30
 parameters:
   command:
     type: string
