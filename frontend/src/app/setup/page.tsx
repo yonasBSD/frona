@@ -14,6 +14,7 @@ import { BrowserSection } from "@/components/settings/sections/browser-section";
 import { SearchSection } from "@/components/settings/sections/search-section";
 import { VoiceSection } from "@/components/settings/sections/voice-section";
 import { VaultSection } from "@/components/settings/sections/vault-section";
+import { SandboxSettingsSection } from "@/components/settings/sections/sandbox-section";
 import { AdvancedSection } from "@/components/settings/sections/advanced-section";
 import { getConfig, updateConfig, isSensitiveSet } from "@/lib/config-types";
 import type { Config } from "@/lib/config-types";
@@ -35,6 +36,7 @@ const STEPS = [
   { id: "server" },
   { id: "auth" },
   { id: "sso" },
+  { id: "sandbox" },
   { id: "browser" },
   { id: "search" },
   { id: "voice" },
@@ -250,6 +252,12 @@ function SetupWizard() {
               <SsoSection
                 sso={config.sso}
                 onChange={(v) => updatePatch("sso", v)}
+              />
+            )}
+            {currentStep.id === "sandbox" && (
+              <SandboxSettingsSection
+                server={config.server}
+                onChange={(v) => updatePatch("server", v)}
               />
             )}
             {currentStep.id === "browser" && (

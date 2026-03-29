@@ -9,6 +9,11 @@ export interface ServerConfig {
   issuer_url: string;
   max_concurrent_tasks: number;
   sandbox_disabled: boolean;
+  sandbox_max_agent_cpu_pct: number;
+  sandbox_max_agent_memory_pct: number;
+  sandbox_max_total_cpu_pct: number;
+  sandbox_max_total_memory_pct: number;
+  sandbox_timeout_secs: number;
   cors_origins: string | null;
   base_url: string | null;
   backend_url: string | null;

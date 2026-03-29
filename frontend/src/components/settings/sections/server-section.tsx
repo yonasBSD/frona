@@ -1,7 +1,7 @@
 "use client";
 
 import type { ServerConfig } from "@/lib/config-types";
-import { TextInput, NumberInput, Toggle, SectionHeader, SectionPanel } from "@/components/settings/field";
+import { TextInput, NumberInput, SectionHeader, SectionPanel } from "@/components/settings/field";
 import { ServerIcon } from "@heroicons/react/24/outline";
 
 interface ServerSectionProps {
@@ -75,13 +75,6 @@ export function ServerSection({ server, onChange }: ServerSectionProps) {
         placeholder="100"
       />
 
-      <Toggle
-        label="Sandbox Disabled"
-        description="Disable CLI sandboxing for tool execution"
-        value={server.sandbox_disabled}
-        onChange={(sandbox_disabled) => onChange({ ...server, sandbox_disabled })}
-        warning="Disabling the sandbox allows unrestricted command execution"
-      />
       </SectionPanel>
     </div>
   );

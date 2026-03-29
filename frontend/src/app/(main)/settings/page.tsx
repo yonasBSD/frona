@@ -17,6 +17,7 @@ import { VoiceSection } from "@/components/settings/sections/voice-section";
 import { VaultSection } from "@/components/settings/sections/vault-section";
 import { AdvancedSection } from "@/components/settings/sections/advanced-section";
 import { SkillsSection } from "@/components/settings/sections/skills-section";
+import { SandboxSettingsSection } from "@/components/settings/sections/sandbox-section";
 import { AboutSection } from "@/components/settings/sections/about-section";
 import { getConfig, updateConfig } from "@/lib/config-types";
 import type { Config } from "@/lib/config-types";
@@ -30,6 +31,7 @@ const TABS = [
   { id: "search", label: "Search", group: "config", saveable: true },
   { id: "voice", label: "Voice", group: "config", saveable: true },
   { id: "browser", label: "Browser", group: "config", saveable: true },
+  { id: "sandbox", label: "Sandbox", group: "config", saveable: true },
   { id: "vault", label: "Vault", group: "config", saveable: true },
   { id: "auth", label: "Authentication", group: "config", saveable: true },
   { id: "sso", label: "Single Sign-On", group: "config", saveable: true },
@@ -243,6 +245,12 @@ export default function SettingsPage() {
                     <VoiceSection
                       voice={config.voice}
                       onChange={(v) => updatePatch("voice", v)}
+                    />
+                  )}
+                  {activeTab === "sandbox" && (
+                    <SandboxSettingsSection
+                      server={config.server}
+                      onChange={(v) => updatePatch("server", v)}
                     />
                   )}
                   {activeTab === "vault" && (

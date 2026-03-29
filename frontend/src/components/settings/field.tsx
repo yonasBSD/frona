@@ -253,13 +253,14 @@ export function SectionHeader({ title, description, icon: Icon }: { title: strin
   );
 }
 
-export function SectionPanel({ title, icon: Icon, children, className }: { title?: string; icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>; children: React.ReactNode; className?: string }) {
+export function SectionPanel({ title, icon: Icon, helpTip, children, className }: { title?: string; icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>; helpTip?: string; children: React.ReactNode; className?: string }) {
   return (
     <div className={`rounded-xl border border-border bg-surface-secondary p-5 space-y-4 ${className ?? ""}`}>
       {title && (
         <div className="-mt-1 pb-3 border-b border-border flex items-center gap-2">
           {Icon && <Icon className="h-4.5 w-4.5 text-text-tertiary" />}
           <h4 className="text-base font-semibold text-text-primary">{title}</h4>
+          {helpTip && <HelpTip content={helpTip} />}
         </div>
       )}
       {children}

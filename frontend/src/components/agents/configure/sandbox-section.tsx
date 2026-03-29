@@ -1,27 +1,69 @@
 "use client";
 
-import { SectionHeader, SectionPanel, Toggle, Field } from "@/components/settings/field";
-import { ShieldCheckIcon, TrashIcon, PlusIcon } from "@heroicons/react/24/outline";
+import { useState, useEffect } from "react";
+import { useAuth } from "@/lib/auth";
+import { api } from "@/lib/api-client";
+import { getConfig, type ServerConfig } from "@/lib/config-types";
+import { SectionHeader, SectionPanel, Toggle, Field, HelpTip } from "@/components/settings/field";
+import { ShieldCheckIcon, TrashIcon, PlusIcon, FolderOpenIcon } from "@heroicons/react/24/outline";
+import { FileBrowserModal } from "@/components/chat/file-browser-modal";
+import type { Attachment } from "@/lib/types";
+
+interface SystemInfo {
+  cpus: number;
+  total_memory_bytes: number;
+}
 
 interface SandboxSettings {
   network_access: boolean;
   allowed_network_destinations: string[];
-  timeout_secs: number;
+  timeout_secs?: number;
+  max_cpu_pct?: number;
+  max_memory_pct?: number;
+  shared_paths: string[];
 }
 
 interface SandboxSectionProps {
   sandbox: SandboxSettings | null;
   onChange: (sandbox: SandboxSettings) => void;
+  onValidChange?: (valid: boolean) => void;
 }
 
 const DEFAULT_SANDBOX: SandboxSettings = {
   network_access: true,
   allowed_network_destinations: [],
-  timeout_secs: 30,
+  shared_paths: [],
 };
 
-export function SandboxSection({ sandbox, onChange }: SandboxSectionProps) {
+function formatBytes(bytes: number): string {
+  const gb = bytes / 1_073_741_824;
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1_048_576).toFixed(0)} MB`;
+}
+
+function isValidDest(value: string): boolean {
+  if (!value) return true;
+  const hostname = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
+  const ipv4 = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
+  const ipv6 = /^[0-9a-fA-F:]+(::\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})?(\/\d{1,3})?$/;
+  return hostname.test(value) || ipv4.test(value) || ipv6.test(value);
+}
+
+export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSectionProps) {
+  const { user } = useAuth();
   const current = sandbox ?? DEFAULT_SANDBOX;
+  const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
+  const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
+
+  useEffect(() => {
+    api.get<SystemInfo>("/api/system/info").then(setSysInfo).catch(() => {});
+    getConfig().then((c) => setServerConfig(c.server)).catch(() => {});
+  }, []);
+
+  const hasInvalidDests = current.allowed_network_destinations.some((d) => d !== "" && !isValidDest(d));
+
+  useEffect(() => {
+    onValidChange?.(!hasInvalidDests);
+  }, [hasInvalidDests, onValidChange]);
 
   const updateDest = (index: number, value: string) => {
     const updated = [...current.allowed_network_destinations];
@@ -43,44 +85,132 @@ export function SandboxSection({ sandbox, onChange }: SandboxSectionProps) {
     });
   };
 
+  const updateSharedPath = (index: number, value: string) => {
+    const updated = [...current.shared_paths];
+    updated[index] = value;
+    onChange({ ...current, shared_paths: updated });
+  };
+
+  const removeSharedPath = (index: number) => {
+    onChange({
+      ...current,
+      shared_paths: current.shared_paths.filter((_, i) => i !== index),
+    });
+  };
+
+  const addSharedPath = () => {
+    onChange({
+      ...current,
+      shared_paths: [...current.shared_paths, ""],
+    });
+  };
+
+  const [browseOpen, setBrowseOpen] = useState(false);
+
+  const handleBrowseSelect = (attachments: Attachment[]) => {
+    const paths = attachments.map((a) => {
+      const [kind, id] = a.owner.split(":");
+      if (kind === "agent") return `agent://${id}/${a.path}`;
+      return `user://${user?.username ?? id}/${a.path}`;
+    });
+    const unique = paths.filter((p) => !current.shared_paths.includes(p));
+    if (unique.length > 0) {
+      onChange({ ...current, shared_paths: [...current.shared_paths, ...unique] });
+    }
+    setBrowseOpen(false);
+  };
+
   return (
-    <div>
+    <div className="space-y-4">
       <SectionHeader title="Sandbox" description="Execution environment constraints" icon={ShieldCheckIcon} />
-      <SectionPanel>
+
+      <SectionPanel title="Resources">
+        <div className="grid grid-cols-2 gap-x-6">
+          <Field label="Max Memory (%)" description="Kill process if agent memory exceeds this. Leave empty for server default.">
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                value={current.max_memory_pct ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value ? Math.min(100, Math.max(1, Number(e.target.value))) : undefined;
+                  onChange({ ...current, max_memory_pct: v });
+                }}
+                min={1}
+                max={100}
+                placeholder={serverConfig ? String(serverConfig.sandbox_max_agent_memory_pct) : ""}
+                className="block w-24 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+              />
+              {sysInfo && serverConfig && (
+                <span className="text-xs text-text-tertiary">
+                  {formatBytes(((current.max_memory_pct ?? serverConfig.sandbox_max_agent_memory_pct) / 100) * sysInfo.total_memory_bytes)} of {formatBytes(sysInfo.total_memory_bytes)}
+                </span>
+              )}
+            </div>
+          </Field>
+          <Field label="Max CPU (%)" description="Kill process if agent CPU exceeds this. Leave empty for server default.">
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                value={current.max_cpu_pct ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value ? Math.min(100, Math.max(1, Number(e.target.value))) : undefined;
+                  onChange({ ...current, max_cpu_pct: v });
+                }}
+                min={1}
+                max={100}
+                placeholder={serverConfig ? String(serverConfig.sandbox_max_agent_cpu_pct) : ""}
+                className="block w-24 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+              />
+              {sysInfo && serverConfig && (
+                <span className="text-xs text-text-tertiary">
+                  {parseFloat((((current.max_cpu_pct ?? serverConfig.sandbox_max_agent_cpu_pct) / 100) * sysInfo.cpus).toFixed(1))} of {sysInfo.cpus} cores
+                </span>
+              )}
+            </div>
+          </Field>
+        </div>
+        <Field label="Timeout (seconds)" description="Maximum execution time for tool calls. Leave empty to use the server default.">
+          <input
+            type="number"
+            value={current.timeout_secs ?? ""}
+            onChange={(e) => {
+              const v = e.target.value ? Math.max(0, Number(e.target.value)) : undefined;
+              onChange({ ...current, timeout_secs: v });
+            }}
+            min={0}
+            max={300}
+            placeholder={serverConfig ? String(serverConfig.sandbox_timeout_secs) : ""}
+            className="block w-24 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+          />
+        </Field>
+      </SectionPanel>
+
+      <SectionPanel title="Network">
         <Toggle
           label="Network Access"
           description="Allow the agent to make network requests"
           value={current.network_access}
           onChange={(v) => onChange({ ...current, network_access: v })}
         />
-        <Field label="Timeout (seconds)" description="Maximum execution time for tool calls">
-          <input
-            type="number"
-            value={current.timeout_secs}
-            onChange={(e) => onChange({ ...current, timeout_secs: Number(e.target.value) })}
-            min={1}
-            max={300}
-            className="block w-24 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
-          />
-        </Field>
         <div className="space-y-1">
           <label className="inline-flex items-center gap-1 text-sm font-medium text-text-secondary">
-            Allowed Network Destinations
+            Allowed Destinations
+            <HelpTip content="Restrict network access to specific destinations. Supports hostnames (www.cloudflare.com), IPs (1.1.1.1), and CIDR ranges (10.10.100.1/24). Leave empty to allow all destinations when network access is enabled." />
           </label>
-          <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
             {current.allowed_network_destinations.map((dest, i) => (
-              <div key={i} className="flex items-center gap-2 rounded-lg border border-border bg-surface p-3">
+              <div key={i} className={`flex items-center gap-1.5 rounded-lg border bg-surface px-2 py-1.5 ${dest && !isValidDest(dest) ? "border-red-500" : "border-border"}`}>
                 <input
                   value={dest}
                   onChange={(e) => updateDest(i, e.target.value)}
                   placeholder="e.g. api.example.com"
-                  className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                  className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
                 />
                 <button
                   onClick={() => removeDest(i)}
-                  className="shrink-0 rounded-lg p-1.5 text-text-tertiary hover:bg-surface-tertiary hover:text-text-primary transition"
+                  className="shrink-0 rounded p-0.5 text-text-tertiary hover:text-text-primary transition"
                 >
-                  <TrashIcon className="h-4 w-4" />
+                  <TrashIcon className="h-3.5 w-3.5" />
                 </button>
               </div>
             ))}
@@ -94,6 +224,51 @@ export function SandboxSection({ sandbox, onChange }: SandboxSectionProps) {
           </button>
         </div>
       </SectionPanel>
+
+      <SectionPanel title="Shared Files" helpTip="Files or directories the agent can always read inside the sandbox">
+        <div className="space-y-1">
+          <div className="grid grid-cols-2 gap-2">
+            {current.shared_paths.map((p, i) => (
+              <div key={i} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1.5">
+                <input
+                  value={p}
+                  onChange={(e) => updateSharedPath(i, e.target.value)}
+                  placeholder="e.g. /data/shared"
+                  className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+                />
+                <button
+                  onClick={() => removeSharedPath(i)}
+                  className="shrink-0 rounded p-0.5 text-text-tertiary hover:text-text-primary transition"
+                >
+                  <TrashIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-3 mt-2">
+            <button
+              onClick={addSharedPath}
+              className="flex items-center gap-1 text-sm text-accent hover:underline"
+            >
+              <PlusIcon className="h-4 w-4" />
+              Add path
+            </button>
+            <button
+              onClick={() => setBrowseOpen(true)}
+              className="flex items-center gap-1 text-sm text-accent hover:underline"
+            >
+              <FolderOpenIcon className="h-4 w-4" />
+              Browse
+            </button>
+          </div>
+        </div>
+      </SectionPanel>
+
+      <FileBrowserModal
+        open={browseOpen}
+        onClose={() => setBrowseOpen(false)}
+        onSelect={handleBrowseSelect}
+      />
     </div>
   );
 }

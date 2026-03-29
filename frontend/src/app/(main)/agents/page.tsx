@@ -50,6 +50,7 @@ function AgentSettings() {
     router.replace(`/agents?${params.toString()}`);
   }, [searchParams, router]);
   const [hasAgentRemovals, setHasAgentRemovals] = useState(false);
+  const [sandboxValid, setSandboxValid] = useState(true);
   const skillBrowserRef = useRef<SkillBrowserHandle>(null);
 
   useEffect(() => {
@@ -209,8 +210,9 @@ function AgentSettings() {
             )}
             {activeSection === "sandbox" && (
               <SandboxSection
-                sandbox={merged.sandbox_config as { network_access: boolean; allowed_network_destinations: string[]; timeout_secs: number } | null}
+                sandbox={merged.sandbox_config as { network_access: boolean; allowed_network_destinations: string[]; timeout_secs: number; shared_paths: string[] } | null}
                 onChange={(v) => update({ sandbox_config: v })}
+                onValidChange={setSandboxValid}
               />
             )}
             {activeSection === "creds" && <CredsSection agentId={agentId} />}
@@ -228,7 +230,7 @@ function AgentSettings() {
               </button>
               <button
                 onClick={handleSave}
-                disabled={!hasPendingChanges || saving}
+                disabled={!hasPendingChanges || saving || !sandboxValid}
                 className="w-28 rounded-lg bg-accent py-2 text-sm font-medium text-surface hover:bg-accent-hover disabled:opacity-50 transition"
               >
                 {saving ? "Saving..." : "Save"}
