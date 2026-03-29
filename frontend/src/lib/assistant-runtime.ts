@@ -179,6 +179,7 @@ export function useFronaRuntime({ chatId, agentId, onChatCreated }: FronaRuntime
   );
 
   const runtime = useLocalRuntime(handle.adapter, {
+    maxSteps: 10000,
     unstable_humanToolNames: [
       "Question",
       "HumanInTheLoop",
