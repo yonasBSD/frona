@@ -121,7 +121,9 @@ export function NotificationDropdown() {
     <div ref={ref} className="relative flex items-center">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="relative flex items-center justify-center h-10 w-10 rounded-full bg-surface-tertiary text-text-secondary hover:brightness-125 transition cursor-pointer"
+        className={`relative flex items-center justify-center h-10 w-10 transition cursor-pointer ${
+          open ? "rounded-t-xl rounded-b-none bg-surface-secondary text-text-primary z-[2] border border-border border-b-0" : "rounded-full bg-surface-tertiary text-text-secondary hover:brightness-125"
+        }`}
         title="Notifications"
       >
         <BellIcon className="h-5 w-5" />
@@ -133,9 +135,10 @@ export function NotificationDropdown() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-2 w-80 max-h-96 rounded-lg border border-border bg-surface-secondary shadow-lg flex flex-col overflow-hidden">
+        <div className="absolute right-0 top-full z-[1] w-80 max-h-[70vh] rounded-xl rounded-tr-none border border-border bg-surface-secondary shadow-lg flex flex-col">
+          <div className="absolute -top-px right-0 w-[calc(theme(spacing.10)-3px)] h-[2px] bg-surface-secondary z-[1]" />
           <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
-            <span className="text-sm font-medium text-text-primary">
+            <span className="text-sm font-medium text-text-secondary">
               Notifications
             </span>
             {unreadCount > 0 && (
@@ -147,7 +150,7 @@ export function NotificationDropdown() {
               </button>
             )}
           </div>
-          <div className="overflow-y-auto flex-1">
+          <div className="overflow-y-auto flex-1 min-h-0">
             {notifications.length === 0 ? (
               <p className="px-4 py-8 text-sm text-text-tertiary text-center">
                 No notifications yet

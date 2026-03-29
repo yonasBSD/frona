@@ -2,12 +2,13 @@
 
 import { useState, useRef, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Cog6ToothIcon, ArrowRightStartOnRectangleIcon } from "@heroicons/react/24/outline";
+import { Cog6ToothIcon, ArrowRightStartOnRectangleIcon, CubeIcon, PuzzlePieceIcon, KeyIcon } from "@heroicons/react/24/outline";
 import { useAuth } from "@/lib/auth";
 import { useSession } from "@/lib/session-context";
 import { Logo } from "../logo";
 import { NotificationDropdown } from "./notification-dropdown";
 import { AgentDropdown } from "./agent-dropdown";
+import { AppDropdown } from "./app-dropdown";
 
 const topTabs = [
   { id: "chat", label: "Assistant", href: "/chat" },
@@ -85,37 +86,65 @@ export function TopBar() {
       {/* Right: Notifications + User profile */}
       <div className="flex items-center gap-2">
       <AgentDropdown />
+      <AppDropdown />
       <NotificationDropdown />
       <div ref={menuRef} className="relative flex items-center">
         <button
           onClick={() => setMenuOpen((v) => !v)}
-          className="flex items-center justify-center h-10 w-10 rounded-full bg-accent text-surface text-sm font-semibold cursor-pointer hover:bg-accent-hover transition"
+          className={`relative flex items-center justify-center h-10 w-10 text-surface text-sm font-semibold cursor-pointer transition ${
+            menuOpen ? "rounded-t-xl rounded-b-none bg-surface-secondary text-text-primary z-[2] border border-border border-b-0" : "rounded-full bg-accent hover:bg-accent-hover"
+          }`}
           title={user?.email ?? "User"}
         >
           {initial}
         </button>
 
         {menuOpen && (
-          <div className="absolute right-0 top-full z-20 mt-2 w-52 rounded-lg border border-border bg-surface-secondary shadow-lg py-1">
-            {user && (
-              <div className="px-4 py-2 border-b border-border">
-                <p className="text-sm font-medium text-text-primary truncate">{user.email}</p>
-              </div>
-            )}
-            <button
-              onClick={() => { router.push("/settings"); setMenuOpen(false); }}
-              className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
-            >
-              <Cog6ToothIcon className="h-4 w-4" />
-              Settings
-            </button>
-            <button
-              onClick={() => { handleLogout(); setMenuOpen(false); }}
-              className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
-            >
-              <ArrowRightStartOnRectangleIcon className="h-4 w-4" />
-              Logout
-            </button>
+          <div className="absolute right-0 top-full z-[1] w-52 rounded-xl rounded-tr-none border border-border bg-surface-secondary shadow-lg">
+            <div className="absolute -top-px right-0 w-[calc(theme(spacing.10)-3px)] h-[2px] bg-surface-secondary z-[1]" />
+            <div className="pb-1">
+              {user && (
+                <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+                  <span className="text-sm font-medium text-text-secondary truncate">{user.email}</span>
+                </div>
+              )}
+              <button
+                onClick={() => { router.push("/settings#models"); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+              >
+                <CubeIcon className="h-4 w-4" />
+                Models
+              </button>
+              <button
+                onClick={() => { router.push("/settings#skills"); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+              >
+                <PuzzlePieceIcon className="h-4 w-4" />
+                Skills
+              </button>
+              <button
+                onClick={() => { router.push("/settings#vault"); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+              >
+                <KeyIcon className="h-4 w-4" />
+                Vault
+              </button>
+              <div className="border-t border-border" />
+              <button
+                onClick={() => { router.push("/settings"); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+              >
+                <Cog6ToothIcon className="h-4 w-4" />
+                Settings
+              </button>
+              <button
+                onClick={() => { handleLogout(); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+              >
+                <ArrowRightStartOnRectangleIcon className="h-4 w-4" />
+                Logout
+              </button>
+            </div>
           </div>
         )}
       </div>
