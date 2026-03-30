@@ -74,25 +74,25 @@ function NotificationItem({
   return (
     <button
       onClick={handleClick}
-      className={`w-full text-left px-4 py-3 flex gap-3 items-start transition hover:bg-surface-tertiary ${
+      className={`w-full text-left px-4 py-2 transition hover:bg-surface-tertiary ${
         notification.read ? "opacity-60" : ""
       } ${href ? "cursor-pointer" : ""}`}
     >
-      <span
-        className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${notification.read ? "bg-transparent" : levelDot(notification.level)}`}
-      />
       <div className="flex-1 min-w-0">
         <p
-          className={`text-sm font-medium truncate ${levelColor(notification.level)}`}
+          className={`text-sm font-medium line-clamp-2 ${levelColor(notification.level)}`}
         >
           {notification.title}
         </p>
         {notification.body && (
-          <p className="text-xs text-text-secondary truncate mt-0.5">
+          <p className="text-xs text-text-secondary line-clamp-2 mt-0.5">
             {notification.body}
           </p>
         )}
-        <p className="text-xs text-text-tertiary mt-1">
+        <p className="text-xs text-text-tertiary mt-1 flex items-center gap-1.5">
+          <span
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${notification.read ? "bg-text-tertiary" : levelDot(notification.level)}`}
+          />
           {timeAgo(notification.created_at)}
         </p>
       </div>
