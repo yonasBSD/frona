@@ -34,6 +34,10 @@ impl SandboxManager {
         }
     }
 
+    pub fn driver_id(&self) -> &'static str {
+        self.driver.driver_id()
+    }
+
     pub fn with_default_timeout(mut self, secs: u64) -> Self {
         self.default_timeout_secs = secs;
         self

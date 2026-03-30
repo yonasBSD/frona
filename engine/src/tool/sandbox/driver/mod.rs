@@ -111,6 +111,8 @@ pub struct SandboxOutput {
 }
 
 pub trait SandboxDriver: Send + Sync {
+    fn driver_id(&self) -> &'static str;
+
     fn sandboxed_command(
         &self,
         program: &str,

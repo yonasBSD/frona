@@ -26,7 +26,7 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-async fn info_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {
+async fn info_handler(_auth: AuthUser, State(state): State<AppState>) -> axum::Json<serde_json::Value> {
     use sysinfo::System;
     let mut sys = System::new();
     sys.refresh_memory();
@@ -39,6 +39,7 @@ async fn info_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "cpus": cpus,
         "total_memory_bytes": total_memory,
+        "sandbox_driver": state.sandbox_manager.driver_id(),
     }))
 }
 

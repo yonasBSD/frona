@@ -12,6 +12,7 @@ import type { Attachment } from "@/lib/types";
 interface SystemInfo {
   cpus: number;
   total_memory_bytes: number;
+  sandbox_driver: string;
 }
 
 interface SandboxSettings {
@@ -58,6 +59,10 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
     api.get<SystemInfo>("/api/system/info").then(setSysInfo).catch(() => {});
     getConfig().then((c) => setServerConfig(c.server)).catch(() => {});
   }, []);
+
+  const driver = sysInfo?.sandbox_driver ?? "disabled";
+  const supportsNetworkDestinations = driver === "macos" || driver === "syd";
+  const sandboxEnabled = driver !== "disabled";
 
   const hasInvalidDests = current.allowed_network_destinations.some((d) => d !== "" && !isValidDest(d));
 
@@ -185,90 +190,98 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
         </Field>
       </SectionPanel>
 
-      <SectionPanel title="Network">
-        <Toggle
-          label="Network Access"
-          description="Allow the agent to make network requests"
-          value={current.network_access}
-          onChange={(v) => onChange({ ...current, network_access: v })}
+      {sandboxEnabled && (
+        <SectionPanel title="Network">
+          <Toggle
+            label="Network Access"
+            description="Allow the agent to make network requests"
+            value={current.network_access}
+            onChange={(v) => onChange({ ...current, network_access: v })}
+          />
+          {supportsNetworkDestinations && (
+            <div className="space-y-1">
+              <label className="inline-flex items-center gap-1 text-sm font-medium text-text-secondary">
+                Allowed Destinations
+                <HelpTip content="Restrict network access to specific destinations. Supports hostnames (www.cloudflare.com), IPs (1.1.1.1), and CIDR ranges (10.10.100.1/24). Leave empty to allow all destinations when network access is enabled." />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {current.allowed_network_destinations.map((dest, i) => (
+                  <div key={i} className={`flex items-center gap-1.5 rounded-lg border bg-surface px-2 py-1.5 ${dest && !isValidDest(dest) ? "border-red-500" : "border-border"}`}>
+                    <input
+                      value={dest}
+                      onChange={(e) => updateDest(i, e.target.value)}
+                      placeholder="e.g. api.example.com"
+                      className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+                    />
+                    <button
+                      onClick={() => removeDest(i)}
+                      className="shrink-0 rounded p-0.5 text-text-tertiary hover:text-text-primary transition"
+                    >
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={addDest}
+                className="flex items-center gap-1 text-sm text-accent hover:underline mt-2"
+              >
+                <PlusIcon className="h-4 w-4" />
+                Add destination
+              </button>
+            </div>
+          )}
+        </SectionPanel>
+      )}
+
+      {sandboxEnabled && (
+        <SectionPanel title="Shared Files" helpTip="Files or directories the agent can always read inside the sandbox">
+          <div className="space-y-1">
+            <div className="grid grid-cols-2 gap-2">
+              {current.shared_paths.map((p, i) => (
+                <div key={i} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1.5">
+                  <input
+                    value={p}
+                    onChange={(e) => updateSharedPath(i, e.target.value)}
+                    placeholder="e.g. /data/shared"
+                    className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+                  />
+                  <button
+                    onClick={() => removeSharedPath(i)}
+                    className="shrink-0 rounded p-0.5 text-text-tertiary hover:text-text-primary transition"
+                  >
+                    <TrashIcon className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                onClick={addSharedPath}
+                className="flex items-center gap-1 text-sm text-accent hover:underline"
+              >
+                <PlusIcon className="h-4 w-4" />
+                Add path
+              </button>
+              <button
+                onClick={() => setBrowseOpen(true)}
+                className="flex items-center gap-1 text-sm text-accent hover:underline"
+              >
+                <FolderOpenIcon className="h-4 w-4" />
+                Browse
+              </button>
+            </div>
+          </div>
+        </SectionPanel>
+      )}
+
+      {sandboxEnabled && (
+        <FileBrowserModal
+          open={browseOpen}
+          onClose={() => setBrowseOpen(false)}
+          onSelect={handleBrowseSelect}
         />
-        <div className="space-y-1">
-          <label className="inline-flex items-center gap-1 text-sm font-medium text-text-secondary">
-            Allowed Destinations
-            <HelpTip content="Restrict network access to specific destinations. Supports hostnames (www.cloudflare.com), IPs (1.1.1.1), and CIDR ranges (10.10.100.1/24). Leave empty to allow all destinations when network access is enabled." />
-          </label>
-          <div className="grid grid-cols-2 gap-2">
-            {current.allowed_network_destinations.map((dest, i) => (
-              <div key={i} className={`flex items-center gap-1.5 rounded-lg border bg-surface px-2 py-1.5 ${dest && !isValidDest(dest) ? "border-red-500" : "border-border"}`}>
-                <input
-                  value={dest}
-                  onChange={(e) => updateDest(i, e.target.value)}
-                  placeholder="e.g. api.example.com"
-                  className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
-                />
-                <button
-                  onClick={() => removeDest(i)}
-                  className="shrink-0 rounded p-0.5 text-text-tertiary hover:text-text-primary transition"
-                >
-                  <TrashIcon className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-          <button
-            onClick={addDest}
-            className="flex items-center gap-1 text-sm text-accent hover:underline mt-2"
-          >
-            <PlusIcon className="h-4 w-4" />
-            Add destination
-          </button>
-        </div>
-      </SectionPanel>
-
-      <SectionPanel title="Shared Files" helpTip="Files or directories the agent can always read inside the sandbox">
-        <div className="space-y-1">
-          <div className="grid grid-cols-2 gap-2">
-            {current.shared_paths.map((p, i) => (
-              <div key={i} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1.5">
-                <input
-                  value={p}
-                  onChange={(e) => updateSharedPath(i, e.target.value)}
-                  placeholder="e.g. /data/shared"
-                  className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
-                />
-                <button
-                  onClick={() => removeSharedPath(i)}
-                  className="shrink-0 rounded p-0.5 text-text-tertiary hover:text-text-primary transition"
-                >
-                  <TrashIcon className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center gap-3 mt-2">
-            <button
-              onClick={addSharedPath}
-              className="flex items-center gap-1 text-sm text-accent hover:underline"
-            >
-              <PlusIcon className="h-4 w-4" />
-              Add path
-            </button>
-            <button
-              onClick={() => setBrowseOpen(true)}
-              className="flex items-center gap-1 text-sm text-accent hover:underline"
-            >
-              <FolderOpenIcon className="h-4 w-4" />
-              Browse
-            </button>
-          </div>
-        </div>
-      </SectionPanel>
-
-      <FileBrowserModal
-        open={browseOpen}
-        onClose={() => setBrowseOpen(false)}
-        onSelect={handleBrowseSelect}
-      />
+      )}
     </div>
   );
 }

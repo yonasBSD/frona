@@ -7,6 +7,10 @@ use super::{SandboxDriver, SandboxConfig};
 pub struct LandlockDriver;
 
 impl SandboxDriver for LandlockDriver {
+    fn driver_id(&self) -> &'static str {
+        "landlock"
+    }
+
     fn sandboxed_command(
         &self,
         program: &str,

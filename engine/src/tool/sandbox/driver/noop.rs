@@ -7,6 +7,10 @@ use super::{SandboxDriver, SandboxConfig};
 pub struct NoopDriver;
 
 impl SandboxDriver for NoopDriver {
+    fn driver_id(&self) -> &'static str {
+        "disabled"
+    }
+
     fn sandboxed_command(
         &self,
         program: &str,

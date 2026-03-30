@@ -110,6 +110,10 @@ impl SydDriver {
 }
 
 impl SandboxDriver for SydDriver {
+    fn driver_id(&self) -> &'static str {
+        "syd"
+    }
+
     fn sandboxed_command(
         &self,
         program: &str,

@@ -163,6 +163,10 @@ impl SandboxProfileBuilder {
 pub struct MacosDriver;
 
 impl SandboxDriver for MacosDriver {
+    fn driver_id(&self) -> &'static str {
+        "macos"
+    }
+
     fn sandboxed_command(
         &self,
         program: &str,
