@@ -75,7 +75,7 @@ export function AgentDropdown() {
             {agents.map((agent) => (
               <div
                 key={agent.id}
-                className="group flex items-center gap-2 px-3 py-1.5 hover:bg-surface-tertiary transition cursor-pointer"
+                className="group flex items-center gap-2 px-4 py-2 hover:bg-surface-tertiary transition cursor-pointer"
                 onClick={() => {
                   router.push(`/chat?agent=${agent.id}`);
                   setOpen(false);

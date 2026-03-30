@@ -152,14 +152,23 @@ export function FronaComposer({
               </ComposerPrimitive.Cancel>
             </ThreadPrimitive.If>
             <ThreadPrimitive.If running={false}>
-              <ComposerPrimitive.Send asChild>
+              {onSend ? (
                 <button
-                  type="button"
+                  type="submit"
                   className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary transition"
                 >
                   <PaperAirplaneIcon className="h-5 w-5" />
                 </button>
-              </ComposerPrimitive.Send>
+              ) : (
+                <ComposerPrimitive.Send asChild>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary transition"
+                  >
+                    <PaperAirplaneIcon className="h-5 w-5" />
+                  </button>
+                </ComposerPrimitive.Send>
+              )}
             </ThreadPrimitive.If>
           </div>
         </div>
