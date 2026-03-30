@@ -5,9 +5,6 @@ services:
       - "3001:3001"
     volumes:
       - ./data:/app/data
-      - ./config.yaml:/app/data/config.yaml:ro
-    env_file:
-      - .env # See .env.example
     environment:
       - FRONA_BROWSER_WS_URL=ws://browserless:3333
       - FRONA_SEARCH_SEARXNG_BASE_URL=http://searxng:8080

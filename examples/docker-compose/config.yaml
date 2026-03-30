@@ -8,15 +8,23 @@
 #   issuer_url: ""
 #   max_concurrent_tasks: 10
 #   sandbox_disabled: false
-#   max_body_size_bytes: 104857600        # 100 MB
-#   base_url: "https://your-domain.com"   # public URL (optional)
+#   sandbox_max_agent_cpu_pct: 80.0
+#   sandbox_max_agent_memory_pct: 80.0
+#   sandbox_max_total_cpu_pct: 90.0
+#   sandbox_max_total_memory_pct: 90.0
+#   sandbox_timeout_secs: 0                  # 0 = no timeout
+#   max_body_size_bytes: 104857600           # 100 MB
+#   shutdown_timeout_secs: 60
+#   base_url: "https://your-domain.com"      # public URL (optional)
+#   backend_url: "https://api.your-domain.com"  # override API URL (optional)
+#   frontend_url: "https://your-domain.com"  # override frontend URL (optional)
 #   cors_origins: "https://your-domain.com"
 
 # auth:
-#   encryption_secret: change-me          # set via FRONA_AUTH_ENCRYPTION_SECRET in .env
-#   access_token_expiry_secs: 900         # 15 minutes
-#   refresh_token_expiry_secs: 604800     # 7 days
-#   presign_expiry_secs: 86400            # 24 hours
+#   encryption_secret: change-me             # set via FRONA_AUTH_ENCRYPTION_SECRET in .env
+#   access_token_expiry_secs: 900            # 15 minutes
+#   refresh_token_expiry_secs: 604800        # 7 days
+#   presign_expiry_secs: 86400               # 24 hours
 
 # sso:
 #   enabled: false
@@ -26,29 +34,31 @@
 #   scopes: "email profile offline_access"
 #   allow_unknown_email_verification: false
 #   client_cache_expiration: 0
-#   only: false                           # if true, SSO is the only login method
+#   only: false                              # if true, SSO is the only login method
 #   signups_match_email: true
 
 # database:
 #   path: data/db
 
 # browser:
-#   ws_url: ws://browserless:3333         # set automatically via docker-compose
+#   ws_url: ws://browserless:3333            # set automatically via docker-compose
 #   profiles_path: /profiles
 #   connection_timeout_ms: 30000
 
 # search:
-#   provider: searxng                     # or: tavily, brave
-#   searxng_base_url: http://searxng:8080 # set automatically via docker-compose
+#   provider: searxng                        # or: tavily, brave
+#   searxng_base_url: http://searxng:8080    # set automatically via docker-compose
 
 # storage:
 #   workspaces_path: data/workspaces
 #   files_path: data/files
 #   shared_config_dir: resources
+#   skills_dir: data/skills
+#   cache_dir: data/system/cache
 
 # scheduler:
-#   space_compaction_secs: 3600           # 1 hour
-#   insight_compaction_secs: 7200         # 2 hours
+#   space_compaction_secs: 3600              # 1 hour
+#   memory_compaction_secs: 7200             # 2 hours
 #   poll_secs: 60
 
 # inference:
@@ -65,6 +75,31 @@
 #   twilio_voice_id: "your-voice-id"
 #   twilio_speech_model: "your-speech-model"
 #   callback_base_url: "https://your-public-url.com"
+
+# vault:
+#   onepassword_service_account_token: "your-token"
+#   onepassword_vault_id: "your-vault-id"
+#   bitwarden_client_id: "your-client-id"
+#   bitwarden_client_secret: "your-client-secret"
+#   bitwarden_master_password: "your-password"
+#   bitwarden_server_url: "https://your-bitwarden.com"  # leave empty for cloud
+#   hashicorp_address: "https://vault.example.com"
+#   hashicorp_token: "your-token"
+#   hashicorp_mount: "secret"
+#   keepass_path: "/path/to/database.kdbx"
+#   keepass_password: "your-password"
+#   keeper_app_key: "your-app-key"
+
+# app:
+#   port_range_start: 4000
+#   port_range_end: 4100
+#   health_check_timeout_secs: 30
+#   max_restart_attempts: 2
+#   hibernate_after_secs: 259200             # 3 days
+
+# cache:
+#   entity_ttl_secs: 300                     # 5 minutes
+#   entity_max_capacity: 1000
 
 # API keys are read from environment variables via ${VAR} expansion.
 # Only configure providers whose API keys you've set in .env.
