@@ -108,7 +108,7 @@ export function AppDropdown() {
                 }}
               >
                 <span className={`h-2 w-2 shrink-0 rounded-full ${statusDot(app.status)}`} />
-                <span className="flex-1 truncate text-sm text-text-secondary group-hover:text-text-primary">
+                <span className="flex-1 text-sm text-text-secondary group-hover:text-text-primary">
                   {app.name}
                 </span>
                 {app.status === "running" ? (
