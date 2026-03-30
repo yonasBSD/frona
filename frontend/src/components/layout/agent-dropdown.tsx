@@ -6,53 +6,28 @@ import {
   UserGroupIcon,
   Cog6ToothIcon,
   TrashIcon,
-  UserCircleIcon,
-  MagnifyingGlassIcon,
-  CodeBracketIcon,
-  BeakerIcon,
 } from "@heroicons/react/24/outline";
 import { useNavigation } from "@/lib/navigation-context";
 import { agentDisplayName, type Agent } from "@/lib/types";
 
-function RobotIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      className={className}
-    >
-      <rect x="5" y="7" width="14" height="12" rx="2" />
-      <circle cx="9.5" cy="13" r="1.5" />
-      <circle cx="14.5" cy="13" r="1.5" />
-      <path d="M12 3v4" />
-      <circle cx="12" cy="3" r="1" />
-      <path d="M2 13h3M19 13h3" />
-    </svg>
-  );
-}
-
-const defaultIcons: Record<string, React.ComponentType<{ className?: string }>> = {
-  system: UserCircleIcon,
-  researcher: MagnifyingGlassIcon,
-  developer: CodeBracketIcon,
-  tester: BeakerIcon,
-};
-
 function AgentIcon({ agent }: { agent: Agent }) {
-  if (agent.avatar) {
+  const avatar = agent.identity?.avatar;
+  if (avatar && (avatar.startsWith("data:") || avatar.startsWith("http") || avatar.startsWith("/api/"))) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={agent.avatar}
+        src={avatar}
         alt={agent.name}
-        className="h-5 w-5 shrink-0 rounded-full object-cover"
+        className="h-7 w-7 shrink-0 rounded-full object-cover"
       />
     );
   }
-  const Icon = defaultIcons[agent.id] ?? RobotIcon;
-  return <Icon className="h-5 w-5 shrink-0 text-text-tertiary" />;
+  const name = agentDisplayName(agent.id, agent.name);
+  return (
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium bg-white/10 text-text-secondary">
+      {name.charAt(0).toUpperCase()}
+    </div>
+  );
 }
 
 export function AgentDropdown() {
@@ -97,10 +72,10 @@ export function AgentDropdown() {
             <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
               <span className="text-sm font-medium text-text-secondary">Agents</span>
             </div>
-            {[...agents].sort((a, b) => (a.id === "system" ? -1 : b.id === "system" ? 1 : 0)).map((agent) => (
+            {agents.map((agent) => (
               <div
                 key={agent.id}
-                className="group flex items-center gap-2 px-4 py-2 hover:bg-surface-secondary transition cursor-pointer"
+                className="group flex items-center gap-2 px-3 py-1.5 hover:bg-surface-tertiary transition cursor-pointer"
                 onClick={() => {
                   router.push(`/chat?agent=${agent.id}`);
                   setOpen(false);

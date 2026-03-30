@@ -48,24 +48,34 @@ function StreamingIndicator() {
   );
 }
 
-function AgentAvatar({ name }: { name: string }) {
+function AvatarContent({ avatar, letter }: { avatar?: string | null; letter: string }) {
+  if (avatar && (avatar.startsWith("data:") || avatar.startsWith("http") || avatar.startsWith("/api/"))) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={avatar} alt="" className="h-8 w-8 rounded-full object-cover" />;
+  }
+  return (
+    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-medium bg-surface-tertiary text-text-secondary">
+      {letter}
+    </div>
+  );
+}
+
+function AgentAvatar({ name, avatar }: { name: string; avatar?: string | null }) {
   const letter = name.charAt(0).toUpperCase();
 
   return (
     <>
       <MessagePrimitive.If last={false}>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-medium bg-surface-tertiary text-text-secondary">
-          {letter}
-        </div>
+        <AvatarContent avatar={avatar} letter={letter} />
       </MessagePrimitive.If>
       <MessagePrimitive.If last>
-        <LastMessageAvatar letter={letter} />
+        <LastMessageAvatar avatar={avatar} letter={letter} />
       </MessagePrimitive.If>
     </>
   );
 }
 
-function LastMessageAvatar({ letter }: { letter: string }) {
+function LastMessageAvatar({ avatar, letter }: { avatar?: string | null; letter: string }) {
   const isRunning = useThreadIsRunning();
 
   return (
@@ -87,9 +97,7 @@ function LastMessageAvatar({ letter }: { letter: string }) {
           }} />
         </>
       )}
-      <div className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium bg-surface-tertiary text-text-secondary">
-        {letter}
-      </div>
+      <AvatarContent avatar={avatar} letter={letter} />
     </div>
   );
 }
@@ -145,7 +153,7 @@ export function FronaAssistantMessage() {
     <MessagePrimitive.Root>
       <div className="w-full">
         <div className="flex items-center gap-2.5 h-8">
-          <AgentAvatar name={agentName} />
+          <AgentAvatar name={agentName} avatar={agent?.identity?.avatar} />
           <p className="text-xs font-medium text-text-tertiary">
             {agentName}
           </p>

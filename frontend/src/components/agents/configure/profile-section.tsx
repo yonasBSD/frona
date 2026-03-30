@@ -4,18 +4,20 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { TextInput, Toggle, SectionHeader, SectionPanel, Field } from "@/components/settings/field";
 import { UserCircleIcon } from "@heroicons/react/24/outline";
 import { Logo } from "@/components/logo";
+import { api } from "@/lib/api-client";
 import data from "@emoji-mart/data";
 import { Picker } from "emoji-mart";
 
 const IDENTITY_FIELDS = [
   { key: "name", label: "Name", placeholder: "Pick something you like" },
-  { key: "creature", label: "Creature", placeholder: "AI? robot? familiar? ghost in the machine?" },
-  { key: "vibe", label: "Vibe", placeholder: "Sharp? warm? chaotic? calm?" },
-  { key: "personality", label: "Personality", placeholder: "Funny? blunt? poetic? sarcastic? gentle?" },
-  { key: "style", label: "Style", placeholder: "Casual? formal? terse? elaborate? emoji-heavy?" },
+  { key: "creature", label: "Creature", placeholder: "AI assistant, robot, familiar" },
+  { key: "vibe", label: "Vibe", placeholder: "sharp, warm, chaotic, calm" },
+  { key: "personality", label: "Personality", placeholder: "funny, blunt, poetic, sarcastic" },
+  { key: "style", label: "Style", placeholder: "casual, formal, terse, elaborate" },
 ];
 
 interface ProfileSectionProps {
+  agentId: string;
   description: string;
   enabled: boolean;
   identity: Record<string, string>;
@@ -23,7 +25,7 @@ interface ProfileSectionProps {
   onIdentityChange: (identity: Record<string, string>) => void;
 }
 
-export function ProfileSection({ description, enabled, identity, onChange, onIdentityChange }: ProfileSectionProps) {
+export function ProfileSection({ agentId, description, enabled, identity, onChange, onIdentityChange }: ProfileSectionProps) {
   const updateIdentityField = (key: string, value: string) => {
     onIdentityChange({ ...identity, [key]: value });
   };
@@ -34,6 +36,7 @@ export function ProfileSection({ description, enabled, identity, onChange, onIde
       <SectionPanel>
         <div className="flex items-start justify-between gap-4">
           <AvatarField
+            agentId={agentId}
             value={identity.avatar ?? ""}
             onChange={(v) => updateIdentityField("avatar", v)}
           />
@@ -75,22 +78,27 @@ export function ProfileSection({ description, enabled, identity, onChange, onIde
   );
 }
 
-function AvatarField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function AvatarField({ agentId, value, onChange }: { agentId: string; value: string; onChange: (v: string) => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        onChange(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
-  }, [onChange]);
+    try {
+      const result = await api.uploadFile(`/api/agents/${agentId}/avatar`, file);
+      onChange(result.url);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          onChange(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  }, [agentId, onChange]);
 
-  const isImage = value && (value.startsWith("data:") || value.startsWith("http"));
+  const isImage = value && (value.startsWith("data:") || value.startsWith("http") || value.startsWith("/api/"));
 
   return (
     <div className="flex items-center gap-3">

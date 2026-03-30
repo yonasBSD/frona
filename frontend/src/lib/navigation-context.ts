@@ -56,6 +56,9 @@ export function NavigationProvider({
 }: {
   children: React.ReactNode;
 }) {
+  const sortAgents = (list: Agent[]) =>
+    [...list].sort((a, b) => (a.id === "system" ? -1 : b.id === "system" ? 1 : a.name.localeCompare(b.name)));
+
   const [spaces, setSpaces] = useState<SpaceWithChats[]>([]);
   const [standaloneChats, setStandaloneChats] = useState<ChatResponse[]>([]);
   const [tasks, setTasks] = useState<TaskResponse[]>([]);
@@ -77,7 +80,7 @@ export function NavigationProvider({
       setSpaces(nav.spaces);
       setStandaloneChats(nav.standalone_chats);
       setTasks(tasksData);
-      setAgents(agentsData);
+      setAgents(sortAgents(agentsData));
       setContacts(indexContactsById(contactsData));
     } catch {
       // silently fail - auth guard will redirect if needed
@@ -100,11 +103,11 @@ export function NavigationProvider({
       if (exists) {
         return prev.map((a) => (a.id === agentId ? { ...a, ...fields } : a));
       }
-      // New agent — fetch it from the API and add to state
+      // New agent — fetch it from the API and add to state, sorted with system first
       api.get<Agent>(`/api/agents/${agentId}`).then((agent) => {
         setAgents((curr) => {
           if (curr.some((a) => a.id === agentId)) return curr;
-          return [...curr, agent];
+          return sortAgents([...curr, agent]);
         });
       }).catch(() => {});
       return prev;

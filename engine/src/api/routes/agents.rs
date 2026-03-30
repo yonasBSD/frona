@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::path::Path as StdPath;
 
-use axum::extract::{Path, State};
-use axum::routing::get;
+use axum::extract::{Multipart, Path, State};
+use axum::routing::{get, put};
 use axum::{Json, Router};
 use crate::agent::config::parse_frontmatter;
 use crate::agent::models::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};
@@ -10,6 +11,7 @@ use crate::inference::tool_loop::InferenceEventKind;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
+use crate::core::error::AppError;
 use crate::core::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -20,6 +22,7 @@ pub fn router() -> Router<AppState> {
             get(get_agent).put(update_agent).delete(delete_agent),
         )
         .route("/api/agents/{id}/skills", get(list_agent_skills))
+        .route("/api/agents/{id}/avatar", put(upload_avatar))
 }
 
 fn resolve_default_prompt(state: &AppState, agent_id: &str) -> String {
@@ -130,5 +133,55 @@ async fn list_agent_skills(
         scope: s.scope,
     }).collect();
     Ok(Json(items))
+}
+
+const MAX_AVATAR_SIZE: usize = 2 * 1024 * 1024; // 2MB
+
+async fn upload_avatar(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state.agent_service.get(&auth.user_id, &id).await?;
+
+    let mut file_data: Option<(String, Vec<u8>)> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError(AppError::Validation(e.to_string())))?
+    {
+        if field.name() == Some("file") {
+            let filename = field.file_name().unwrap_or("avatar").to_string();
+            let bytes = field
+                .bytes()
+                .await
+                .map_err(|e| ApiError(AppError::Validation(e.to_string())))?;
+            if bytes.len() > MAX_AVATAR_SIZE {
+                return Err(ApiError(AppError::Validation(
+                    "Avatar too large (max 2MB)".into(),
+                )));
+            }
+            file_data = Some((filename, bytes.to_vec()));
+        }
+    }
+
+    let (filename, bytes) = file_data
+        .ok_or_else(|| ApiError(AppError::Validation("Missing file field".into())))?;
+
+    let ext = StdPath::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("jpg");
+    let avatar_filename = format!("avatar.{ext}");
+
+    let workspace = state.storage_service.agent_workspace(&id);
+    workspace
+        .write_bytes(&avatar_filename, &bytes)
+        .map_err(|e| ApiError(AppError::Internal(e.to_string())))?;
+
+    let url = format!("/api/files/agent/{id}/{avatar_filename}");
+    Ok(Json(serde_json::json!({ "url": url })))
 }
 

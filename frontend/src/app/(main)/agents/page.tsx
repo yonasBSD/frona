@@ -174,6 +174,7 @@ function AgentSettings() {
           <div className={activeSection === "prompt" ? "flex-1 flex flex-col" : ""}>
             {activeSection === "profile" && (
               <ProfileSection
+                agentId={agentId!}
                 description={(merged.description as string) ?? ""}
                 enabled={(merged.enabled as boolean) ?? true}
                 identity={(merged.identity as Record<string, string>) ?? {}}

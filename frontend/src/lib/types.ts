@@ -255,13 +255,18 @@ const DEFAULT_AGENT_NAMES: Record<string, string> = {
   developer: "Developer",
 };
 
+function titleCase(s: string): string {
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export function agentDisplayName(
   agentId: string | undefined,
   agentName?: string,
 ): string {
-  if (agentName && agentName !== agentId) return agentName;
+  if (agentName && agentName !== agentId) return titleCase(agentName);
   if (!agentId) return "Assistant";
-  return DEFAULT_AGENT_NAMES[agentId] ?? agentId;
+  const name = DEFAULT_AGENT_NAMES[agentId] ?? agentId.replace(/-/g, " ");
+  return titleCase(name);
 }
 
 // Tool call types
