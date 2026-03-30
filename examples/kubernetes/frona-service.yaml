@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frona
+spec:
+  selector:
+    app: frona
+  ports:
+    - name: http
+      port: 3001
+      targetPort: 3001
+  type: ClusterIP

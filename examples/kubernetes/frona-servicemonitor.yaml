@@ -1,0 +1,14 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: frona
+  labels:
+    app: frona
+spec:
+  selector:
+    matchLabels:
+      app: frona
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

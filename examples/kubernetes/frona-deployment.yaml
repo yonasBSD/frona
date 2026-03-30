@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frona
+  labels:
+    app: frona
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frona
+  template:
+    metadata:
+      labels:
+        app: frona
+    spec:
+      containers:
+        - name: frona
+          image: ghcr.io/fronalabs/frona:latest
+          ports:
+            - containerPort: 3001
+          env:
+            - name: FRONA_BROWSER_WS_URL
+              value: "ws://localhost:3333"
+            - name: FRONA_SEARCH_SEARXNG_BASE_URL
+              value: "http://localhost:8080"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+        - name: browserless
+          image: ghcr.io/browserless/chromium:latest
+          env:
+            - name: MAX_CONCURRENT_SESSIONS
+              value: "10"
+            - name: PREBOOT_CHROME
+              value: "true"
+          volumeMounts:
+            - name: data
+              mountPath: /profiles
+              subPath: browser-profiles
+
+        - name: searxng
+          image: searxng/searxng:latest
+          env:
+            - name: SEARXNG_BASE_URL
+              value: "http://localhost:8080"
+          volumeMounts:
+            - name: searxng-config
+              mountPath: /etc/searxng/settings.yml
+              subPath: settings.yml
+              readOnly: true
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: frona-data
+        - name: searxng-config
+          configMap:
+            name: searxng-config
