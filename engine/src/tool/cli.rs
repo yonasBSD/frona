@@ -165,7 +165,7 @@ impl AgentTool for CliTool {
         let rm = self.sandbox_manager.resource_manager();
         let (eff_cpu, eff_mem) = rm.effective_agent_limits(agent_id);
 
-        tracing::info!(
+        tracing::debug!(
             agent = %agent_id,
             tool = %self.config.name,
             timeout_secs = timeout,

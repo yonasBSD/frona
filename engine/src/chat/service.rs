@@ -747,7 +747,7 @@ impl ChatService {
         let ws = self.storage_service.agent_workspace(agent_id);
 
         if let Ok(Some(agent)) = self.agent_service.find_by_id(agent_id).await {
-            tracing::info!(agent_id, ?agent.tools, user_id = ?agent.user_id, "Resolved agent from DB");
+            tracing::debug!(agent_id, ?agent.tools, user_id = ?agent.user_id, "Resolved agent from DB");
             let tools = if agent.tools.is_empty() {
                 crate::tool::configurable_tools().to_vec()
             } else {

@@ -225,10 +225,10 @@ pub fn build_tool_registry(
         )));
     }
 
-    tracing::info!(cli_tools_count = state.cli_tools_config.len(), ?allowed_tools, "Building tool registry");
+    tracing::debug!(cli_tools_count = state.cli_tools_config.len(), ?allowed_tools, "Building tool registry");
     for tool_config in state.cli_tools_config.iter() {
         if allowed_tools.iter().any(|t| t == &tool_config.name) {
-            tracing::info!(tool = %tool_config.name, "Registering CLI tool");
+            tracing::debug!(tool = %tool_config.name, "Registering CLI tool");
             registry.register(Arc::new(CliTool::new(
                 tool_config.clone(),
                 state.sandbox_manager.clone(),
@@ -239,7 +239,7 @@ pub fn build_tool_registry(
     }
 
     let tool_names: Vec<&str> = registry.definitions.iter().map(|d| d.id.as_str()).collect();
-    tracing::info!(
+    tracing::debug!(
         ?tool_names,
         cli_configs = state.cli_tools_config.len(),
         ?allowed_tools,
