@@ -132,6 +132,9 @@ RUN mkdir -p /app /data && chown -R frona:frona /app /data
 WORKDIR /app
 
 COPY --from=python-builder /install /usr/local
+# Pre-compile .pyc files so Python doesn't need write access to system dirs
+# at runtime (syd sandbox blocks writes outside the agent workspace).
+RUN python3 -m compileall -q /usr/local/lib/python3.12
 COPY --chown=frona:frona --from=backend-builder /app/target/release/frona /app/frona
 COPY --chown=frona:frona --from=frontend-builder /app/frontend/out /app/static
 COPY --chown=frona:frona resources /app/share
