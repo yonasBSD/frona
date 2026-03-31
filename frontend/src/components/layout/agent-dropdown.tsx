@@ -58,7 +58,7 @@ export function AgentDropdown() {
       <button
         onClick={() => setOpen((v) => !v)}
         className={`relative flex items-center justify-center h-10 w-10 transition cursor-pointer ${
-          open ? "rounded-t-xl rounded-b-none bg-surface-secondary text-text-primary z-[2] border border-border border-b-0" : "rounded-full bg-surface-tertiary text-text-secondary hover:brightness-125"
+          open ? "rounded-t-xl rounded-b-none bg-surface-secondary text-text-primary z-[61] border border-border border-b-0" : "rounded-full bg-surface-tertiary text-text-secondary hover:brightness-125"
         }`}
         title="Agents"
       >
@@ -66,8 +66,8 @@ export function AgentDropdown() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-[1] w-64 rounded-xl rounded-tr-none border border-border bg-surface-secondary shadow-lg">
-          <div className="absolute -top-px right-0 w-[calc(theme(spacing.10)-3px)] h-[2px] bg-surface-secondary z-[1]" />
+        <div className="absolute right-0 top-full z-[60] w-64 rounded-xl rounded-tr-none border border-border bg-surface-secondary shadow-lg">
+          <div className="absolute -top-px right-0 w-[calc(theme(spacing.10)-3px)] h-[2px] bg-surface-secondary z-[60]" />
           <div className="pb-1">
             <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
               <span className="text-sm font-medium text-text-secondary">Agents</span>
