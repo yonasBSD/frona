@@ -117,8 +117,12 @@ CMD ["bash", "-c", "cd frontend && npm install && cd /app && cargo watch --poll 
 
 FROM python:3.12-slim-bookworm AS prod
 RUN --mount=type=bind,source=build/pkgs/prod-apt.txt,target=/tmp/packages.txt \
-  apt-get update && apt-get install -y --no-install-recommends \
-  $(grep -vE '^\s*(#|$)' /tmp/packages.txt | tr '\n' ' ') \
+  apt-get update \
+  && apt-get install -y --no-install-recommends \
+     $(grep -vE '^\s*(#|$)|^nodejs=' /tmp/packages.txt | tr '\n' ' ') \
+  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  && apt-get install -y --no-install-recommends \
+     $(grep '^nodejs=' /tmp/packages.txt) \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/surreal /usr/local/bin/syd /usr/local/bin/
