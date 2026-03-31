@@ -23,6 +23,7 @@ pub struct SystemResourceManager {
     pub max_agent_memory_pct: f64,
     pub max_total_cpu_pct: f64,
     pub max_total_memory_pct: f64,
+    num_cpus: f64,
     agent_limits: DashMap<String, AgentLimits>,
     tracked: DashMap<u32, TrackedProcess>,
     cancel_token: CancellationToken,
@@ -35,11 +36,13 @@ impl SystemResourceManager {
         max_total_cpu_pct: f64,
         max_total_memory_pct: f64,
     ) -> Self {
+        let num_cpus = detect_num_cpus();
         Self {
             max_agent_cpu_pct,
             max_agent_memory_pct,
             max_total_cpu_pct,
             max_total_memory_pct,
+            num_cpus,
             agent_limits: DashMap::new(),
             tracked: DashMap::new(),
             cancel_token: CancellationToken::new(),
@@ -145,7 +148,8 @@ impl SystemResourceManager {
 
             if total_memory > 0 {
                 let (cpu, mem_bytes) = collect_tree_usage(sys, sysinfo_pid, &children_map);
-                per_pid.insert(pid, (cpu, mem_bytes));
+                let normalized_cpu = cpu / self.num_cpus;
+                per_pid.insert(pid, (normalized_cpu, mem_bytes));
             }
         }
 
@@ -298,6 +302,12 @@ fn collect_tree_usage(
     }
 
     (total_cpu, total_mem)
+}
+
+fn detect_num_cpus() -> f64 {
+    let mut sys = System::new();
+    sys.refresh_cpu_all();
+    sys.cpus().len().max(1) as f64
 }
 
 fn kill_process(pid: u32) {
