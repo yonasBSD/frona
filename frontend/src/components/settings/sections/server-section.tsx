@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import type { ServerConfig } from "@/lib/config-types";
 import { TextInput, NumberInput, SectionHeader, SectionPanel } from "@/components/settings/field";
 import { ServerIcon } from "@heroicons/react/24/outline";
@@ -10,6 +11,15 @@ interface ServerSectionProps {
 }
 
 export function ServerSection({ server, onChange }: ServerSectionProps) {
+  const seeded = useRef(false);
+
+  useEffect(() => {
+    if (!seeded.current && !server.base_url && !server.backend_url) {
+      seeded.current = true;
+      onChange({ ...server, base_url: window.location.origin });
+    }
+  }, [server, onChange]);
+
   return (
     <div>
       <SectionHeader title="Server" description="Core server settings and network configuration" icon={ServerIcon} />
@@ -38,7 +48,7 @@ export function ServerSection({ server, onChange }: ServerSectionProps) {
         description="Optional override for the backend API URL"
         value={server.backend_url}
         onChange={(backend_url) => onChange({ ...server, backend_url })}
-        placeholder="http://localhost:3001"
+        placeholder="https://api.example.com"
       />
 
       <TextInput
@@ -46,7 +56,7 @@ export function ServerSection({ server, onChange }: ServerSectionProps) {
         description="Optional override for the frontend URL"
         value={server.frontend_url}
         onChange={(frontend_url) => onChange({ ...server, frontend_url })}
-        placeholder="http://localhost:3000"
+        placeholder="https://app.example.com"
       />
 
       <TextInput
@@ -54,7 +64,7 @@ export function ServerSection({ server, onChange }: ServerSectionProps) {
         description="Comma-separated list of allowed origins"
         value={server.cors_origins}
         onChange={(cors_origins) => onChange({ ...server, cors_origins })}
-        placeholder="http://localhost:3000, https://example.com"
+        placeholder="https://example.com, https://app.example.com"
       />
 
       <NumberInput

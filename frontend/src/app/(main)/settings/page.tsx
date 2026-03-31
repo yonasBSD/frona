@@ -227,6 +227,7 @@ export default function SettingsPage() {
                     <SsoSection
                       sso={config.sso}
                       onChange={(v) => updatePatch("sso", v)}
+                      hasBaseUrl={!!(config.server.base_url || config.server.backend_url)}
                     />
                   )}
                   {activeTab === "browser" && (

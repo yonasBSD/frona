@@ -2,17 +2,27 @@
 
 import type { SsoConfig } from "@/lib/config-types";
 import { TextInput, NumberInput, Toggle, SensitiveInput, SectionHeader, SectionPanel } from "@/components/settings/field";
-import { FingerPrintIcon } from "@heroicons/react/24/outline";
+import { ExclamationTriangleIcon, FingerPrintIcon } from "@heroicons/react/24/outline";
 
 interface SsoSectionProps {
   sso: SsoConfig;
   onChange: (sso: SsoConfig) => void;
+  hasBaseUrl?: boolean;
 }
 
-export function SsoSection({ sso, onChange }: SsoSectionProps) {
+export function SsoSection({ sso, onChange, hasBaseUrl }: SsoSectionProps) {
   return (
     <div>
       <SectionHeader title="Single Sign-On" description="OpenID Connect SSO configuration" icon={FingerPrintIcon} />
+      {sso.enabled && hasBaseUrl === false && (
+        <div className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 p-4 mb-4">
+          <ExclamationTriangleIcon className="h-5 w-5 text-warning shrink-0 mt-0.5" />
+          <p className="text-sm text-text-secondary leading-relaxed">
+            SSO requires a public Base URL to construct the OAuth redirect URI.
+            Set it in the Server section.
+          </p>
+        </div>
+      )}
       <SectionPanel>
 
       <Toggle
@@ -29,7 +39,7 @@ export function SsoSection({ sso, onChange }: SsoSectionProps) {
             description="OpenID Connect discovery endpoint"
             value={sso.authority}
             onChange={(authority) => onChange({ ...sso, authority })}
-            placeholder="https://accounts.google.com"
+            placeholder="https://auth.example.com"
           />
 
           <TextInput
@@ -53,7 +63,7 @@ export function SsoSection({ sso, onChange }: SsoSectionProps) {
             description="Space-separated list of OAuth scopes to request"
             value={sso.scopes}
             onChange={(scopes) => onChange({ ...sso, scopes })}
-            placeholder="email profile offline_access"
+            placeholder="openid email"
           />
 
           <Toggle

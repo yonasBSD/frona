@@ -43,7 +43,7 @@ export function SearchSection({ search, onChange }: SearchSectionProps) {
           description="Base URL of the SearXNG instance"
           value={search.searxng_base_url}
           onChange={(searxng_base_url) => onChange({ ...search, searxng_base_url })}
-          placeholder="http://localhost:3400"
+          placeholder="https://search.example.com"
         />
       )}
       </SectionPanel>

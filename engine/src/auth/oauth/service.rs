@@ -52,7 +52,13 @@ impl OAuthService {
             .split_whitespace()
             .map(String::from)
             .collect();
-        let redirect_uri = format!("{}/api/auth/sso/callback", config.server.issuer_url);
+        let base = config.server.public_base_url();
+        if base.is_empty() {
+            return Err(AppError::Validation(
+                "SSO requires server.base_url or server.backend_url to be set".into(),
+            ));
+        }
+        let redirect_uri = format!("{base}/api/auth/sso/callback");
 
         Ok(Self {
             authority,

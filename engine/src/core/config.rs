@@ -148,7 +148,7 @@ impl Default for SsoConfig {
             authority: None,
             client_id: None,
             client_secret: None,
-            scopes: "email profile offline_access".into(),
+            scopes: "openid email".into(),
             allow_unknown_email_verification: false,
             client_cache_expiration: 0,
             only: false,

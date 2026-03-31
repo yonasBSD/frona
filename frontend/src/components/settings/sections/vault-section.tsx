@@ -745,7 +745,7 @@ expanded={!!expanded.hashicorp}
             description="Vault server address"
             value={vault.hashicorp_address}
             onChange={(hashicorp_address) => onChange({ ...vault, hashicorp_address })}
-            placeholder="http://localhost:8200"
+            placeholder="https://vault.example.com"
           />
           <SensitiveInput
             label="Token"
