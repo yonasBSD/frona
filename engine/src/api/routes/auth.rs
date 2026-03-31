@@ -63,7 +63,7 @@ async fn register(
     Json(req): Json<RegisterRequest>,
 ) -> Result<(StatusCode, [(axum::http::HeaderName, axum::http::HeaderValue); 1], Json<AuthResponse>), ApiError>
 {
-    if state.config.sso.only {
+    if state.config.sso.disable_local_auth {
         return Err(ApiError(AppError::Validation(
             "SSO registration required".into(),
         )));
@@ -98,7 +98,7 @@ async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], Json<AuthResponse>), ApiError>
 {
-    if state.config.sso.only {
+    if state.config.sso.disable_local_auth {
         return Err(ApiError(AppError::Validation(
             "SSO login required".into(),
         )));
@@ -309,7 +309,7 @@ async fn delete_pat(
 #[derive(serde::Serialize)]
 struct SsoStatusResponse {
     enabled: bool,
-    sso_only: bool,
+    disable_local_auth: bool,
 }
 
 async fn sso_status(
@@ -317,7 +317,7 @@ async fn sso_status(
 ) -> Json<SsoStatusResponse> {
     Json(SsoStatusResponse {
         enabled: state.config.sso.enabled,
-        sso_only: state.config.sso.only,
+        disable_local_auth: state.config.sso.disable_local_auth,
     })
 }
 

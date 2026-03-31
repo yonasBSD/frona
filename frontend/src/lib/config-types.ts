@@ -36,7 +36,7 @@ export interface SsoConfig {
   scopes: string;
   allow_unknown_email_verification: boolean;
   client_cache_expiration: number;
-  only: boolean;
+  disable_local_auth: boolean;
   signups_match_email: boolean;
 }
 

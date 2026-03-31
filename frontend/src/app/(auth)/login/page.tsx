@@ -56,7 +56,7 @@ function LoginContent() {
     }
   };
 
-  const showPasswordForm = !ssoStatus?.sso_only;
+  const showPasswordForm = !ssoStatus?.disable_local_auth;
   const showSsoButton = ssoStatus?.enabled;
 
   return (

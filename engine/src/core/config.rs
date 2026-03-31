@@ -135,8 +135,8 @@ pub struct SsoConfig {
     pub allow_unknown_email_verification: bool,
     #[schemars(description = "Client cache expiration in seconds.")]
     pub client_cache_expiration: u64,
-    #[schemars(description = "Require SSO for all logins (disables native auth).")]
-    pub only: bool,
+    #[schemars(description = "Disable local (email/password) authentication when SSO is enabled.")]
+    pub disable_local_auth: bool,
     #[schemars(description = "Match SSO signups to existing users by email.")]
     pub signups_match_email: bool,
 }
@@ -151,7 +151,7 @@ impl Default for SsoConfig {
             scopes: "openid email".into(),
             allow_unknown_email_verification: false,
             client_cache_expiration: 0,
-            only: false,
+            disable_local_auth: false,
             signups_match_email: true,
         }
     }

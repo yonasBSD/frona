@@ -69,8 +69,8 @@ export function SsoSection({ sso, onChange, hasBaseUrl }: SsoSectionProps) {
           <Toggle
             label="SSO Only"
             description="Only allow SSO authentication, disabling native login"
-            value={sso.only}
-            onChange={(only) => onChange({ ...sso, only })}
+            value={sso.disable_local_auth}
+            onChange={(disable_local_auth) => onChange({ ...sso, disable_local_auth })}
             warning="Native email/password authentication will be disabled"
           />
 

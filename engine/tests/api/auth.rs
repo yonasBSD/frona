@@ -622,7 +622,7 @@ async fn sso_status_returns_disabled_by_default() {
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
     assert_eq!(json["enabled"], false);
-    assert_eq!(json["sso_only"], false);
+    assert_eq!(json["disable_local_auth"], false);
 }
 
 #[tokio::test]
@@ -664,7 +664,7 @@ async fn sso_callback_without_provider_returns_400() {
 fn build_sso_only_state(state: &AppState) -> AppState {
     let mut sso_state = state.clone();
     let mut config = (*sso_state.config).clone();
-    config.sso.only = true;
+    config.sso.disable_local_auth = true;
     sso_state.config = std::sync::Arc::new(config);
     sso_state
 }

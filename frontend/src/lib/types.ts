@@ -26,7 +26,7 @@ export interface RegisterRequest {
 
 export interface SsoStatus {
   enabled: boolean;
-  sso_only: boolean;
+  disable_local_auth: boolean;
 }
 
 export interface Agent {
