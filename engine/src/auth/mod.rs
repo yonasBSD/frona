@@ -12,7 +12,7 @@ pub use self::user_service::UserService;
 use self::models::{AuthResponse, LoginRequest, RegisterRequest, UpdateProfileRequest, UpdateUsernameRequest, UserInfo};
 use crate::auth::token::service::TokenService;
 use crate::core::config::Config;
-use crate::core::error::AppError;
+use crate::core::error::{AppError, AuthErrorCode};
 use crate::core::repository::Repository;
 use crate::credential::keypair::service::KeyPairService;
 
@@ -91,7 +91,7 @@ impl AuthService {
         } else {
             user_service.find_by_username(&req.identifier).await?
         }
-        .ok_or_else(|| AppError::Auth("Invalid credentials".into()))?;
+        .ok_or_else(|| AppError::Auth { message: "Invalid credentials".into(), code: AuthErrorCode::InvalidCredentials })?;
 
         self.verify_password(&req.password, &user.password_hash)?;
         let (access_jwt, refresh_jwt) =
@@ -306,7 +306,7 @@ impl AuthService {
             .map_err(|e| AppError::Internal(format!("Invalid password hash: {e}")))?;
         Argon2::default()
             .verify_password(password.as_bytes(), &parsed)
-            .map_err(|_| AppError::Auth("Invalid email or password".into()))
+            .map_err(|_| AppError::Auth { message: "Invalid email or password".into(), code: AuthErrorCode::InvalidCredentials })
     }
 }
 

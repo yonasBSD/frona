@@ -643,7 +643,7 @@ async fn sso_authorize_without_provider_returns_400() {
 }
 
 #[tokio::test]
-async fn sso_callback_without_provider_returns_400() {
+async fn sso_callback_without_provider_redirects_with_error() {
     let (state, _tmp) = test_app_state().await;
     let app = build_app(state);
     let resp = app
@@ -656,7 +656,9 @@ async fn sso_callback_without_provider_returns_400() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(location.starts_with("/login?sso_error="));
 }
 
 // ─── SSO-Only Mode ──────────────────────────────────────────────────

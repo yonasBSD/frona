@@ -7,7 +7,7 @@ use super::repository::TokenRepository;
 use crate::auth::jwt::JwtService;
 use crate::auth::models::Claims;
 use crate::credential::keypair::service::KeyPairService;
-use crate::core::error::AppError;
+use crate::core::error::{AppError, AuthErrorCode};
 use crate::auth::User;
 
 #[derive(Clone)]
@@ -164,7 +164,7 @@ impl TokenService {
         let claims = self.validate(keypair_svc, refresh_token_str).await?;
 
         if claims.token_type != "refresh" {
-            return Err(AppError::Auth("Not a refresh token".into()));
+            return Err(AppError::Auth { message: "Not a refresh token".into(), code: AuthErrorCode::TokenInvalid });
         }
 
         // Find the old pair and delete it
@@ -256,7 +256,7 @@ impl TokenService {
         let header = self.jwt.decode_unverified_header(token_str)?;
         let kid = header
             .kid
-            .ok_or_else(|| AppError::Auth("Token missing kid".into()))?;
+            .ok_or_else(|| AppError::Auth { message: "Token missing kid".into(), code: AuthErrorCode::TokenInvalid })?;
 
         let decoding_key = keypair_svc.get_verifying_key(&kid).await?;
         let claims = self.jwt.verify::<Claims>(token_str, &decoding_key)?;
@@ -266,7 +266,7 @@ impl TokenService {
             .repo
             .find_active_by_id(&claims.token_id)
             .await?
-            .ok_or_else(|| AppError::Auth("Token revoked".into()))?;
+            .ok_or_else(|| AppError::Auth { message: "Token revoked".into(), code: AuthErrorCode::TokenInvalid })?;
 
         // Update last_used_at (fire-and-forget for access tokens)
         let _ = self.repo.update_last_used(&db_token.id).await;

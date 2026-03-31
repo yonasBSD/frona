@@ -1,7 +1,7 @@
 use crate::auth::jwt::JwtService;
 use crate::auth::UserService;
 use crate::chat::message::models::MessageResponse;
-use crate::core::error::AppError;
+use crate::core::error::{AppError, AuthErrorCode};
 use crate::credential::keypair::service::KeyPairService;
 
 use crate::storage::PresignClaims;
@@ -76,7 +76,7 @@ impl PresignService {
         let header = self.jwt_svc.decode_unverified_header(token)?;
         let kid = header
             .kid
-            .ok_or_else(|| AppError::Auth("Token missing kid".into()))?;
+            .ok_or_else(|| AppError::Auth { message: "Token missing kid".into(), code: AuthErrorCode::TokenInvalid })?;
 
         let decoding_key = self.keypair_svc.get_verifying_key(&kid).await?;
         self.jwt_svc.verify::<PresignClaims>(token, &decoding_key)

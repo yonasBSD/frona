@@ -15,7 +15,7 @@ impl From<AppError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match &self.0 {
-            AppError::Auth(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
+            AppError::Auth { message, .. } => (StatusCode::UNAUTHORIZED, message.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::Validation(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Database(msg) => {

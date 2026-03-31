@@ -14,7 +14,7 @@ use crate::api::cookie::{
 };
 use crate::auth::models::{AuthResponse, LoginRequest, RegisterRequest, UpdateProfileRequest, UpdateUsernameRequest, UserInfo};
 use crate::auth::token::models::CreatePatRequest;
-use crate::core::error::AppError;
+use crate::core::error::{AppError, AuthErrorCode};
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
@@ -107,9 +107,10 @@ async fn login(
     let identifier = req.identifier.clone();
 
     if state.login_tracker.is_locked(&identifier).await {
-        return Err(ApiError(AppError::Auth(
-            "Too many failed attempts. Please try again later.".into(),
-        )));
+        return Err(ApiError(AppError::Auth {
+            message: "Too many failed attempts. Please try again later.".into(),
+            code: AuthErrorCode::InvalidCredentials,
+        }));
     }
 
     let result = state
@@ -241,7 +242,7 @@ async fn refresh(
         .get("cookie")
         .and_then(|v| v.to_str().ok())
         .and_then(extract_refresh_token_from_cookie_header)
-        .ok_or_else(|| AppError::Auth("Missing refresh token".into()))?;
+        .ok_or_else(|| AppError::Auth { message: "Missing refresh token".into(), code: AuthErrorCode::TokenInvalid })?;
 
     let (access_jwt, new_refresh_jwt, _claims) = state
         .token_service
@@ -339,8 +340,46 @@ async fn sso_callback(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<(axum::response::AppendHeaders<[(axum::http::HeaderName, axum::http::HeaderValue); 2]>, axum::response::Redirect), ApiError>
+) -> axum::response::Response
 {
+    let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
+
+    match sso_callback_inner(&state, &headers, &params).await {
+        Ok(refresh_jwt) => {
+            let refresh_cookie = make_refresh_cookie(
+                &refresh_jwt,
+                state.token_service.refresh_expiry_secs(),
+                secure,
+            );
+            let clear_csrf = make_clear_sso_csrf_cookie(secure);
+
+            axum::response::IntoResponse::into_response((
+                axum::response::AppendHeaders([(SET_COOKIE, refresh_cookie), (SET_COOKIE, clear_csrf)]),
+                axum::response::Redirect::temporary("/auth/sso/callback"),
+            ))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "SSO callback failed");
+            let clear_csrf = make_clear_sso_csrf_cookie(secure);
+            let code = match &e {
+                AppError::Auth { code, .. } => code.as_str(),
+                _ => AuthErrorCode::ServerError.as_str(),
+            };
+            let redirect_url = format!("/login?sso_error={code}");
+
+            axum::response::IntoResponse::into_response((
+                axum::response::AppendHeaders([(SET_COOKIE, clear_csrf)]),
+                axum::response::Redirect::temporary(&redirect_url),
+            ))
+        }
+    }
+}
+
+async fn sso_callback_inner(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    params: &std::collections::HashMap<String, String>,
+) -> Result<String, AppError> {
     let oauth_svc = state
         .oauth_service
         .as_ref()
@@ -350,15 +389,14 @@ async fn sso_callback(
         .get("state")
         .ok_or_else(|| AppError::Validation("Missing state parameter".into()))?;
 
-    // Validate CSRF: the cookie set during sso_authorize must match the state param
     let cookie_header = headers
         .get("cookie")
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
     let csrf_cookie = extract_sso_csrf_from_cookie_header(cookie_header)
-        .ok_or_else(|| AppError::Auth("Missing SSO CSRF cookie — please restart the login flow".into()))?;
+        .ok_or_else(|| AppError::Auth { message: "Missing SSO CSRF cookie — please restart the login flow".into(), code: AuthErrorCode::CsrfFailed })?;
     if csrf_cookie != callback_state {
-        return Err(ApiError(AppError::Auth("SSO state mismatch".into())));
+        return Err(AppError::Auth { message: "SSO state mismatch".into(), code: AuthErrorCode::CsrfFailed });
     }
 
     let code = params
@@ -380,17 +418,5 @@ async fn sso_callback(
         .create_session_pair(&state.keypair_service, &user)
         .await?;
 
-    let secure = state.config.server.base_url.as_deref().is_some_and(|u| u.starts_with("https://"));
-    let refresh_cookie = make_refresh_cookie(
-        &refresh_jwt,
-        state.token_service.refresh_expiry_secs(),
-        secure,
-    );
-    let clear_csrf = make_clear_sso_csrf_cookie(secure);
-
-    // Redirect to frontend callback page — the frontend will fetch a new access token via refresh
-    Ok((
-        axum::response::AppendHeaders([(SET_COOKIE, refresh_cookie), (SET_COOKIE, clear_csrf)]),
-        axum::response::Redirect::temporary("/auth/sso/callback"),
-    ))
+    Ok(refresh_jwt)
 }

@@ -10,7 +10,7 @@ use chrono::Utc;
 use serde::de::DeserializeOwned;
 
 use crate::auth::jwt::JwtService;
-use crate::core::error::AppError;
+use crate::core::error::{AppError, AuthErrorCode};
 use crate::core::state::AppState;
 use crate::tool::voice::{VoiceCallbackClaims, VoiceSessionClaims};
 
@@ -72,7 +72,7 @@ pub(super) async fn verify_jwt<T: DeserializeOwned>(state: &AppState, token: &st
     let kid = jwt_svc
         .decode_unverified_header(token)?
         .kid
-        .ok_or_else(|| AppError::Auth("Token missing kid".into()))?;
+        .ok_or_else(|| AppError::Auth { message: "Token missing kid".into(), code: AuthErrorCode::TokenInvalid })?;
     let key = state.keypair_service.get_verifying_key(&kid).await?;
     jwt_svc.verify::<T>(token, &key)
 }

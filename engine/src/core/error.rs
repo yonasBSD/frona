@@ -1,9 +1,43 @@
 use thiserror::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthErrorCode {
+    InvalidCredentials,
+    EmailNotVerified,
+    CsrfFailed,
+    TokenInvalid,
+    TokenFailed,
+    SsoDisabled,
+    ServerError,
+}
+
+impl AuthErrorCode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::InvalidCredentials => "invalid_credentials",
+            Self::EmailNotVerified => "email_not_verified",
+            Self::CsrfFailed => "csrf_failed",
+            Self::TokenInvalid => "token_invalid",
+            Self::TokenFailed => "token_failed",
+            Self::SsoDisabled => "sso_disabled",
+            Self::ServerError => "server_error",
+        }
+    }
+}
+
+impl std::fmt::Display for AuthErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("Authentication failed: {0}")]
-    Auth(String),
+    #[error("Authentication failed: {message}")]
+    Auth {
+        message: String,
+        code: AuthErrorCode,
+    },
 
     #[error("Not found: {0}")]
     NotFound(String),

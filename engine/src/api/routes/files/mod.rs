@@ -17,7 +17,7 @@ use crate::storage::{VirtualPath, detect_content_type};
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
-use crate::core::error::AppError;
+use crate::core::error::{AppError, AuthErrorCode};
 use crate::core::state::AppState;
 
 use models::{FileAuth, PresignQuery};
@@ -66,12 +66,12 @@ impl FromRequestParts<AppState> for FileAuth {
 
         let query: Query<PresignQuery> =
             Query::try_from_uri(&parts.uri)
-                .map_err(|_| ApiError(AppError::Auth("Missing authorization".into())))?;
+                .map_err(|_| ApiError(AppError::Auth { message: "Missing authorization".into(), code: AuthErrorCode::InvalidCredentials }))?;
 
         let token = query
             .presign
             .as_deref()
-            .ok_or_else(|| ApiError(AppError::Auth("Missing authorization".into())))?;
+            .ok_or_else(|| ApiError(AppError::Auth { message: "Missing authorization".into(), code: AuthErrorCode::InvalidCredentials }))?;
 
         let claims = state.presign_service.verify(token).await?;
 

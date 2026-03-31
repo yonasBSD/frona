@@ -2,7 +2,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse;
 use frona::api::error::ApiError;
-use frona::core::error::AppError;
+use frona::core::error::{AppError, AuthErrorCode};
 use tower::ServiceExt;
 
 use super::*;
@@ -52,7 +52,7 @@ async fn all_protected_endpoints_reject_no_auth() {
 #[tokio::test]
 async fn api_error_maps_all_variants_correctly() {
     let cases: Vec<(AppError, StatusCode)> = vec![
-        (AppError::Auth("x".into()), StatusCode::UNAUTHORIZED),
+        (AppError::Auth { message: "x".into(), code: AuthErrorCode::InvalidCredentials }, StatusCode::UNAUTHORIZED),
         (AppError::NotFound("x".into()), StatusCode::NOT_FOUND),
         (AppError::Validation("x".into()), StatusCode::BAD_REQUEST),
         (AppError::Forbidden("x".into()), StatusCode::FORBIDDEN),

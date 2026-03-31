@@ -35,7 +35,20 @@ function LoginContent() {
   }, [user, router, redirectTo]);
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const ssoErrorCode = searchParams.get("sso_error");
+  const [error, setError] = useState(() => {
+    if (!ssoErrorCode) return "";
+    const messages: Record<string, string> = {
+      email_not_verified: "Your email has not been verified by the SSO provider.",
+      csrf_failed: "SSO session expired. Please try again.",
+      token_invalid: "SSO authentication failed. Please try again.",
+      token_failed: "SSO provider did not return a valid token.",
+      sso_disabled: "SSO is not enabled.",
+      server_error: "An unexpected error occurred during SSO login.",
+      invalid_credentials: "Invalid credentials.",
+    };
+    return messages[ssoErrorCode] || "SSO login failed. Please try again.";
+  });
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -66,13 +79,13 @@ function LoginContent() {
           <Logo size={80} animate />
           <span className="text-3xl font-bold text-text-primary tracking-wide" style={{ fontFamily: "var(--font-brand)" }}>FRONA</span>
         </div>
+        {error && (
+          <div className="rounded-lg bg-error-bg p-3 text-sm text-error-text">
+            {error}
+          </div>
+        )}
         {showPasswordForm && (
           <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="rounded-lg bg-error-bg p-3 text-sm text-error-text">
-                {error}
-              </div>
-            )}
             <div>
               <label htmlFor="identifier" className="block text-sm font-medium text-text-secondary">
                 Username or email

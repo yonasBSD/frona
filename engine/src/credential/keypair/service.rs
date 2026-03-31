@@ -14,7 +14,7 @@ use crate::credential::key_rotation::derive_key;
 
 use super::models::KeyPair;
 use super::repository::KeyPairRepository;
-use crate::core::error::AppError;
+use crate::core::error::{AppError, AuthErrorCode};
 
 #[derive(Clone)]
 pub struct KeyPairService {
@@ -130,7 +130,7 @@ impl KeyPairService {
             .repo
             .find_by_kid(kid)
             .await?
-            .ok_or_else(|| AppError::Auth(format!("Key not found for kid: {kid}")))?;
+            .ok_or_else(|| AppError::Auth { message: format!("Key not found for kid: {kid}"), code: AuthErrorCode::TokenInvalid })?;
 
         let key = DecodingKey::from_ed_der(&kp.public_key_bytes);
         self.verifying_cache

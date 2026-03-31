@@ -2,6 +2,7 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 
 use super::super::error::ApiError;
+use crate::core::error::{AppError, AuthErrorCode};
 use crate::core::state::AppState;
 
 pub struct AuthUser {
@@ -62,13 +63,15 @@ fn extract_token(parts: &Parts) -> Result<&str, ApiError> {
         .and_then(|v| v.to_str().ok())
     {
         return header.strip_prefix("Bearer ").ok_or_else(|| {
-            ApiError(crate::core::error::AppError::Auth(
-                "Invalid authorization format".into(),
-            ))
+            ApiError(AppError::Auth {
+                message: "Invalid authorization format".into(),
+                code: AuthErrorCode::InvalidCredentials,
+            })
         });
     }
 
-    Err(ApiError(crate::core::error::AppError::Auth(
-        "Missing authorization".into(),
-    )))
+    Err(ApiError(AppError::Auth {
+        message: "Missing authorization".into(),
+        code: AuthErrorCode::InvalidCredentials,
+    }))
 }

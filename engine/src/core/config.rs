@@ -149,7 +149,7 @@ impl Default for SsoConfig {
             client_id: None,
             client_secret: None,
             scopes: "openid email".into(),
-            allow_unknown_email_verification: false,
+            allow_unknown_email_verification: true,
             client_cache_expiration: 0,
             disable_local_auth: false,
             signups_match_email: true,

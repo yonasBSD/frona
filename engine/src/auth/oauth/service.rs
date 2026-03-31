@@ -14,7 +14,7 @@ use super::repository::OAuthRepository;
 use crate::auth::token::service::TokenService;
 use crate::auth::{AuthService, User, UserService};
 use crate::core::config::Config;
-use crate::core::error::AppError;
+use crate::core::error::{AppError, AuthErrorCode};
 use crate::credential::keypair::service::KeyPairService;
 
 #[derive(Clone)]
@@ -144,7 +144,7 @@ impl OAuthService {
             .lock()
             .await
             .remove(state)
-            .ok_or_else(|| AppError::Auth("Invalid or expired SSO state".into()))?;
+            .ok_or_else(|| AppError::Auth { message: "Invalid or expired SSO state".into(), code: AuthErrorCode::CsrfFailed })?;
 
         let http_client = self.http_client()?;
         let issuer_url = self.issuer_url()?;
@@ -171,12 +171,12 @@ impl OAuthService {
         let id_token = token_response
             .extra_fields()
             .id_token()
-            .ok_or_else(|| AppError::Auth("No ID token in response".into()))?;
+            .ok_or_else(|| AppError::Auth { message: "No ID token in response".into(), code: AuthErrorCode::TokenFailed })?;
 
         let id_token_verifier = client.id_token_verifier();
         let claims = id_token
             .claims(&id_token_verifier, &nonce)
-            .map_err(|e| AppError::Auth(format!("ID token validation failed: {e}")))?;
+            .map_err(|e| AppError::Auth { message: format!("ID token validation failed: {e}"), code: AuthErrorCode::TokenInvalid })?;
 
         let external_sub = claims.subject().to_string();
         let external_email = claims.email().map(|e| e.to_string());
@@ -190,9 +190,10 @@ impl OAuthService {
             && let Some(verified) = claims.email_verified()
             && !verified
         {
-            return Err(AppError::Auth(
-                "Email not verified by SSO provider".into(),
-            ));
+            return Err(AppError::Auth {
+                message: "Email not verified by SSO provider".into(),
+                code: AuthErrorCode::EmailNotVerified,
+            });
         }
 
         // Look up existing identity

@@ -1,7 +1,7 @@
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::core::error::AppError;
+use crate::core::error::{AppError, AuthErrorCode};
 
 #[derive(Clone, Default)]
 pub struct JwtService;
@@ -33,7 +33,7 @@ impl JwtService {
         validation.set_required_spec_claims(&["exp", "sub"]);
 
         let data = decode::<T>(token, decoding_key, &validation)
-            .map_err(|e| AppError::Auth(format!("Invalid token: {e}")))?;
+            .map_err(|e| AppError::Auth { message: format!("Invalid token: {e}"), code: AuthErrorCode::TokenInvalid })?;
         Ok(data.claims)
     }
 
@@ -42,6 +42,6 @@ impl JwtService {
         token: &str,
     ) -> Result<jsonwebtoken::Header, AppError> {
         jsonwebtoken::decode_header(token)
-            .map_err(|e| AppError::Auth(format!("Invalid token header: {e}")))
+            .map_err(|e| AppError::Auth { message: format!("Invalid token header: {e}"), code: AuthErrorCode::TokenInvalid })
     }
 }
