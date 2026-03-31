@@ -145,9 +145,13 @@ impl SydArgsBuilder {
         Self {
             args: vec![
                 "-p".into(), "lib".into(),
+                // Relax W^X enforcement so V8 (Node.js) can JIT-compile
+                "-p".into(), "nomem".into(),
                 "-m".into(), "sandbox/read:on".into(),
                 "-m".into(), "sandbox/stat:on".into(),
                 "-m".into(), "sandbox/write:on".into(),
+                // Allow non-PIE executables (e.g. Node.js)
+                "-m".into(), "trace/allow_unsafe_exec_nopie:1".into(),
             ],
         }
     }
@@ -183,6 +187,19 @@ impl SydArgsBuilder {
             self.allow_read(&format!("{path}/***"));
         }
 
+        // Allow read+stat on each ancestor of the workspace dir so tools
+        // (e.g. Node.js realpathSync) can traverse the directory tree.
+        // Syd hides non-allowed siblings, so this doesn't leak other workspaces.
+        {
+            let mut ancestor = std::path::Path::new(&config.workspace_dir);
+            while let Some(parent) = ancestor.parent() {
+                if parent == std::path::Path::new("/") {
+                    break;
+                }
+                self.allow_read(parent.to_str().unwrap_or_default());
+                ancestor = parent;
+            }
+        }
         self.allow_read_write(&format!("{}/***", config.workspace_dir));
 
         for path in linux::READ_WRITE_DIRS {

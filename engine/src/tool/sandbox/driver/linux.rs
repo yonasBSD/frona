@@ -7,6 +7,9 @@ pub const SYSTEM_READ_DIRS: &[&str] = &[
 pub const PROC_READ_PATHS: &[&str] = &[
     "/proc/self",
     "/proc/cpuinfo", "/proc/meminfo",
+    "/proc/filesystems",
+    // Node.js reads cgroup memory limits
+    "/sys/fs/cgroup",
 ];
 
 pub const READ_WRITE_DIRS: &[&str] = &["/tmp"];

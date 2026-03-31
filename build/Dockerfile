@@ -58,10 +58,10 @@ RUN --mount=type=bind,source=build/pkgs/prod-pkgs.txt,target=/tmp/pkgs.txt \
   && rm /tmp/bw.zip
 RUN --mount=type=bind,source=build/pkgs/prod-pkgs.txt,target=/tmp/pkgs.txt \
   SYD_VER=$(grep '^syd=' /tmp/pkgs.txt | cut -d= -f2) \
-  && curl -sSfL "https://distfiles.exherbo.org/sydbox%2Fsyd-${SYD_VER}.tar.xz" -o /tmp/syd.tar.xz \
+  && SYD_TRIPLE=$([ "$TARGETARCH" = "amd64" ] && echo "x86_64-pc-linux-gnu" || echo "aarch64-unknown-linux-gnueabi") \
+  && curl -sSfL "https://distfiles.exherbo.org/sydbox%2Fsyd-${SYD_VER}-${SYD_TRIPLE}.tar.xz" -o /tmp/syd.tar.xz \
   && tar xf /tmp/syd.tar.xz -C /tmp \
-  && ARCH=$([ "$TARGETARCH" = "amd64" ] && echo "x86_64" || echo "aarch64") \
-  && cp /tmp/syd-${SYD_VER}/${ARCH}/syd /usr/local/bin/syd \
+  && cp /tmp/syd-${SYD_VER}-${SYD_TRIPLE}/bin/syd /usr/local/bin/syd \
   && chmod +x /usr/local/bin/syd \
   && rm -rf /tmp/syd*
 COPY Cargo.lock /tmp/Cargo.lock
