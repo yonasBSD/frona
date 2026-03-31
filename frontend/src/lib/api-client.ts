@@ -1,4 +1,4 @@
-export const API_URL = process.env.FRONA_SERVER_BACKEND_URL || "";
+export const API_URL = process.env.NEXT_PUBLIC_FRONA_SERVER_BACKEND_URL || "";
 
 class ApiError extends Error {
   constructor(

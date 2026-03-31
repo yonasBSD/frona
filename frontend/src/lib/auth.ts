@@ -17,7 +17,7 @@ import type {
   SsoStatus,
 } from "./types";
 
-const API_URL = process.env.FRONA_SERVER_BACKEND_URL || "";
+const API_URL = process.env.NEXT_PUBLIC_FRONA_SERVER_BACKEND_URL || "";
 
 interface AuthContextValue {
   user: UserInfo | null;
