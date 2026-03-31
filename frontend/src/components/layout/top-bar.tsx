@@ -2,9 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Cog6ToothIcon, ArrowRightStartOnRectangleIcon, CubeIcon, PuzzlePieceIcon, KeyIcon } from "@heroicons/react/24/outline";
+import { Bars3Icon, XMarkIcon, Cog6ToothIcon, ArrowRightStartOnRectangleIcon, CubeIcon, PuzzlePieceIcon, KeyIcon } from "@heroicons/react/24/outline";
 import { useAuth } from "@/lib/auth";
 import { useSession } from "@/lib/session-context";
+import { useNavigation } from "@/lib/navigation-context";
+import { useMobile } from "@/lib/use-mobile";
 import { Logo } from "../logo";
 import { NotificationDropdown } from "./notification-dropdown";
 import { AgentDropdown } from "./agent-dropdown";
@@ -20,6 +22,8 @@ export function TopBar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const { inferring, setActiveChat } = useSession();
+  const { mobileNavOpen, setMobileNavOpen, mobileSubNavOpen, setMobileSubNavOpen } = useNavigation();
+  const mobile = useMobile();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -44,6 +48,113 @@ export function TopBar() {
   };
 
   const initial = user?.email?.charAt(0)?.toUpperCase() ?? "?";
+
+  if (mobile) {
+    return (
+      <div className="flex items-center h-14 px-3 bg-surface-nav border-b border-border shrink-0 gap-2">
+        <button
+          onClick={() => {
+            if (pathname.startsWith("/settings")) {
+              setMobileSubNavOpen(!mobileSubNavOpen);
+            } else {
+              setMobileNavOpen(!mobileNavOpen);
+            }
+          }}
+          className="flex items-center justify-center h-10 w-10 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-tertiary transition"
+        >
+          <Bars3Icon className="h-6 w-6" />
+        </button>
+
+        <button
+          onClick={() => { setActiveChat(null); router.push("/home"); }}
+          className="flex items-center gap-1 cursor-pointer"
+        >
+          <Logo size={52} animate={inferring} />
+          <span
+            className="text-lg font-bold text-text-primary tracking-wide"
+            style={{ fontFamily: "var(--font-brand)" }}
+          >
+            FRONA
+          </span>
+        </button>
+
+        <div className="flex-1" />
+
+        <div className="flex items-center gap-1">
+          <NotificationDropdown />
+          <button
+            onClick={() => setMenuOpen(true)}
+            className="relative flex items-center justify-center h-10 w-10 text-surface text-sm font-semibold cursor-pointer rounded-full bg-accent hover:bg-accent-hover transition"
+            title={user?.email ?? "User"}
+          >
+            {initial}
+          </button>
+        </div>
+
+        {menuOpen && (
+          <>
+          <div className="fixed inset-0 z-[69] bg-black/40" onClick={() => setMenuOpen(false)} />
+          <div className="fixed inset-y-0 right-0 z-[70] w-[85vw] max-w-sm bg-surface shadow-xl flex flex-col transition-transform duration-200 ease-out">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+              <span className="text-base font-semibold text-text-primary">Account</span>
+              <button
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center justify-center h-10 w-10 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-tertiary transition"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {user && (
+                <div className="px-5 py-4 border-b border-border">
+                  <span className="text-sm text-text-secondary">{user.email}</span>
+                </div>
+              )}
+              <div className="py-2">
+                <button
+                  onClick={() => { router.push("/settings#models"); setMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-5 py-3 text-base text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+                >
+                  <CubeIcon className="h-5 w-5" />
+                  Models
+                </button>
+                <button
+                  onClick={() => { router.push("/settings#skills"); setMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-5 py-3 text-base text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+                >
+                  <PuzzlePieceIcon className="h-5 w-5" />
+                  Skills
+                </button>
+                <button
+                  onClick={() => { router.push("/settings#vault"); setMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-5 py-3 text-base text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+                >
+                  <KeyIcon className="h-5 w-5" />
+                  Vault
+                </button>
+                <div className="border-t border-border my-1" />
+                <button
+                  onClick={() => { router.push("/settings"); setMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-5 py-3 text-base text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+                >
+                  <Cog6ToothIcon className="h-5 w-5" />
+                  Settings
+                </button>
+                <button
+                  onClick={() => { handleLogout(); setMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-5 py-3 text-base text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+                >
+                  <ArrowRightStartOnRectangleIcon className="h-5 w-5" />
+                  Logout
+                </button>
+              </div>
+            </div>
+          </div>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-stretch h-20 pr-5 bg-surface-nav border-b border-border shrink-0">
@@ -92,7 +203,7 @@ export function TopBar() {
         <button
           onClick={() => setMenuOpen((v) => !v)}
           className={`relative flex items-center justify-center h-10 w-10 text-surface text-sm font-semibold cursor-pointer transition ${
-            menuOpen ? "rounded-t-xl rounded-b-none bg-surface-secondary text-text-primary z-[2] border border-border border-b-0" : "rounded-full bg-accent hover:bg-accent-hover"
+            menuOpen ? "rounded-t-xl rounded-b-none bg-surface-secondary text-text-primary z-[61] border border-border border-b-0" : "rounded-full bg-accent hover:bg-accent-hover"
           }`}
           title={user?.email ?? "User"}
         >
@@ -100,8 +211,8 @@ export function TopBar() {
         </button>
 
         {menuOpen && (
-          <div className="absolute right-0 top-full z-[1] w-52 rounded-xl rounded-tr-none border border-border bg-surface-secondary shadow-lg">
-            <div className="absolute -top-px right-0 w-[calc(theme(spacing.10)-3px)] h-[2px] bg-surface-secondary z-[1]" />
+          <div className="absolute right-0 top-full z-[60] w-52 rounded-xl rounded-tr-none border border-border bg-surface-secondary shadow-lg">
+            <div className="absolute -top-px right-0 w-[calc(theme(spacing.10)-3px)] h-[2px] bg-surface-secondary z-[60]" />
             <div className="pb-1">
               {user && (
                 <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
