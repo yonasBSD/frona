@@ -61,7 +61,7 @@ export function ChatHeader() {
   };
 
   return (
-    <div className="flex items-center border-b border-border px-6 py-3">
+    <div className="flex items-center border-b border-border px-4 md:px-6 py-3">
       <div className="flex-1 min-w-0">
         <h2 className="text-base font-semibold text-text-primary">
           {activeChat?.title ?? "New chat"}

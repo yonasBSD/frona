@@ -47,7 +47,7 @@ function HomeComposer() {
           <button
             key={action.label}
             onClick={() => handleSend(action.prompt)}
-            className="px-5 py-2.5 rounded-full border border-border text-base text-text-secondary hover:text-text-primary hover:bg-surface-tertiary transition cursor-pointer"
+            className="px-4 md:px-5 py-2.5 rounded-full border border-border text-sm md:text-base text-text-secondary hover:text-text-primary hover:bg-surface-tertiary transition cursor-pointer"
           >
             {action.label}
           </button>
@@ -63,15 +63,15 @@ export default function HomePage() {
 
   return (
     <div className="flex h-full items-center justify-center overflow-y-auto">
-      <div className="w-full max-w-3xl px-8 pb-20">
+      <div className="w-full max-w-3xl px-4 md:px-8 pb-20">
         <div className="mb-5">
           <div className="flex items-end gap-3 mb-2">
             <Logo size={42} headOnly />
-            <span className="text-2xl text-text-secondary">
+            <span className="text-xl md:text-2xl text-text-secondary">
               Hi{firstName ? ` ${firstName}` : ""}
             </span>
           </div>
-          <h1 className="text-4xl font-semibold text-text-primary">
+          <h1 className="text-2xl md:text-4xl font-semibold text-text-primary">
             Where should we start?
           </h1>
         </div>

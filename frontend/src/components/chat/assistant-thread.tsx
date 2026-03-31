@@ -13,7 +13,7 @@ export function AssistantThread() {
           <div />
         </ThreadPrimitive.If>
         <ThreadPrimitive.If empty={false}>
-          <div className="mx-auto w-full max-w-3xl px-6 py-4 space-y-3">
+          <div className="mx-auto w-full max-w-3xl px-3 md:px-6 py-4 space-y-3">
             <ThreadPrimitive.Messages
             components={{
               UserMessage: FronaUserMessage,
@@ -29,7 +29,7 @@ export function AssistantThread() {
             Scroll to bottom
           </button>
         </ThreadPrimitive.ScrollToBottom>
-        <div className="mx-auto w-full max-w-3xl px-6 pb-4">
+        <div className="mx-auto w-full max-w-3xl px-3 md:px-6 pb-4">
           <FronaComposer />
         </div>
       </ThreadPrimitive.ViewportFooter>

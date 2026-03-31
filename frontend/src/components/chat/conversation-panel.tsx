@@ -142,7 +142,7 @@ export function ConversationPanel() {
 
   if (activeTask) {
     return (
-      <div className="flex-1 overflow-hidden bg-surface flex flex-col">
+      <div className="flex-1 overflow-hidden bg-surface flex flex-col min-w-0">
         <div className="mx-auto w-full max-w-3xl">
           <TaskHeader />
         </div>
@@ -164,7 +164,7 @@ export function ConversationPanel() {
     (s.chatId == null && !activeChatId && s.slotId === pendingSlotId);
 
   return (
-    <div className="flex-1 overflow-hidden bg-surface flex flex-col">
+    <div className="flex-1 overflow-hidden bg-surface flex flex-col min-w-0">
       <div className="mx-auto w-full max-w-3xl">
         <ChatHeader />
       </div>
