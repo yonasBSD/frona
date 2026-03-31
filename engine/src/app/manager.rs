@@ -335,6 +335,10 @@ impl AppManager {
         let app_venv_bin = app_dir.join(".venv").join("bin");
         if app_venv_bin.exists() {
             extra_path_dirs.push(app_venv_bin.to_string_lossy().into_owned());
+            sandbox = sandbox.with_extra_env_vars(vec![(
+                "VIRTUAL_ENV".to_string(),
+                app_dir.join(".venv").to_string_lossy().into_owned(),
+            )]);
         }
         let app_bin = app_dir.join("bin");
         if app_bin.exists() {
