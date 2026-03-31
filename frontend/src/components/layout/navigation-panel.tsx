@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, Bars3Icon } from "@heroicons/react/24/outline";
+import { usePathname, useSearchParams, useRouter } from "next/navigation";
+import { ChevronLeftIcon, Bars3Icon, XMarkIcon, FolderIcon } from "@heroicons/react/24/outline";
 import { useNavigation } from "@/lib/navigation-context";
+import { useMobile } from "@/lib/use-mobile";
 import { TabBar } from "./tab-bar";
 import { ChatsTab } from "../nav/chats-tab";
 import { TasksTab } from "../nav/tasks-tab";
@@ -22,12 +24,36 @@ function setCookie(name: string, value: string, days = 365) {
   document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
 }
 
+function NavigationContent({ activeTab }: { activeTab: string }) {
+  return (
+    <div className="flex-1 overflow-y-auto">
+      {activeTab === "chat" && <ChatsTab />}
+      {activeTab === "tasks" && <TasksTab />}
+    </div>
+  );
+}
+
 export function NavigationPanel() {
-  const { activeTab } = useNavigation();
+  const { activeTab, mobileNavOpen, setMobileNavOpen } = useNavigation();
+  const mobile = useMobile();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
   const [collapsed, setCollapsed] = useState(() => getCookie(COOKIE_NAME) === "1");
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const dragging = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Close mobile nav on any route change (pathname or query params)
+  const prevUrl = useRef(pathname + searchParams.toString());
+  useEffect(() => {
+    const url = pathname + searchParams.toString();
+    if (url !== prevUrl.current) {
+      prevUrl.current = url;
+      if (mobileNavOpen) setMobileNavOpen(false);
+    }
+  }, [pathname, searchParams, mobileNavOpen, setMobileNavOpen]);
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => {
@@ -66,6 +92,54 @@ export function NavigationPanel() {
     };
   }, []);
 
+  // Mobile: overlay drawer
+  if (mobile) {
+    return (
+      <>
+        {/* Backdrop */}
+        {mobileNavOpen && (
+          <div
+            className="fixed inset-0 z-40 bg-black/40 transition-opacity"
+            onClick={() => setMobileNavOpen(false)}
+          />
+        )}
+        {/* Drawer */}
+        <div
+          className={`fixed inset-y-0 left-0 z-50 flex flex-col w-[85vw] max-w-sm bg-surface-nav border-r border-border shadow-xl transition-transform duration-200 ease-out ${
+            mobileNavOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          <div className="relative border-b border-border shrink-0">
+            <div className="w-[calc(100%-2.5rem)]">
+              <TabBar />
+            </div>
+            <button
+              onClick={() => setMobileNavOpen(false)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center h-10 w-10 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-tertiary transition"
+            >
+              <XMarkIcon className="h-5 w-5" />
+            </button>
+          </div>
+          <NavigationContent activeTab={activeTab} />
+          <div className="border-t border-border p-2">
+            <button
+              onClick={() => { router.push("/files"); setMobileNavOpen(false); }}
+              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+                pathname.startsWith("/files")
+                  ? "bg-surface-tertiary text-text-primary"
+                  : "text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+              }`}
+            >
+              <FolderIcon className="h-5 w-5" />
+              Files
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Desktop: collapsible sidebar
   if (collapsed) {
     return (
       <div
@@ -96,10 +170,7 @@ export function NavigationPanel() {
         <ChevronLeftIcon className="h-3 w-3" />
       </button>
 
-      <div className="flex-1 overflow-y-auto">
-        {activeTab === "chat" && <ChatsTab />}
-        {activeTab === "tasks" && <TasksTab />}
-      </div>
+      <NavigationContent activeTab={activeTab} />
 
       {/* Resize handle */}
       <div

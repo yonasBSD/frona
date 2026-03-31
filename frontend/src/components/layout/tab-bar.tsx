@@ -17,13 +17,13 @@ export function TabBar() {
         <button
           key={id}
           onClick={() => setActiveTab(id)}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition ${
+          className={`flex-1 flex items-center justify-center gap-1.5 py-3 md:py-2.5 text-sm md:text-xs font-medium transition ${
             activeTab === id
               ? "text-text-primary border-b-2 border-text-primary"
               : "text-text-tertiary hover:text-text-secondary"
           }`}
         >
-          <Icon className="h-4 w-4" />
+          <Icon className="h-5 w-5 md:h-4 md:w-4" />
           {label}
         </button>
       ))}
