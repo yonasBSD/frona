@@ -75,7 +75,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             port: 3001,
-            static_dir: "frontend/out".into(),
+            static_dir: "/app/static".into(),
             issuer_url: String::new(),
             max_concurrent_tasks: 10,
             sandbox_disabled: false,
@@ -309,7 +309,7 @@ impl Default for RetryConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 pub struct ModelGroupConfig {
     #[schemars(description = "Primary model ID (format: provider/model-id).")]
     pub main: String,
@@ -342,6 +342,16 @@ pub struct ModelProviderConfig {
     )]
     #[schemars(description = "Whether this provider is enabled.")]
     pub enabled: bool,
+}
+
+impl Default for ModelProviderConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            base_url: None,
+            enabled: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -669,6 +679,95 @@ fn redact(value: &mut serde_json::Value, path: &[&str]) {
     }
 }
 
+/// Recursively remove fields that match the default `Config` values,
+/// keeping config.yaml minimal with only user-changed values.
+pub fn strip_defaults(value: &mut serde_json::Value) {
+    let defaults = serde_json::to_value(Config::default()).unwrap_or_default();
+    strip_defaults_recursive(value, &defaults);
+
+    strip_map_entry_defaults::<ModelProviderConfig>(value, "providers");
+    strip_map_entry_defaults::<ModelGroupConfig>(value, "models");
+}
+
+fn strip_map_entry_defaults<T: Default + serde::Serialize>(
+    value: &mut serde_json::Value,
+    key: &str,
+) {
+    let Some(map) = value.get_mut(key).and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let entry_defaults = serde_json::to_value(T::default()).unwrap_or_default();
+    let keys: Vec<String> = map.keys().cloned().collect();
+    for k in keys {
+        if let Some(entry) = map.get_mut(&k) {
+            strip_defaults_recursive(entry, &entry_defaults);
+            if entry.as_object().is_some_and(|o| o.is_empty()) {
+                map.remove(&k);
+            }
+        }
+    }
+    if map.is_empty() {
+        value.as_object_mut().unwrap().remove(key);
+    }
+}
+
+fn strip_defaults_recursive(value: &mut serde_json::Value, defaults: &serde_json::Value) {
+    let (Some(obj), Some(def_obj)) = (value.as_object_mut(), defaults.as_object()) else {
+        return;
+    };
+
+    let keys: Vec<String> = obj.keys().cloned().collect();
+    for key in keys {
+        let Some(def_val) = def_obj.get(&key) else {
+            continue;
+        };
+        let Some(val) = obj.get_mut(&key) else {
+            continue;
+        };
+
+        if val.is_object() && def_val.is_object() {
+            strip_defaults_recursive(val, def_val);
+            if val.as_object().is_some_and(|o| o.is_empty()) {
+                obj.remove(&key);
+            }
+        } else if values_equal(val, def_val) {
+            obj.remove(&key);
+        }
+    }
+}
+
+fn values_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a, b) {
+        (serde_json::Value::Number(a), serde_json::Value::Number(b)) => a.as_f64() == b.as_f64(),
+        _ => a == b,
+    }
+}
+
+/// Strip defaults from `value` and persist to `path`.
+/// If all values are defaults, deletes the file instead.
+pub fn persist_config(value: &mut serde_json::Value, path: &str) -> Result<(), String> {
+    strip_defaults(value);
+
+    if value.as_object().is_some_and(|o| o.is_empty()) {
+        let _ = std::fs::remove_file(path);
+        return Ok(());
+    }
+
+    let json_str = serde_json::to_string(value)
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
+    let yaml_val: serde_yaml::Value = serde_yaml::from_str(&json_str)
+        .map_err(|e| format!("Failed to convert config to YAML: {e}"))?;
+    let yaml_str = serde_yaml::to_string(&yaml_val)
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
+
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    std::fs::write(path, &yaml_str)
+        .map_err(|e| format!("Failed to write config file: {e}"))
+}
+
 /// Deep-merge `patch` into `base`.
 /// - Objects: recursive merge
 /// - `null` values: remove the key
@@ -824,6 +923,148 @@ mod tests {
         };
         let path = config.profile_path("bob", "github");
         assert_eq!(path, PathBuf::from("/data/profiles/bob/github"));
+    }
+
+    #[test]
+    fn strip_defaults_removes_all_defaults() {
+        let mut value = serde_json::to_value(Config::default()).unwrap();
+        strip_defaults(&mut value);
+        assert_eq!(value, serde_json::json!({}));
+    }
+
+    #[test]
+    fn strip_defaults_keeps_changed_values() {
+        let mut value = serde_json::json!({
+            "server": { "port": 8080, "static_dir": "/app/static" },
+            "auth": { "encryption_secret": "dev-secret-change-in-production" },
+        });
+        strip_defaults(&mut value);
+        assert_eq!(value, serde_json::json!({
+            "server": { "port": 8080 },
+        }));
+    }
+
+    #[test]
+    fn strip_defaults_keeps_non_default_fields() {
+        let mut value = serde_json::json!({
+            "server": { "cors_origins": "https://example.com" },
+        });
+        strip_defaults(&mut value);
+        assert_eq!(value, serde_json::json!({
+            "server": { "cors_origins": "https://example.com" },
+        }));
+    }
+
+    #[test]
+    fn strip_defaults_handles_integer_vs_float() {
+        let mut value = serde_json::json!({
+            "server": { "sandbox_max_agent_cpu_pct": 95, "sandbox_max_agent_memory_pct": 80 },
+        });
+        strip_defaults(&mut value);
+        assert_eq!(value, serde_json::json!({}));
+    }
+
+    #[test]
+    fn strip_defaults_removes_provider_entry_defaults() {
+        let mut value = serde_json::json!({
+            "providers": {
+                "anthropic": { "base_url": null, "enabled": true },
+                "openai": { "api_key": "sk-123", "enabled": true },
+            },
+        });
+        strip_defaults(&mut value);
+        assert_eq!(value, serde_json::json!({
+            "providers": {
+                "openai": { "api_key": "sk-123" },
+            },
+        }));
+    }
+
+    #[test]
+    fn strip_defaults_removes_providers_key_when_all_default() {
+        let mut value = serde_json::json!({
+            "providers": {
+                "anthropic": { "base_url": null, "enabled": true },
+            },
+        });
+        strip_defaults(&mut value);
+        assert_eq!(value, serde_json::json!({}));
+    }
+
+    #[test]
+    fn strip_defaults_removes_model_group_entry_defaults() {
+        let mut value = serde_json::json!({
+            "models": {
+                "coding": {
+                    "main": "anthropic/claude-opus-4-6",
+                    "fallbacks": [],
+                    "max_tokens": 32000,
+                    "temperature": null,
+                    "context_window": 200000,
+                    "retry": {
+                        "max_retries": 10,
+                        "initial_backoff_ms": 1000,
+                        "backoff_multiplier": 2,
+                        "max_backoff_ms": 60000,
+                    },
+                },
+            },
+        });
+        strip_defaults(&mut value);
+        assert_eq!(value, serde_json::json!({
+            "models": {
+                "coding": {
+                    "main": "anthropic/claude-opus-4-6",
+                    "max_tokens": 32000,
+                    "context_window": 200000,
+                },
+            },
+        }));
+    }
+
+    #[test]
+    fn persist_config_writes_only_non_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let path_str = path.to_str().unwrap();
+
+        let mut value = serde_json::json!({
+            "server": { "port": 8080, "static_dir": "/app/static" },
+        });
+        persist_config(&mut value, path_str).unwrap();
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_yaml::from_str(&written).unwrap();
+        assert_eq!(parsed, serde_json::json!({ "server": { "port": 8080 } }));
+    }
+
+    #[test]
+    fn persist_config_deletes_file_when_all_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let path_str = path.to_str().unwrap();
+
+        std::fs::write(&path, "server:\n  port: 3001\n").unwrap();
+        assert!(path.exists());
+
+        let mut value = serde_json::to_value(Config::default()).unwrap();
+        persist_config(&mut value, path_str).unwrap();
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn persist_config_noop_when_no_file_and_all_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let path_str = path.to_str().unwrap();
+
+        assert!(!path.exists());
+
+        let mut value = serde_json::to_value(Config::default()).unwrap();
+        persist_config(&mut value, path_str).unwrap();
+
+        assert!(!path.exists());
     }
 
 }

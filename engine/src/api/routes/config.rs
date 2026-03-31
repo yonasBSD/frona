@@ -3,7 +3,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 
 use crate::core::config::{
-    Config, config_file_path, deep_merge, redact_config_for_api,
+    Config, config_file_path, deep_merge, persist_config, redact_config_for_api,
 };
 use crate::core::state::AppState;
 
@@ -64,31 +64,8 @@ async fn update_config(
             format!("Invalid config: {e}"),
         )))?;
 
-    // Round-trip through JSON string → YAML value to avoid
-    // $serde_json::private::Number serialization artifacts
-    let json_str = serde_json::to_string(&base)
-        .map_err(|e| ApiError(crate::core::error::AppError::Internal(
-            format!("Failed to serialize config: {e}"),
-        )))?;
-    let yaml_val: serde_yaml::Value = serde_yaml::from_str(&json_str)
-        .map_err(|e| ApiError(crate::core::error::AppError::Internal(
-            format!("Failed to convert config to YAML: {e}"),
-        )))?;
-    let yaml_str = serde_yaml::to_string(&yaml_val)
-        .map_err(|e| ApiError(crate::core::error::AppError::Internal(
-            format!("Failed to serialize config: {e}"),
-        )))?;
-
-    // Ensure parent directory exists
-    if let Some(parent) = std::path::Path::new(&path).parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-
-    // Write to disk
-    std::fs::write(&path, &yaml_str)
-        .map_err(|e| ApiError(crate::core::error::AppError::Internal(
-            format!("Failed to write config file: {e}"),
-        )))?;
+    persist_config(&mut base, &path)
+        .map_err(|e| ApiError(crate::core::error::AppError::Internal(e)))?;
 
     // Mark setup as completed
     state.set_runtime_config("setup_completed", "true").await?;
