@@ -32,6 +32,10 @@ interface NavigationContextValue {
   activeTab: ActiveTab;
   loading: boolean;
   setActiveTab: (tab: ActiveTab) => void;
+  mobileNavOpen: boolean;
+  setMobileNavOpen: (open: boolean) => void;
+  mobileSubNavOpen: boolean;
+  setMobileSubNavOpen: (open: boolean) => void;
   refresh: () => Promise<void>;
   addStandaloneChat: (chat: ChatResponse) => void;
   updateChatTitle: (chatId: string, title: string) => void;
@@ -68,6 +72,8 @@ export function NavigationProvider({
   const [showArchived, setShowArchived] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>("chat");
   const [loading, setLoading] = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileSubNavOpen, setMobileSubNavOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -224,6 +230,10 @@ export function NavigationProvider({
         activeTab,
         loading,
         setActiveTab,
+        mobileNavOpen,
+        setMobileNavOpen,
+        mobileSubNavOpen,
+        setMobileSubNavOpen,
         refresh,
         addStandaloneChat,
         updateChatTitle,
