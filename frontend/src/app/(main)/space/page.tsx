@@ -6,7 +6,7 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { api } from "@/lib/api-client";
 import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
-import { useFronaRuntime } from "@/lib/assistant-runtime";
+import { useChatRuntime } from "@/lib/use-chat-runtime";
 import { FronaComposer } from "@/components/chat/frona-composer";
 import type { Attachment, ChatResponse } from "@/lib/types";
 
@@ -14,7 +14,7 @@ function SpaceComposer({ spaceId }: { spaceId: string }) {
   const router = useRouter();
   const { refresh } = useNavigation();
   const { setPendingMessage } = useSession();
-  const { runtime } = useFronaRuntime({ agentId: "system" });
+  const { runtime } = useChatRuntime({ agentId: "system" });
 
   const handleSend = useCallback((content: string, attachments?: Attachment[]) => {
     api.post<ChatResponse>("/api/chats", { space_id: spaceId, agent_id: "system" }).then((chat) => {

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { MessagePrimitive, AttachmentPrimitive } from "@assistant-ui/react";
 import type { CompleteAttachment } from "@assistant-ui/react";
 import { presignFile } from "@/lib/api-client";
-import { getBackendAttachment } from "@/lib/chat-adapter";
+import { getBackendAttachment } from "@/lib/use-chat-runtime";
 import { MarkdownText } from "./markdown-text";
 
 function usePresignedUrl(attachmentId: string) {

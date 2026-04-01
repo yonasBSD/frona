@@ -6,7 +6,8 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
 import { ChatProvider } from "@/lib/chat-context";
-import { useFronaRuntime } from "@/lib/assistant-runtime";
+import { useChatRuntime } from "@/lib/use-chat-runtime";
+import { RetryContext } from "@/lib/retry-context";
 import { ChatHeader } from "./chat-header";
 import { TaskHeader } from "./task-header";
 import { AssistantThread } from "./assistant-thread";
@@ -33,7 +34,7 @@ function ChatView({
     onChatPromoted?.(chat.id);
   }, [addStandaloneChat, setActiveChat, onChatPromoted]);
 
-  const { runtime, loaded, sendMessage } = useFronaRuntime({ chatId, agentId, onChatCreated });
+  const { runtime, loaded, sendMessage, retryInfo } = useChatRuntime({ chatId, agentId, onChatCreated });
 
   const pendingHandled = useRef(false);
   useEffect(() => {
@@ -54,13 +55,15 @@ function ChatView({
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {currentChatId ? (
-        <ChatProvider chatId={currentChatId} agentId={agentId}>
-          {content}
-        </ChatProvider>
-      ) : (
-        content
-      )}
+      <RetryContext value={retryInfo}>
+        {currentChatId ? (
+          <ChatProvider chatId={currentChatId} agentId={agentId}>
+            {content}
+          </ChatProvider>
+        ) : (
+          content
+        )}
+      </RetryContext>
     </AssistantRuntimeProvider>
   );
 }
@@ -179,7 +182,7 @@ export function ConversationPanel() {
             }
           >
             <ChatView
-              chatId={s.slotId.startsWith("pending-") ? undefined : (s.chatId ?? undefined)}
+              chatId={s.chatId ?? undefined}
               agentId={s.agentId}
               onChatPromoted={s.chatId == null ? (chatId) => promotePendingSlot(s.slotId, chatId) : undefined}
             />

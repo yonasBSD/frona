@@ -169,6 +169,7 @@ export interface ToolExecution {
   duration_ms: number;
   tool_data?: MessageTool;
   system_prompt?: string;
+  description?: string;
   turn_text?: string;
   created_at: string;
 }

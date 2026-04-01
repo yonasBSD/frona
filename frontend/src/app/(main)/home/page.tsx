@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth";
-import { useFronaRuntime } from "@/lib/assistant-runtime";
+import { useChatRuntime } from "@/lib/use-chat-runtime";
 import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
 import { FronaComposer } from "@/components/chat/frona-composer";
@@ -24,7 +24,7 @@ function HomeComposer() {
   const router = useRouter();
   const { agents, addStandaloneChat } = useNavigation();
   const { setPendingMessage } = useSession();
-  const { runtime } = useFronaRuntime({ agentId: "system" });
+  const { runtime } = useChatRuntime({ agentId: "system" });
   const systemAgent = agents.find((a) => a.id === "system");
   const agentName = agentDisplayName(systemAgent?.id, systemAgent?.name);
 

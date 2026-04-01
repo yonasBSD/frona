@@ -504,6 +504,7 @@ impl ChatService {
         tool_call_id: &str,
         tool_name: &str,
         arguments: &serde_json::Value,
+        description: Option<String>,
         turn_text: Option<String>,
     ) -> Result<ToolExecution, AppError> {
         let te = ToolExecution {
@@ -519,6 +520,7 @@ impl ChatService {
             duration_ms: 0,
             tool_data: None,
             system_prompt: None,
+            description,
             turn_text,
             created_at: chrono::Utc::now(),
         };

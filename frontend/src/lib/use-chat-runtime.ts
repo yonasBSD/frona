@@ -1,0 +1,362 @@
+"use client";
+
+import { useMemo, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
+import { useExternalStoreRuntime } from "@assistant-ui/react";
+import type { CompleteAttachment, AppendMessage, AttachmentAdapter, PendingAttachment } from "@assistant-ui/react";
+import type { ExternalStoreAdapter } from "@assistant-ui/react";
+import { ChatStore, type RetryInfo } from "./chat-store";
+import { sseBus } from "./sse-event-bus";
+import { sendMessage as apiSendMessage, cancelGeneration, api, fileDownloadUrl, uploadFile } from "./api-client";
+import type { MessageResponse, ChatResponse, Attachment } from "./types";
+
+// ---------------------------------------------------------------------------
+// Attachment registry — shared between composer and message rendering
+// ---------------------------------------------------------------------------
+
+const backendAttachmentRegistry = new Map<string, Attachment>();
+
+export function registerBackendAttachment(id: string, attachment: Attachment) {
+  backendAttachmentRegistry.set(id, attachment);
+}
+
+export function getBackendAttachment(id: string): Attachment | undefined {
+  return backendAttachmentRegistry.get(id);
+}
+
+function convertBackendAttachment(att: Attachment): CompleteAttachment {
+  const username = att.owner.startsWith("user:") ? att.owner.substring(5) : "";
+  const url = fileDownloadUrl(att, username);
+  const isImage = att.content_type.startsWith("image/");
+  registerBackendAttachment(att.path, att);
+  return {
+    id: att.path,
+    type: isImage ? "image" : "file",
+    name: att.filename,
+    contentType: att.content_type,
+    status: { type: "complete" },
+    content: isImage
+      ? [{ type: "image", image: url }]
+      : [{ type: "text", text: `[file: ${att.filename}]` }],
+  };
+}
+
+export const fronaAttachmentAdapter: AttachmentAdapter = {
+  accept: "*/*",
+
+  async add({ file }: { file: File }): Promise<PendingAttachment> {
+    const uploaded = await uploadFile(file);
+    backendAttachmentRegistry.set(uploaded.path, uploaded);
+    return {
+      id: uploaded.path,
+      type: "file",
+      name: uploaded.filename,
+      contentType: uploaded.content_type,
+      status: { type: "requires-action", reason: "composer-send" },
+      content: [],
+      file,
+    };
+  },
+
+  async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
+    const isImage = attachment.contentType?.startsWith("image/");
+    return {
+      ...attachment,
+      status: { type: "complete" },
+      content: isImage && attachment.file
+        ? [{ type: "image", image: URL.createObjectURL(attachment.file) }]
+        : [{ type: "text", text: `[file: ${attachment.name}]` }],
+    };
+  },
+
+  async remove(attachment) {
+    backendAttachmentRegistry.delete(attachment.id);
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Message conversion: MessageResponse → assistant-ui format
+// ---------------------------------------------------------------------------
+
+type AssistantContentPart =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
+  | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, string | number | boolean | null>; argsText: string; result?: string };
+
+/**
+ * If the text part is empty but a tool call has turnText, promote the last
+ * turnText to the main text and strip it from all tool call args.
+ */
+function promoteTurnText(parts: AssistantContentPart[]): AssistantContentPart[] {
+  const textPart = parts.find((p) => p.type === "text");
+  if (textPart && "text" in textPart && textPart.text.trim()) return parts;
+
+  let lastTurnText = "";
+  for (const p of parts) {
+    if (p.type === "tool-call" && typeof (p.args as Record<string, unknown>)?.turnText === "string") {
+      lastTurnText = (p.args as Record<string, unknown>).turnText as string;
+    }
+  }
+  if (!lastTurnText) return parts;
+
+  return parts.map(p => {
+    if (p.type === "text") return { ...p, text: lastTurnText };
+    if (p.type === "tool-call" && (p.args as Record<string, unknown>)?.turnText) {
+      const { turnText: _, ...rest } = p.args;
+      return { ...p, args: rest };
+    }
+    return p;
+  });
+}
+
+function convertMessage(msg: MessageResponse) {
+  if (msg.role === "user" || msg.role === "contact" || msg.role === "livecall") {
+    const attachments = msg.attachments?.map(convertBackendAttachment);
+    return {
+      id: msg.id,
+      role: "user" as const,
+      content: [{ type: "text" as const, text: msg.content || "" }],
+      createdAt: new Date(msg.created_at),
+      ...(attachments?.length ? { attachments } : {}),
+      metadata: {
+        custom: {
+          originalRole: msg.role,
+          contactId: msg.contact_id,
+        },
+      },
+    };
+  }
+
+  if (msg.role === "agent" || msg.role === "taskcompletion" || (msg.role === "system" && msg.event)) {
+    const content: AssistantContentPart[] = [];
+
+    if (msg.reasoning) {
+      content.push({ type: "reasoning", text: msg.reasoning });
+    }
+    if (msg.content) {
+      content.push({ type: "text", text: msg.content });
+    }
+    if (!msg.content && !msg.reasoning && !msg.event) {
+      content.push({ type: "text", text: "" });
+    }
+
+    if (msg.tool_executions?.length) {
+      for (const te of msg.tool_executions) {
+        if (te.tool_data) {
+          const toolName = te.tool_data.type;
+          const status = te.tool_data.data.status;
+          const resolved = status === "resolved" || status === "denied";
+          const toolData = te.tool_data.data as Record<string, string | number | boolean | null>;
+          const response = "response" in te.tool_data.data
+            ? (te.tool_data.data as { response?: string | null }).response
+            : null;
+          content.push({
+            type: "tool-call",
+            toolCallId: te.id,
+            toolName,
+            args: toolData,
+            argsText: JSON.stringify(toolData),
+            ...(resolved && response != null ? { result: response } : {}),
+            ...(resolved && response == null ? { result: String(status) } : {}),
+          });
+        } else {
+          content.push({
+            type: "tool-call",
+            toolCallId: te.tool_call_id,
+            toolName: te.name,
+            args: {
+              description: te.description ?? te.name,
+              ...te.arguments,
+              ...(te.turn_text ? { turnText: te.turn_text } : {}),
+            } as Record<string, string | number | boolean | null>,
+            argsText: JSON.stringify(te.arguments || {}),
+            result: te.result,
+          });
+        }
+      }
+    }
+
+    // Only promote turn text on completed messages. During streaming,
+    // keep turnText in tool-call args so they render as bubbles between tools.
+    const finalContent = msg.status === "executing" ? content : promoteTurnText(content);
+
+    return {
+      id: msg.id,
+      role: "assistant" as const,
+      content: finalContent,
+      createdAt: new Date(msg.created_at),
+      status: msg.tool_executions?.some(te => te.tool_data && te.tool_data.data.status === "pending")
+        ? { type: "requires-action" as const, reason: "tool-calls" as const }
+        : msg.status === "executing"
+          ? { type: "running" as const }
+          : { type: "complete" as const, reason: "stop" as const },
+      metadata: {
+        custom: {
+          agentId: msg.agent_id,
+          originalRole: msg.role,
+        },
+      },
+    };
+  }
+
+  // System messages without events — skip
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// useChatRuntime hook
+// ---------------------------------------------------------------------------
+
+export interface ChatRuntimeOptions {
+  chatId?: string;
+  agentId: string;
+  onChatCreated?: (chat: ChatResponse) => void;
+}
+
+export function useChatRuntime({ chatId, agentId, onChatCreated }: ChatRuntimeOptions) {
+  const currentChatIdRef = useRef<string | null>(chatId ?? null);
+  currentChatIdRef.current = chatId ?? currentChatIdRef.current;
+  const onChatCreatedRef = useRef(onChatCreated);
+  onChatCreatedRef.current = onChatCreated;
+
+  // One store per ChatView mount — persists across chatId changes (pending → real)
+  const storeRef = useRef<ChatStore | null>(null);
+  if (!storeRef.current) {
+    storeRef.current = new ChatStore();
+  }
+  const store = storeRef.current;
+
+  // Subscribe to store changes for re-rendering
+  const subscribe = useCallback((cb: () => void) => store.subscribe(cb), [store]);
+  const storeSnapshot = useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot(),
+  );
+
+  // Load messages for existing chats. Skip if the store already has messages
+  // (new chat: optimistic user message was added before chatId existed).
+  useEffect(() => {
+    if (chatId && store.messages.length === 0) {
+      store.loadMessages(chatId);
+    } else {
+      store.markLoaded();
+    }
+  }, [chatId, store]);
+
+  // Subscribe to SSE events for the chat
+  useEffect(() => {
+    if (!chatId) return;
+
+    const controller = new AbortController();
+    const events = sseBus.subscribe(chatId, controller.signal);
+
+    (async () => {
+      for await (const event of events) {
+        store.handleEvent(event);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [store, chatId]);
+
+  // Reload messages on SSE reconnect
+  useEffect(() => {
+    return sseBus.onReconnect(() => {
+      const id = currentChatIdRef.current;
+      if (id) store.loadMessages(id);
+    });
+  }, [store]);
+
+  // onNew callback — creates chat if needed, sends message to backend
+  const onNew = useCallback(async (message: AppendMessage) => {
+    const text = message.content
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+
+    const attachments: Attachment[] = [];
+    if ("attachments" in message && message.attachments) {
+      for (const att of message.attachments) {
+        const backend = backendAttachmentRegistry.get(att.id);
+        if (backend) attachments.push(backend);
+      }
+    }
+
+    let sendChatId = currentChatIdRef.current;
+    if (!sendChatId) {
+      // Standalone composers (home/space page) handle chat creation themselves.
+      // Only create a chat here if there's a promotion callback.
+      if (!onChatCreatedRef.current) return;
+      const chat = await api.post<ChatResponse>("/api/chats", { agent_id: agentId });
+      sendChatId = chat.id;
+      currentChatIdRef.current = sendChatId;
+      // This triggers slot promotion → chatId prop change → SSE effect runs.
+      // sseBus buffers events until the subscriber is ready.
+      onChatCreatedRef.current(chat);
+    }
+
+    store.addUserMessage(text, attachments.length ? attachments : undefined);
+
+    const body = attachments.length
+      ? { content: text, attachments }
+      : { content: text };
+
+    try {
+      await apiSendMessage(sendChatId, body);
+    } catch {
+      store.clearStreaming();
+    }
+  }, [agentId, store]);
+
+  const onCancel = useCallback(async () => {
+    const id = currentChatIdRef.current;
+    if (id) {
+      await cancelGeneration(id).catch(() => {});
+    }
+  }, []);
+
+  // Build the external store adapter with MessageResponse as the source type
+  const adapter: ExternalStoreAdapter<MessageResponse> = useMemo(() => ({
+    messages: storeSnapshot.messages,
+    isRunning: storeSnapshot.isRunning,
+    convertMessage: (msg: MessageResponse) => convertMessage(msg) ?? {
+      id: msg.id,
+      role: "assistant" as const,
+      content: [],
+      createdAt: new Date(msg.created_at),
+      status: { type: "complete" as const, reason: "stop" as const },
+    },
+    onNew,
+    onCancel,
+    onAddToolResult: ({ toolCallId, result }) => {
+      store.resolveToolCall(toolCallId, String(result ?? ""));
+    },
+    adapters: {
+      attachments: fronaAttachmentAdapter,
+    },
+  }), [storeSnapshot.messages, storeSnapshot.isRunning, onNew, onCancel]);
+
+  const runtime = useExternalStoreRuntime(adapter);
+
+  // Programmatic send — used for pending messages
+  const sendMessage = useCallback((content: string, attachments?: Attachment[]) => {
+    if (attachments?.length) {
+      for (const att of attachments) {
+        registerBackendAttachment(att.path, att);
+      }
+    }
+    runtime.thread.append({
+      role: "user",
+      content: [{ type: "text", text: content }],
+      attachments: attachments?.map(convertBackendAttachment),
+    });
+  }, [runtime]);
+
+  return {
+    runtime,
+    loaded: storeSnapshot.loaded,
+    sendMessage,
+    retryInfo: storeSnapshot.retryInfo,
+  };
+}
+
+export type { RetryInfo };

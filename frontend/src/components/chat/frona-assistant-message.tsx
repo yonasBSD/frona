@@ -7,7 +7,7 @@ import { MarkdownText } from "./markdown-text";
 import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/16/solid";
 import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
-import { useRetryState } from "@/lib/retry-state";
+import { useRetryInfo } from "@/lib/retry-context";
 import { agentDisplayName } from "@/lib/types";
 import { DefaultToolCallUI } from "./tool-uis/default-tool-call-ui";
 import { ToolTimelineProvider } from "./tool-uis/tool-timeline-context";
@@ -112,7 +112,7 @@ const RETRY_LABELS: Record<string, string> = {
 };
 
 function RetryBadge() {
-  const retry = useRetryState();
+  const retry = useRetryInfo();
   const [remaining, setRemaining] = useState(0);
 
   useEffect(() => {

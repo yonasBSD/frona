@@ -230,9 +230,10 @@ async fn execute_tool_calls(
 
         let tool_name = &tool_call.function.name;
         let mut arguments = tool_call.function.arguments.clone();
-        if let Some(obj) = arguments.as_object_mut() {
-            obj.remove("description");
-        }
+        let description = arguments
+            .as_object_mut()
+            .and_then(|obj| obj.remove("description"))
+            .and_then(|v| v.as_str().map(String::from));
 
         tracing::debug!(tool = %tool_name, args = %arguments, "Executing tool");
 
@@ -251,6 +252,7 @@ async fn execute_tool_calls(
                 &tool_call.id,
                 tool_name,
                 &arguments,
+                description,
                 current_turn_text,
             )
             .await?;

@@ -5,7 +5,7 @@ import { ComposerPrimitive, ThreadPrimitive, AttachmentPrimitive, useComposerRun
 import { PaperAirplaneIcon, StopIcon, PlusIcon, XMarkIcon } from "@heroicons/react/24/solid";
 import { ArrowUpTrayIcon, CloudIcon, FolderOpenIcon } from "@heroicons/react/24/outline";
 import { FileBrowserModal } from "@/components/chat/file-browser-modal";
-import { registerBackendAttachment, getBackendAttachment } from "@/lib/chat-adapter";
+import { registerBackendAttachment, getBackendAttachment } from "@/lib/use-chat-runtime";
 import type { Attachment } from "@/lib/types";
 
 function ComposerAttachmentBadge() {

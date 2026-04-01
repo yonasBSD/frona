@@ -62,7 +62,12 @@ export function ToolTimelineProvider({
       .map((p) => p.toolCallId!);
   }, [message.role, message.content]);
 
-  const totalTools = toolCallIds.length;
+  // Stabilise the ID list so downstream memos only recompute when the
+  // actual set of tool-call IDs changes, not on every content reference change.
+  const toolCallKey = toolCallIds.join(",");
+  const stableToolCallIds = useMemo(() => toolCallIds, [toolCallKey]);
+
+  const totalTools = stableToolCallIds.length;
 
   // Messages loaded from history start collapsed; live messages start expanded
   const [collapsed, setCollapsed] = useState(
@@ -73,14 +78,14 @@ export function ToolTimelineProvider({
   // Window tools to last MAX_VISIBLE unless user explicitly expanded
   const visibleSet = useMemo(() => {
     if (userToggled) return null; // user toggled — show all
-    if (toolCallIds.length <= MAX_VISIBLE) return null; // fits — show all
+    if (stableToolCallIds.length <= MAX_VISIBLE) return null; // fits — show all
     const set = new Set<string>();
-    const start = Math.max(0, toolCallIds.length - MAX_VISIBLE);
-    for (let i = start; i < toolCallIds.length; i++) {
-      set.add(toolCallIds[i]);
+    const start = Math.max(0, stableToolCallIds.length - MAX_VISIBLE);
+    for (let i = start; i < stableToolCallIds.length; i++) {
+      set.add(stableToolCallIds[i]);
     }
     return set;
-  }, [toolCallIds, userToggled]);
+  }, [stableToolCallIds, userToggled]);
 
   // Expand while inference is running, collapse after it finishes
   useEffect(() => {
@@ -110,18 +115,18 @@ export function ToolTimelineProvider({
 
   const isLastVisible = useCallback(
     (toolCallId: string) => {
-      return toolCallId === toolCallIds[toolCallIds.length - 1];
+      return toolCallId === stableToolCallIds[stableToolCallIds.length - 1];
     },
-    [toolCallIds],
+    [stableToolCallIds],
   );
 
   const firstVisibleId = useMemo(() => {
-    if (!visibleSet) return toolCallIds[0] ?? null;
-    for (const id of toolCallIds) {
+    if (!visibleSet) return stableToolCallIds[0] ?? null;
+    for (const id of stableToolCallIds) {
       if (visibleSet.has(id)) return id;
     }
     return null;
-  }, [toolCallIds, visibleSet]);
+  }, [stableToolCallIds, visibleSet]);
 
   const isFirstVisible = useCallback(
     (toolCallId: string) => toolCallId === firstVisibleId,
@@ -130,9 +135,9 @@ export function ToolTimelineProvider({
 
   const toolIndexMap = useMemo(() => {
     const map = new Map<string, number>();
-    toolCallIds.forEach((id, i) => map.set(id, i + 1));
+    stableToolCallIds.forEach((id, i) => map.set(id, i + 1));
     return map;
-  }, [toolCallIds]);
+  }, [stableToolCallIds]);
 
   const getToolIndex = useCallback(
     (toolCallId: string) => toolIndexMap.get(toolCallId) ?? 0,

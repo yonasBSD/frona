@@ -75,6 +75,7 @@ fn tool_execution(chat_id: &str, message_id: &str, turn: u32, name: &str) -> Too
         duration_ms: 100,
         tool_data: None,
         system_prompt: None,
+        description: None,
         turn_text: None,
         created_at: Utc::now(),
     }

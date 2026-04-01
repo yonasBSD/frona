@@ -98,6 +98,8 @@ pub struct ToolExecution {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_text: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -119,6 +121,8 @@ pub struct ToolExecutionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_text: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -138,6 +142,7 @@ impl From<ToolExecution> for ToolExecutionResponse {
             duration_ms: te.duration_ms,
             tool_data: te.tool_data,
             system_prompt: te.system_prompt,
+            description: te.description,
             turn_text: te.turn_text,
             created_at: te.created_at,
         }

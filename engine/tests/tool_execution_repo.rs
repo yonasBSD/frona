@@ -28,6 +28,7 @@ fn test_tool_execution(chat_id: &str, message_id: &str, turn: u32, name: &str) -
         duration_ms: 42,
         tool_data: None,
         system_prompt: None,
+        description: None,
         turn_text: None,
         created_at: Utc::now(),
     }
@@ -205,6 +206,7 @@ async fn begin_creates_incomplete_record() {
         duration_ms: 0,
         tool_data: None,
         system_prompt: None,
+        description: None,
         turn_text: Some("Searching for info:".into()),
         created_at: Utc::now(),
     };
@@ -267,6 +269,7 @@ async fn begin_without_finish_leaves_incomplete() {
         duration_ms: 0,
         tool_data: None,
         system_prompt: None,
+        description: None,
         turn_text: None,
         created_at: Utc::now(),
     };
