@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::execution;
 use crate::agent::task::models::{Task, TaskKind, TaskStatus};
+use crate::chat::broadcast::BroadcastEventKind;
 use crate::chat::message::models::{MessageEvent, MessageRole};
 use crate::inference::tool_execution::MessageTool;
 use crate::chat::models::CreateChatRequest;
@@ -150,6 +151,7 @@ impl TaskExecutor {
         }
 
         let chat_id = self.ensure_task_chat(&mut task).await?;
+        let event_sender = self.app_state.broadcast_service.create_event_sender(&task.user_id, &chat_id);
 
         self.app_state
             .task_service
@@ -204,9 +206,12 @@ impl TaskExecutor {
             match result {
                 Ok(execution::AgentLoopOutcome { response }) => match response {
                     InferenceResponse::Completed { text, attachments, lifecycle_event, reasoning, .. } => {
-                        let _ = self.app_state.chat_service
+                        if let Ok(msg) = self.app_state.chat_service
                             .complete_agent_message(&agent_msg_id, text.clone(), attachments, reasoning)
-                            .await;
+                            .await
+                        {
+                            event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
+                        }
 
                         if let Some(event) = lifecycle_event {
                             let action = self.lifecycle_action_from_event(
@@ -225,8 +230,8 @@ impl TaskExecutor {
                         }
                         continue;
                     }
-                    InferenceResponse::ExternalToolPending { .. } => {
-                        // Tool loop already persisted all tool executions
+                    InferenceResponse::ExternalToolPending { tool_execution, .. } => {
+                        event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution });
                         self.wait_for_resolution(&task.id, &cancel_token).await?;
                         continue;
                     }
@@ -234,6 +239,9 @@ impl TaskExecutor {
                         let _ = self.app_state.chat_service
                             .complete_agent_message(&agent_msg_id, text, vec![], None)
                             .await;
+                        event_sender.send_kind(BroadcastEventKind::InferenceCancelled {
+                            reason: "Task cancelled".to_string(),
+                        });
                         self.handle_cancelled(&task).await?;
                         return Ok(());
                     }
@@ -241,6 +249,9 @@ impl TaskExecutor {
                 Err(e) => {
                     let _ = self.app_state.chat_service
                         .fail_agent_message(&agent_msg_id).await;
+                    event_sender.send_kind(BroadcastEventKind::InferenceError {
+                        error: e.to_string(),
+                    });
                     self.handle_error(&task, &e).await?;
                     return Ok(());
                 }
