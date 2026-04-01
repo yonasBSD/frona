@@ -49,6 +49,53 @@ pub fn configurable_tools() -> &'static [String] {
     CONFIGURABLE_TOOLS.get().map(|v| v.as_slice()).unwrap_or(&[])
 }
 
+/// Parse a `run_at` argument that can be a unix timestamp (number or string) or ISO 8601 datetime.
+/// Returns an error if the value is in the past.
+pub fn parse_run_at(value: &Value) -> Result<Option<chrono::DateTime<chrono::Utc>>, AppError> {
+    let dt = match value {
+        Value::Number(n) => {
+            let ts = n.as_i64()
+                .ok_or_else(|| AppError::Validation("Invalid run_at timestamp".into()))?;
+            Some(chrono::DateTime::from_timestamp(ts, 0)
+                .ok_or_else(|| AppError::Validation("Invalid run_at timestamp".into()))?)
+        }
+        Value::String(s) => {
+            if let Ok(ts) = s.parse::<i64>() {
+                Some(chrono::DateTime::from_timestamp(ts, 0)
+                    .ok_or_else(|| AppError::Validation("Invalid run_at timestamp".into()))?)
+            } else {
+                Some(s.parse::<chrono::DateTime<chrono::Utc>>()
+                    .map_err(|e| AppError::Validation(format!("Invalid run_at datetime: {}", e)))?)
+            }
+        }
+        _ => None,
+    };
+
+    if let Some(at) = dt
+        && at <= chrono::Utc::now()
+    {
+        return Err(AppError::Validation("run_at must be in the future".into()));
+    }
+
+    Ok(dt)
+}
+
+/// Resolve a `run_at` datetime from arguments, supporting both `run_at` and `delay_minutes`.
+/// `delay_minutes` takes precedence over `run_at` if both are provided.
+pub fn resolve_run_at(arguments: &Value) -> Result<Option<chrono::DateTime<chrono::Utc>>, AppError> {
+    if let Some(delay) = arguments.get("delay_minutes").and_then(|v| v.as_u64()) {
+        if delay == 0 {
+            return Err(AppError::Validation("delay_minutes must be greater than 0".into()));
+        }
+        return Ok(Some(chrono::Utc::now() + chrono::Duration::minutes(delay as i64)));
+    }
+
+    match arguments.get("run_at") {
+        Some(v) => parse_run_at(v),
+        None => Ok(None),
+    }
+}
+
 pub fn is_tool_available(state: &crate::core::state::AppState, tool_name: &str) -> bool {
     match tool_name {
         "voice_call" => state.voice_provider.is_some(),

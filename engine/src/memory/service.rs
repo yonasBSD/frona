@@ -3,6 +3,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use rig::completion::Message as RigMessage;
 
+use crate::agent::prompt::append_tagged_section;
 use crate::agent::workspace::AgentPromptLoader;
 use crate::storage::StorageService;
 use crate::db::repo::memory_entries::SurrealMemoryEntryRepo;
@@ -773,25 +774,3 @@ impl MemoryService {
     }
 }
 
-fn append_tagged_section(
-    result: &mut String,
-    tag: &str,
-    header: Option<&str>,
-    items: &[(String, String)],
-) {
-    if items.is_empty() {
-        return;
-    }
-    result.push_str(&format!("\n\n<{tag}>\n"));
-    if let Some(h) = header {
-        let trimmed = h.trim();
-        if !trimmed.is_empty() {
-            result.push_str(trimmed);
-            result.push('\n');
-        }
-    }
-    for (key, value) in items {
-        result.push_str(&format!("- {key}: {value}\n"));
-    }
-    result.push_str(&format!("</{tag}>"));
-}

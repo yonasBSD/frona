@@ -95,12 +95,7 @@ impl ScheduleTaskTool {
         let target_agent = arguments.get("target_agent").and_then(|v| v.as_str());
         let agent_id = self.resolve_agent_id(user_id, agent_id_self, target_agent).await?;
 
-        let run_at = arguments
-            .get("run_at")
-            .and_then(|v| v.as_str())
-            .map(|s| s.parse::<DateTime<Utc>>())
-            .transpose()
-            .map_err(|e| AppError::Validation(format!("Invalid run_at datetime: {}", e)))?;
+        let run_at = super::resolve_run_at(arguments)?;
 
         parse_cron(cron_expression)?;
         let next_run_at = match run_at {

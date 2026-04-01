@@ -21,9 +21,12 @@ parameters:
   instruction:
     type: string
     description: "The exact instruction to execute each time the cron fires. Runs verbatim every occurrence. Required for 'create'."
+  delay_minutes:
+    type: integer
+    description: "Number of minutes to wait before the first run. Cannot be used with run_at."
   run_at:
     type: string
-    description: "Optional ISO 8601 datetime for the first run (e.g. '2026-03-15T09:00:00Z'). Defers the first cron firing to this time. If omitted, the first run is the next natural cron occurrence."
+    description: "Optional future time for the first run. Accepts a unix timestamp (e.g., from `date -d '+2 minutes' +%s`) or ISO 8601 datetime. Must be in the future. If omitted, the first run is the next natural cron occurrence."
   task_id:
     type: string
     description: "The cron job ID to cancel. Required for 'delete'."

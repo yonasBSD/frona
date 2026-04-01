@@ -82,12 +82,7 @@ impl DelegateTaskTool {
             )));
         }
 
-        let run_at = arguments
-            .get("run_at")
-            .and_then(|v| v.as_str())
-            .map(|s| s.parse::<chrono::DateTime<chrono::Utc>>())
-            .transpose()
-            .map_err(|e| AppError::Validation(format!("Invalid run_at datetime: {}", e)))?;
+        let run_at = super::resolve_run_at(&arguments)?;
 
         let req = CreateTaskRequest {
             agent_id: target_agent.id.clone(),

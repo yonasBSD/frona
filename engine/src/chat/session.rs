@@ -119,6 +119,24 @@ impl ChatSessionContext {
             None
         };
 
+        if let Some(ref task) = task {
+            let local = chrono::Local::now();
+            let fmt = "%Y-%m-%d %H:%M:%S %Z";
+            let mut items = vec![
+                ("created_at".into(), task.created_at.with_timezone(&local.timezone()).format(fmt).to_string()),
+            ];
+            if let Some(run_at) = task.run_at {
+                items.push(("scheduled_at".into(), run_at.with_timezone(&local.timezone()).format(fmt).to_string()));
+            }
+            items.push(("now".into(), local.format(fmt).to_string()));
+            crate::agent::prompt::append_tagged_section(
+                &mut system_prompt,
+                "task_time",
+                None,
+                &items,
+            );
+        }
+
         let task_in_progress = task.as_ref().is_some_and(|t| matches!(t.status,
             crate::agent::task::models::TaskStatus::Pending
             | crate::agent::task::models::TaskStatus::InProgress

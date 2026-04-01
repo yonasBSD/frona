@@ -69,6 +69,29 @@ impl PromptLoader {
     }
 }
 
+pub fn append_tagged_section(
+    result: &mut String,
+    tag: &str,
+    header: Option<&str>,
+    items: &[(String, String)],
+) {
+    if items.is_empty() {
+        return;
+    }
+    result.push_str(&format!("\n\n<{tag}>\n"));
+    if let Some(h) = header {
+        let trimmed = h.trim();
+        if !trimmed.is_empty() {
+            result.push_str(trimmed);
+            result.push('\n');
+        }
+    }
+    for (key, value) in items {
+        result.push_str(&format!("- {key}: {value}\n"));
+    }
+    result.push_str(&format!("</{tag}>"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
