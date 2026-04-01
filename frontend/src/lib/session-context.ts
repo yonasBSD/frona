@@ -55,16 +55,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [activeChat, setActiveChat] = useState<ChatResponse | null>(null);
   const agentId = activeChat?.agent_id ?? agentParam ?? "system";
   const [inferring, setInferring] = useState(false);
-  const { updateChatTitle, updateAgent, updateTaskInList, setActiveTab } = useNavigation();
+  const { updateChatTitle, updateAgent, updateTaskInList, setActiveTab, standaloneChats, spaces, archivedChats } = useNavigation();
   const { addNotification } = useNotifications();
 
-  // Render-time: reset chat when active chat changes
+  // Render-time: resolve chat from navigation context when active chat changes
   const [prevActiveChatId, setPrevActiveChatId] = useState(activeChatId);
   const [prevAgentParam, setPrevAgentParam] = useState(agentParam);
   if (activeChatId !== prevActiveChatId) {
     setPrevActiveChatId(activeChatId);
     if (!activeChatId) {
       setActiveChat(null);
+    } else {
+      const found = standaloneChats.find(c => c.id === activeChatId)
+        ?? spaces.flatMap(s => s.chats).find(c => c.id === activeChatId)
+        ?? archivedChats.find(c => c.id === activeChatId)
+        ?? null;
+      setActiveChat(found);
     }
   }
   // Clear activeChat when navigating away from ?agent= (e.g. clicking logo)
@@ -105,15 +111,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [taskIdParam]);
 
-  // Fetch chat metadata when activeChatId changes
+  // Fallback: fetch chat metadata from API only if not resolved from navigation context (e.g. deep-link)
   useEffect(() => {
-    if (!activeChatId) return;
+    if (!activeChatId || activeChat?.id === activeChatId) return;
     let cancelled = false;
     api.get<ChatResponse>(`/api/chats/${activeChatId}`)
       .then((chat) => { if (!cancelled) setActiveChat(chat); })
       .catch(() => { if (!cancelled) setActiveChat(null); });
     return () => { cancelled = true; };
-  }, [activeChatId]);
+  }, [activeChatId, activeChat]);
 
   // Connect SSE event bus and handle global events
   useEffect(() => {
