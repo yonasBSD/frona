@@ -125,7 +125,7 @@ impl TaskService {
     }
 
     pub async fn find_resumable(&self) -> Result<Vec<Task>, AppError> {
-        self.repo.find_resumable().await
+        self.repo.find_resumable(chrono::Utc::now()).await
     }
 
     pub async fn find_by_id(&self, task_id: &str) -> Result<Option<Task>, AppError> {

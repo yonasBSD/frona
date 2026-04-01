@@ -439,6 +439,80 @@ async fn find_resumable_mixed_scenario() {
 }
 
 #[tokio::test]
+async fn find_resumable_excludes_future_run_at() {
+    let db = test_db().await;
+    let repo: SurrealRepo<Task> = SurrealRepo::new(db.clone());
+    let svc = make_task_service(db);
+
+    let now = Utc::now();
+
+    // Task with future run_at — should NOT resume
+    let future_task = Task {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id: "user-1".to_string(),
+        agent_id: "agent-1".to_string(),
+        space_id: None,
+        chat_id: None,
+        title: "Future scheduled task".to_string(),
+        description: "Should wait for scheduler".to_string(),
+        status: TaskStatus::Pending,
+        kind: TaskKind::Direct,
+        run_at: Some(now + Duration::hours(1)),
+        result_summary: None,
+        error_message: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo.create(&future_task).await.unwrap();
+
+    // Task with past run_at — should resume
+    let past_task = Task {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id: "user-1".to_string(),
+        agent_id: "agent-1".to_string(),
+        space_id: None,
+        chat_id: None,
+        title: "Past scheduled task".to_string(),
+        description: "Should resume".to_string(),
+        status: TaskStatus::Pending,
+        kind: TaskKind::Direct,
+        run_at: Some(now - Duration::minutes(5)),
+        result_summary: None,
+        error_message: None,
+        created_at: now + Duration::seconds(1),
+        updated_at: now,
+    };
+    repo.create(&past_task).await.unwrap();
+
+    // Task with no run_at — should resume
+    let immediate_task = Task {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id: "user-1".to_string(),
+        agent_id: "agent-1".to_string(),
+        space_id: None,
+        chat_id: None,
+        title: "Immediate task".to_string(),
+        description: "No run_at".to_string(),
+        status: TaskStatus::Pending,
+        kind: TaskKind::Direct,
+        run_at: None,
+        result_summary: None,
+        error_message: None,
+        created_at: now + Duration::seconds(2),
+        updated_at: now,
+    };
+    repo.create(&immediate_task).await.unwrap();
+
+    let resumable = svc.find_resumable().await.unwrap();
+    assert_eq!(resumable.len(), 2, "Future run_at task should be excluded");
+
+    let resumable_ids: Vec<&str> = resumable.iter().map(|t| t.id.as_str()).collect();
+    assert!(resumable_ids.contains(&past_task.id.as_str()));
+    assert!(resumable_ids.contains(&immediate_task.id.as_str()));
+    assert!(!resumable_ids.contains(&future_task.id.as_str()));
+}
+
+#[tokio::test]
 async fn find_due_cron_templates_unaffected_by_restart() {
     let db = test_db().await;
     let svc = make_task_service(db);

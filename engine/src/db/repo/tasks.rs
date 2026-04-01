@@ -48,13 +48,14 @@ impl TaskRepository for SurrealRepo<Task> {
         Ok(tasks)
     }
 
-    async fn find_resumable(&self) -> Result<Vec<Task>, AppError> {
+    async fn find_resumable(&self, now: DateTime<Utc>) -> Result<Vec<Task>, AppError> {
         let query = format!(
-            "{SELECT_CLAUSE} FROM task WHERE (status.Pending IS NOT NONE OR status.InProgress IS NOT NONE) AND kind.Cron IS NONE ORDER BY created_at ASC"
+            "{SELECT_CLAUSE} FROM task WHERE (status.Pending IS NOT NONE OR status.InProgress IS NOT NONE) AND kind.Cron IS NONE AND (run_at IS NONE OR run_at <= $now) ORDER BY created_at ASC"
         );
         let mut result = self
             .db()
             .query(&query)
+            .bind(("now", now))
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
