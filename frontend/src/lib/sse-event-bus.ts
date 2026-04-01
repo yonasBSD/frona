@@ -39,7 +39,7 @@ type GlobalListener = (event: GlobalSSEEvent) => void;
 
 type ReconnectListener = () => void;
 
-class SSEEventBus {
+export class SSEEventBus {
   private chatSubscribers = new Map<string, Set<ChatSubscriber>>();
   private chatBuffers = new Map<string, ChatSSEEvent[]>();
   private globalListeners = new Set<GlobalListener>();
@@ -255,7 +255,7 @@ class SSEEventBus {
     }
   }
 
-  private routeEvent(eventType: string, chatId: string, parsed: Record<string, unknown>) {
+  routeEvent(eventType: string, chatId: string, parsed: Record<string, unknown>) {
     switch (eventType) {
       case "token":
         this.dispatchChat(chatId, { type: "token", content: parsed.content as string });

@@ -1,0 +1,745 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ChatStore, mergeConsecutiveMessages } from "../chat-store";
+import type { ChatSSEEvent } from "../sse-event-bus";
+import type { MessageResponse, ToolExecution } from "../types";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeAgentMessage(overrides: Partial<MessageResponse> = {}): MessageResponse {
+  return {
+    id: "msg-1",
+    chat_id: "chat-1",
+    role: "agent",
+    content: "Hello from agent",
+    status: "completed",
+    created_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeUserMessage(overrides: Partial<MessageResponse> = {}): MessageResponse {
+  return {
+    id: "msg-u1",
+    chat_id: "chat-1",
+    role: "user",
+    content: "Hello from user",
+    created_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeToolExecution(overrides: Partial<ToolExecution> = {}): ToolExecution {
+  return {
+    id: "te-1",
+    chat_id: "chat-1",
+    message_id: "msg-1",
+    turn: 1,
+    tool_call_id: "tc-1",
+    name: "web_search",
+    arguments: { query: "test" },
+    result: "Found results",
+    success: true,
+    duration_ms: 100,
+    created_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ChatStore: SSE event handling
+// ---------------------------------------------------------------------------
+
+describe("ChatStore", () => {
+  let store: ChatStore;
+
+  beforeEach(() => {
+    store = new ChatStore();
+  });
+
+  describe("subscriber notifications", () => {
+    it("notifies subscribers on state changes", () => {
+      const listener = vi.fn();
+      store.subscribe(listener);
+
+      store.handleEvent({ type: "token", content: "hi" });
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it("unsubscribe stops notifications", () => {
+      const listener = vi.fn();
+      const unsub = store.subscribe(listener);
+      unsub();
+
+      store.handleEvent({ type: "token", content: "hi" });
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("getSnapshot returns a stable reference until state changes", () => {
+      const snap1 = store.getSnapshot();
+      const snap2 = store.getSnapshot();
+      expect(snap1).toBe(snap2);
+
+      store.handleEvent({ type: "token", content: "a" });
+      const snap3 = store.getSnapshot();
+      expect(snap3).not.toBe(snap1);
+    });
+  });
+
+  describe("token events", () => {
+    it("accumulates streaming text", () => {
+      store.handleEvent({ type: "token", content: "Hello" });
+      store.handleEvent({ type: "token", content: " world" });
+
+      expect(store.streamingText).toBe("Hello world");
+      expect(store.isRunning).toBe(true);
+    });
+
+    it("produces a synthetic streaming message in getDisplayMessages", () => {
+      store.handleEvent({ type: "token", content: "Hello" });
+
+      const msgs = store.getDisplayMessages();
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].id).toBe("__streaming__");
+      expect(msgs[0].role).toBe("agent");
+      expect(msgs[0].content).toBe("Hello");
+      expect(msgs[0].status).toBe("executing");
+    });
+  });
+
+  describe("reasoning events", () => {
+    it("accumulates streaming reasoning", () => {
+      store.handleEvent({ type: "reasoning", content: "Let me think" });
+      store.handleEvent({ type: "reasoning", content: "..." });
+
+      expect(store.streamingReasoning).toBe("Let me think...");
+    });
+
+    it("includes reasoning in the synthetic message", () => {
+      store.handleEvent({ type: "reasoning", content: "thinking" });
+
+      const msgs = store.getDisplayMessages();
+      expect(msgs[0].reasoning).toBe("thinking");
+    });
+  });
+
+  describe("tool_call events", () => {
+    it("creates a streaming tool call entry", () => {
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-1",
+        name: "web_search",
+        arguments: '{"query":"test"}',
+        description: "Searching the web",
+      });
+
+      expect(store.streamingToolCalls.size).toBe(1);
+      const tc = store.streamingToolCalls.get("tc-1")!;
+      expect(tc.toolName).toBe("web_search");
+      expect(tc.args.query).toBe("test");
+      expect(tc.args.description).toBe("Searching the web");
+    });
+
+    it("captures turn text from streaming text before the tool call", () => {
+      store.handleEvent({ type: "token", content: "I'll search for that." });
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-1",
+        name: "web_search",
+        arguments: "{}",
+      });
+
+      const tc = store.streamingToolCalls.get("tc-1")!;
+      expect(tc.args.turnText).toBe("I'll search for that.");
+    });
+
+    it("shows tool executions in the synthetic message", () => {
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-1",
+        name: "web_search",
+        arguments: "{}",
+      });
+
+      const msgs = store.getDisplayMessages();
+      expect(msgs[0].tool_executions).toHaveLength(1);
+      expect(msgs[0].tool_executions![0].name).toBe("web_search");
+      expect(msgs[0].tool_executions![0].result).toBe("");
+    });
+
+    it("handles object arguments (not just string)", () => {
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-1",
+        name: "cli",
+        arguments: { command: "ls" },
+      });
+
+      const tc = store.streamingToolCalls.get("tc-1")!;
+      expect(tc.args.command).toBe("ls");
+    });
+  });
+
+  describe("tool_result events", () => {
+    it("matches result to the first unresolved tool call by name", () => {
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-1",
+        name: "web_search",
+        arguments: "{}",
+      });
+      store.handleEvent({
+        type: "tool_result",
+        name: "web_search",
+        success: true,
+        summary: "3 results found",
+      });
+
+      expect(store.streamingToolResults.size).toBe(1);
+      const result = store.streamingToolResults.get("tc-1")!;
+      expect(result.result).toBe("3 results found");
+      expect(result.isError).toBe(false);
+    });
+
+    it("marks failed results", () => {
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-1",
+        name: "cli",
+        arguments: "{}",
+      });
+      store.handleEvent({
+        type: "tool_result",
+        name: "cli",
+        success: false,
+        summary: "Command failed",
+      });
+
+      const result = store.streamingToolResults.get("tc-1")!;
+      expect(result.isError).toBe(true);
+    });
+
+    it("uses 'Done' as default summary when none provided", () => {
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-1",
+        name: "web_search",
+        arguments: "{}",
+      });
+      store.handleEvent({
+        type: "tool_result",
+        name: "web_search",
+        success: true,
+      });
+
+      const result = store.streamingToolResults.get("tc-1")!;
+      expect(result.result).toBe("Done");
+    });
+
+    it("matches multiple tool calls of the same name in order", () => {
+      store.handleEvent({ type: "tool_call", id: "tc-1", name: "cli", arguments: "{}" });
+      store.handleEvent({ type: "tool_call", id: "tc-2", name: "cli", arguments: "{}" });
+
+      store.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "first" });
+      store.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "second" });
+
+      expect(store.streamingToolResults.get("tc-1")!.result).toBe("first");
+      expect(store.streamingToolResults.get("tc-2")!.result).toBe("second");
+    });
+  });
+
+  describe("inference_done event", () => {
+    it("finalizes the message and clears streaming state", () => {
+      store.handleEvent({ type: "token", content: "Hello" });
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-1",
+        name: "web_search",
+        arguments: "{}",
+      });
+      store.handleEvent({
+        type: "tool_result",
+        name: "web_search",
+        success: true,
+        summary: "Done",
+      });
+
+      const finalMsg = makeAgentMessage({
+        id: "msg-final",
+        content: "Hello",
+        status: "completed",
+        tool_executions: [makeToolExecution({ id: "te-1", tool_call_id: "tc-1", name: "web_search" })],
+      });
+
+      store.handleEvent({ type: "inference_done", message: finalMsg });
+
+      expect(store.isRunning).toBe(false);
+      expect(store.streamingText).toBe("");
+      expect(store.streamingToolCalls.size).toBe(0);
+      expect(store.messages).toHaveLength(1);
+      expect(store.messages[0].id).toBe("msg-final");
+      expect(store.messages[0].status).toBe("completed");
+    });
+
+    it("merges tool executions from streaming and final message (dedup by id)", () => {
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-1",
+        name: "web_search",
+        arguments: "{}",
+      });
+      store.handleEvent({
+        type: "tool_result",
+        name: "web_search",
+        success: true,
+        summary: "Done",
+      });
+
+      const finalMsg = makeAgentMessage({
+        id: "msg-final",
+        tool_executions: [makeToolExecution({ id: "tc-1", tool_call_id: "tc-1" })],
+      });
+
+      store.handleEvent({ type: "inference_done", message: finalMsg });
+
+      // Should not duplicate — tc-1 from streaming and tc-1 from final are deduped
+      expect(store.messages[0].tool_executions).toHaveLength(1);
+    });
+
+    it("updates existing message in place if id matches", () => {
+      store.messages.push(makeAgentMessage({ id: "msg-1", content: "old", status: "executing" }));
+
+      store.handleEvent({
+        type: "inference_done",
+        message: makeAgentMessage({ id: "msg-1", content: "new", status: "completed" }),
+      });
+
+      expect(store.messages).toHaveLength(1);
+      expect(store.messages[0].content).toBe("new");
+    });
+  });
+
+  describe("chat_message event", () => {
+    it("replaces optimistic user message", () => {
+      store.addUserMessage("Hello");
+      expect(store.messages[0].id).toMatch(/^__user_/);
+
+      const realMsg = makeUserMessage({ id: "msg-real" });
+      store.handleEvent({ type: "chat_message", message: realMsg });
+
+      expect(store.messages).toHaveLength(1);
+      expect(store.messages[0].id).toBe("msg-real");
+    });
+
+    it("appends non-user messages", () => {
+      const agentMsg = makeAgentMessage({ id: "msg-agent" });
+      store.handleEvent({ type: "chat_message", message: agentMsg });
+
+      expect(store.messages).toHaveLength(1);
+      expect(store.messages[0].id).toBe("msg-agent");
+    });
+
+    it("skips duplicate message ids", () => {
+      store.messages.push(makeAgentMessage({ id: "msg-1" }));
+      store.handleEvent({ type: "chat_message", message: makeAgentMessage({ id: "msg-1" }) });
+
+      expect(store.messages).toHaveLength(1);
+    });
+  });
+
+  describe("tool_message event (external tools)", () => {
+    it("finalizes as an executing message with the external tool execution", () => {
+      store.handleEvent({ type: "token", content: "Let me check" });
+      store.handleEvent({
+        type: "tool_call",
+        id: "tc-ext",
+        name: "ask_user_question",
+        arguments: '{"question":"Continue?"}',
+      });
+
+      const te = makeToolExecution({
+        id: "te-ext",
+        tool_call_id: "tc-ext",
+        name: "ask_user_question",
+        message_id: "msg-ext",
+        tool_data: {
+          type: "Question",
+          data: { question: "Continue?", options: ["Yes", "No"], status: "pending", response: null },
+        },
+      });
+
+      store.handleEvent({ type: "tool_message", tool_execution: te });
+
+      // External tool message should be added to messages
+      const extMsg = store.messages.find((m) => m.id === "msg-ext");
+      expect(extMsg).toBeDefined();
+      expect(extMsg!.status).toBe("executing");
+      expect(extMsg!.tool_executions).toBeDefined();
+      expect(extMsg!.tool_executions!.some((t) => t.id === "te-ext")).toBe(true);
+
+      // Streaming state should be cleared
+      expect(store.isRunning).toBe(false);
+      expect(store.streamingText).toBe("");
+    });
+  });
+
+  describe("tool_resolved event", () => {
+    it("updates message when full message is provided", () => {
+      const original = makeAgentMessage({ id: "msg-1", content: "old", status: "executing" });
+      store.messages.push(original);
+
+      const updated = makeAgentMessage({ id: "msg-1", content: "resolved", status: "completed" });
+      store.handleEvent({ type: "tool_resolved", message: updated });
+
+      expect(store.messages[0].content).toBe("resolved");
+      expect(store.messages[0].status).toBe("completed");
+    });
+
+    it("preserves existing tool_executions when message has none", () => {
+      const te = makeToolExecution({ id: "te-1" });
+      store.messages.push(makeAgentMessage({ id: "msg-1", tool_executions: [te], status: "executing" }));
+
+      const updatedMsg = makeAgentMessage({ id: "msg-1", tool_executions: [], status: "completed" });
+      store.handleEvent({ type: "tool_resolved", message: updatedMsg });
+
+      expect(store.messages[0].tool_executions).toHaveLength(1);
+    });
+
+    it("updates individual tool execution when tool_execution is provided", () => {
+      const te = makeToolExecution({ id: "te-1", result: "old" });
+      store.messages.push(makeAgentMessage({ id: "msg-1", tool_executions: [te] }));
+
+      const updatedTe = makeToolExecution({ id: "te-1", result: "new result" });
+      store.handleEvent({ type: "tool_resolved", tool_execution: updatedTe });
+
+      expect(store.messages[0].tool_executions![0].result).toBe("new result");
+    });
+  });
+
+  describe("retry event", () => {
+    it("sets retry info", () => {
+      store.handleEvent({ type: "retry", retryAfterSecs: 5, reason: "rate_limited" });
+
+      expect(store.retryInfo).not.toBeNull();
+      expect(store.retryInfo!.reason).toBe("rate_limited");
+      expect(store.retryInfo!.retryAfterSecs).toBe(5);
+    });
+
+    it("is included in snapshot", () => {
+      store.handleEvent({ type: "retry", retryAfterSecs: 5, reason: "rate_limited" });
+
+      const snap = store.getSnapshot();
+      expect(snap.retryInfo).not.toBeNull();
+      expect(snap.retryInfo!.reason).toBe("rate_limited");
+    });
+  });
+
+  describe("inference_cancelled / inference_error", () => {
+    it("clears streaming state on cancellation", () => {
+      store.handleEvent({ type: "token", content: "partial" });
+      store.handleEvent({ type: "inference_cancelled", reason: "user cancelled" });
+
+      expect(store.isRunning).toBe(false);
+      expect(store.streamingText).toBe("");
+    });
+
+    it("clears streaming state on error", () => {
+      store.handleEvent({ type: "token", content: "partial" });
+      store.handleEvent({ type: "inference_error", error: "model error" });
+
+      expect(store.isRunning).toBe(false);
+      expect(store.streamingText).toBe("");
+    });
+  });
+
+  describe("addUserMessage", () => {
+    it("adds optimistic user message and sets isRunning", () => {
+      store.addUserMessage("Hello");
+
+      expect(store.messages).toHaveLength(1);
+      expect(store.messages[0].id).toMatch(/^__user_/);
+      expect(store.messages[0].role).toBe("user");
+      expect(store.messages[0].content).toBe("Hello");
+      expect(store.isRunning).toBe(true);
+    });
+  });
+
+  describe("clearStreaming", () => {
+    it("resets all streaming state", () => {
+      store.handleEvent({ type: "token", content: "text" });
+      store.handleEvent({ type: "reasoning", content: "reason" });
+      store.handleEvent({ type: "tool_call", id: "tc-1", name: "test", arguments: "{}" });
+      store.handleEvent({ type: "retry", retryAfterSecs: 5, reason: "test" });
+
+      store.clearStreaming();
+
+      expect(store.isRunning).toBe(false);
+      expect(store.streamingText).toBe("");
+      expect(store.streamingReasoning).toBe("");
+      expect(store.streamingToolCalls.size).toBe(0);
+      expect(store.streamingToolResults.size).toBe(0);
+      expect(store.retryInfo).toBeNull();
+    });
+  });
+
+  describe("getDisplayMessages with existing executing message", () => {
+    it("merges new streaming text into an existing executing message", () => {
+      store.messages.push(
+        makeAgentMessage({
+          id: "msg-1",
+          content: "existing",
+          status: "executing",
+          reasoning: "prior reasoning",
+        }),
+      );
+      store.isRunning = true;
+
+      store.handleEvent({ type: "token", content: " new text" });
+      store.handleEvent({ type: "reasoning", content: " more thinking" });
+
+      const msgs = store.getDisplayMessages();
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].id).toBe("msg-1");
+      expect(msgs[0].content).toBe("existing new text");
+      expect(msgs[0].reasoning).toBe("prior reasoning more thinking");
+    });
+
+    it("merges new streaming tool calls into an existing executing message", () => {
+      store.messages.push(
+        makeAgentMessage({
+          id: "msg-1",
+          content: "existing",
+          status: "executing",
+          tool_executions: [makeToolExecution({ id: "te-existing" })],
+        }),
+      );
+      store.isRunning = true;
+
+      store.handleEvent({ type: "tool_call", id: "tc-new", name: "cli", arguments: "{}" });
+
+      const msgs = store.getDisplayMessages();
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].id).toBe("msg-1");
+      expect(msgs[0].tool_executions!.length).toBe(2);
+    });
+  });
+
+  describe("resolveToolCall", () => {
+    it("resolves a tool call within a message", () => {
+      const te = makeToolExecution({
+        id: "te-1",
+        tool_call_id: "tc-1",
+        tool_data: {
+          type: "Question",
+          data: { question: "?", options: ["A"], status: "pending", response: null },
+        },
+      });
+      store.messages.push(makeAgentMessage({ id: "msg-1", tool_executions: [te], status: "executing" }));
+
+      store.resolveToolCall("tc-1", "A");
+
+      const updated = store.messages[0].tool_executions![0];
+      expect(updated.result).toBe("A");
+      expect(updated.tool_data!.data.status).toBe("resolved");
+      expect((updated.tool_data!.data as Record<string, unknown>).response).toBe("A");
+      // All tools resolved → status should flip to completed
+      expect(store.messages[0].status).toBe("completed");
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeConsecutiveMessages
+// ---------------------------------------------------------------------------
+
+describe("mergeConsecutiveMessages", () => {
+  it("merges consecutive agent messages from the same agent", () => {
+    const msgs: MessageResponse[] = [
+      makeAgentMessage({ id: "1", agent_id: "a1", content: "First" }),
+      makeAgentMessage({ id: "2", agent_id: "a1", content: "Second" }),
+    ];
+
+    const result = mergeConsecutiveMessages(msgs);
+    expect(result).toHaveLength(1);
+    expect(result[0].content).toBe("First\n\nSecond");
+  });
+
+  it("does not merge messages from different agents", () => {
+    const msgs: MessageResponse[] = [
+      makeAgentMessage({ id: "1", agent_id: "a1", content: "Agent 1" }),
+      makeAgentMessage({ id: "2", agent_id: "a2", content: "Agent 2" }),
+    ];
+
+    const result = mergeConsecutiveMessages(msgs);
+    expect(result).toHaveLength(2);
+  });
+
+  it("does not merge when previous message is executing", () => {
+    const msgs: MessageResponse[] = [
+      makeAgentMessage({ id: "1", agent_id: "a1", content: "Running", status: "executing" }),
+      makeAgentMessage({ id: "2", agent_id: "a1", content: "Next" }),
+    ];
+
+    const result = mergeConsecutiveMessages(msgs);
+    expect(result).toHaveLength(2);
+  });
+
+  it("does not merge user + agent messages", () => {
+    const msgs: MessageResponse[] = [
+      makeUserMessage({ id: "1" }),
+      makeAgentMessage({ id: "2" }),
+    ];
+
+    const result = mergeConsecutiveMessages(msgs);
+    expect(result).toHaveLength(2);
+  });
+
+  it("merges system event messages into preceding agent messages", () => {
+    const msgs: MessageResponse[] = [
+      makeAgentMessage({ id: "1", agent_id: "a1", content: "Agent says" }),
+      {
+        id: "2",
+        chat_id: "chat-1",
+        role: "system",
+        content: "Task completed",
+        event: { type: "TaskCompletion", data: { task_id: "t1", chat_id: null, status: "completed" } },
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ];
+
+    const result = mergeConsecutiveMessages(msgs);
+    expect(result).toHaveLength(1);
+    expect(result[0].content).toContain("Agent says");
+    expect(result[0].content).toContain("Task completed");
+  });
+
+  it("merges tool executions from consecutive messages", () => {
+    const msgs: MessageResponse[] = [
+      makeAgentMessage({
+        id: "1",
+        agent_id: "a1",
+        content: "",
+        tool_executions: [makeToolExecution({ id: "te-1" })],
+      }),
+      makeAgentMessage({
+        id: "2",
+        agent_id: "a1",
+        content: "Done",
+        tool_executions: [makeToolExecution({ id: "te-2" })],
+      }),
+    ];
+
+    const result = mergeConsecutiveMessages(msgs);
+    expect(result).toHaveLength(1);
+    expect(result[0].tool_executions).toHaveLength(2);
+  });
+
+  it("uses the last message's status", () => {
+    const msgs: MessageResponse[] = [
+      makeAgentMessage({ id: "1", agent_id: "a1", content: "A", status: "completed" }),
+      makeAgentMessage({ id: "2", agent_id: "a1", content: "B", status: "failed" }),
+    ];
+
+    const result = mergeConsecutiveMessages(msgs);
+    expect(result[0].status).toBe("failed");
+  });
+
+  it("merges reasoning from consecutive messages", () => {
+    const msgs: MessageResponse[] = [
+      makeAgentMessage({ id: "1", agent_id: "a1", content: "", reasoning: "First thought" }),
+      makeAgentMessage({ id: "2", agent_id: "a1", content: "", reasoning: "Second thought" }),
+    ];
+
+    const result = mergeConsecutiveMessages(msgs);
+    expect(result[0].reasoning).toBe("First thought\n\nSecond thought");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Full streaming sequence
+// ---------------------------------------------------------------------------
+
+describe("ChatStore: full streaming sequence", () => {
+  it("handles a complete text + tool + result + done flow", () => {
+    const store = new ChatStore();
+
+    // User message echo
+    store.handleEvent({
+      type: "chat_message",
+      message: makeUserMessage({ id: "user-1", content: "Search for cats" }),
+    });
+
+    // Streaming tokens
+    store.handleEvent({ type: "token", content: "I'll search" });
+    store.handleEvent({ type: "token", content: " for that." });
+
+    // Tool call
+    store.handleEvent({
+      type: "tool_call",
+      id: "tc-1",
+      name: "web_search",
+      arguments: '{"query":"cats"}',
+      description: "Searching for cats",
+    });
+
+    // At this point, display should show user msg + synthetic streaming msg
+    let display = store.getDisplayMessages();
+    expect(display).toHaveLength(2);
+    expect(display[1].status).toBe("executing");
+    expect(display[1].tool_executions).toHaveLength(1);
+
+    // Tool result
+    store.handleEvent({
+      type: "tool_result",
+      name: "web_search",
+      success: true,
+      summary: "Found 10 results",
+    });
+
+    // More tokens after tool
+    store.handleEvent({ type: "token", content: "Here are the results." });
+
+    // inference_done
+    const finalMsg = makeAgentMessage({
+      id: "msg-agent-1",
+      content: "I'll search for that.\n\nHere are the results.",
+      status: "completed",
+      tool_executions: [
+        makeToolExecution({
+          id: "tc-1",
+          tool_call_id: "tc-1",
+          name: "web_search",
+          arguments: { query: "cats" },
+          result: "Found 10 results",
+          description: "Searching for cats",
+          turn_text: "I'll search for that.",
+        }),
+      ],
+    });
+
+    store.handleEvent({ type: "inference_done", message: finalMsg });
+
+    display = store.getDisplayMessages();
+    expect(display).toHaveLength(2); // user + agent
+    expect(display[1].id).toBe("msg-agent-1");
+    expect(display[1].status).toBe("completed");
+    expect(display[1].tool_executions).toHaveLength(1);
+    expect(store.isRunning).toBe(false);
+  });
+
+  it("handles multiple tool calls in sequence", () => {
+    const store = new ChatStore();
+
+    store.handleEvent({ type: "tool_call", id: "tc-1", name: "web_search", arguments: "{}" });
+    store.handleEvent({ type: "tool_result", name: "web_search", success: true, summary: "Done" });
+    store.handleEvent({ type: "tool_call", id: "tc-2", name: "cli", arguments: "{}" });
+    store.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "OK" });
+    store.handleEvent({ type: "token", content: "All done." });
+
+    const display = store.getDisplayMessages();
+    expect(display).toHaveLength(1);
+    expect(display[0].tool_executions).toHaveLength(2);
+    expect(display[0].content).toBe("All done.");
+  });
+});

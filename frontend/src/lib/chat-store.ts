@@ -425,7 +425,7 @@ export class ChatStore {
  * Merge consecutive agent messages from the same agent into a single message.
  * This prevents fragmentation when the backend sends multiple messages in sequence.
  */
-function mergeConsecutiveMessages(messages: MessageResponse[]): MessageResponse[] {
+export function mergeConsecutiveMessages(messages: MessageResponse[]): MessageResponse[] {
   const result: MessageResponse[] = [];
   for (const msg of messages) {
     const prev = result[result.length - 1];

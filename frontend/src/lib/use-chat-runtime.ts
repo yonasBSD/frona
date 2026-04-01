@@ -77,7 +77,7 @@ export const fronaAttachmentAdapter: AttachmentAdapter = {
 // Message conversion: MessageResponse → assistant-ui format
 // ---------------------------------------------------------------------------
 
-type AssistantContentPart =
+export type AssistantContentPart =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
   | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, string | number | boolean | null>; argsText: string; result?: string };
@@ -86,7 +86,7 @@ type AssistantContentPart =
  * If the text part is empty but a tool call has turnText, promote the last
  * turnText to the main text and strip it from all tool call args.
  */
-function promoteTurnText(parts: AssistantContentPart[]): AssistantContentPart[] {
+export function promoteTurnText(parts: AssistantContentPart[]): AssistantContentPart[] {
   const textPart = parts.find((p) => p.type === "text");
   if (textPart && "text" in textPart && textPart.text.trim()) return parts;
 
@@ -108,7 +108,7 @@ function promoteTurnText(parts: AssistantContentPart[]): AssistantContentPart[] 
   });
 }
 
-function convertMessage(msg: MessageResponse) {
+export function convertMessage(msg: MessageResponse) {
   if (msg.role === "user" || msg.role === "contact" || msg.role === "livecall") {
     const attachments = msg.attachments?.map(convertBackendAttachment);
     return {
