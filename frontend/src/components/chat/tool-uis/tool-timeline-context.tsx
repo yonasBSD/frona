@@ -7,7 +7,6 @@ import {
   useEffect,
   useCallback,
   useMemo,
-  useRef,
 } from "react";
 import { useMessage } from "@assistant-ui/react";
 import { useThreadIsRunning } from "@assistant-ui/core/react";
@@ -47,7 +46,6 @@ export function ToolTimelineProvider({
 }) {
   const message = useMessage();
   const isRunning = useThreadIsRunning();
-  const wasRunning = useRef(false);
 
   const toolCallIds = useMemo(() => {
     if (message.role !== "assistant") return [];
@@ -69,10 +67,19 @@ export function ToolTimelineProvider({
 
   const totalTools = stableToolCallIds.length;
 
-  // Messages loaded from history start collapsed; live messages start expanded
-  const [collapsed, setCollapsed] = useState(
-    () => !message.isLast || !isRunning,
-  );
+  // Messages loaded from history start collapsed; live messages start expanded.
+  // Recently completed messages (remounted after streaming→real ID swap) start
+  // expanded so the collapse animation can play out.
+  const [collapsed, setCollapsed] = useState(() => {
+    if (message.isLast && isRunning) return false;
+    if (message.isLast && !isRunning && totalTools > 0) {
+      const ts = (message as unknown as { createdAt?: Date }).createdAt;
+      if (ts && Date.now() - new Date(ts).getTime() < COLLAPSE_DELAY_MS) {
+        return false;
+      }
+    }
+    return true;
+  });
   const [userToggled, setUserToggled] = useState(false);
 
   // Window tools to last MAX_VISIBLE unless user explicitly expanded
@@ -87,22 +94,25 @@ export function ToolTimelineProvider({
     return set;
   }, [stableToolCallIds, userToggled]);
 
-  // Expand while inference is running, collapse after it finishes
+  // Expand while inference is running, collapse after it finishes.
+  // Uses createdAt instead of a wasRunning ref so the collapse survives
+  // the component remount caused by the streaming→real message ID swap.
   useEffect(() => {
     if (isRunning && message.isLast) {
-      wasRunning.current = true;
       if (!userToggled) {
         const timer = setTimeout(() => setCollapsed(false), 0);
         return () => clearTimeout(timer);
       }
       return;
     }
-    if (wasRunning.current && totalTools > 0 && !userToggled) {
-      wasRunning.current = false;
-      const timer = setTimeout(() => setCollapsed(true), COLLAPSE_DELAY_MS);
+    if (!collapsed && !isRunning && message.isLast && totalTools > 0 && !userToggled) {
+      const ts = (message as unknown as { createdAt?: Date }).createdAt;
+      const age = ts ? Date.now() - new Date(ts).getTime() : COLLAPSE_DELAY_MS;
+      const remaining = Math.max(100, COLLAPSE_DELAY_MS - age);
+      const timer = setTimeout(() => setCollapsed(true), remaining);
       return () => clearTimeout(timer);
     }
-  }, [isRunning, message.isLast, totalTools, userToggled]);
+  }, [isRunning, message.isLast, totalTools, userToggled, collapsed]);
 
   const isVisible = useCallback(
     (toolCallId: string) => {
