@@ -21,7 +21,7 @@ function TaskCompletionContent({ args }: { args: TaskCompletionArgs }) {
     return (
       <button
         onClick={() => router.push(`/chat?task=${args.task_id}`)}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-secondary px-4 py-2 text-sm text-text-secondary my-2 cursor-pointer hover:bg-surface-tertiary transition-colors"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-secondary px-4 py-2 text-sm text-text-secondary my-2 cursor-pointer hover:bg-surface-tertiary transition-colors -order-1"
       >
         Ask Follow-up Questions
         <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
@@ -30,7 +30,7 @@ function TaskCompletionContent({ args }: { args: TaskCompletionArgs }) {
   }
 
   return (
-    <div className="flex items-center gap-1.5 mt-2 text-sm text-text-tertiary">
+    <div className="flex items-center gap-1.5 mt-2 text-sm text-text-tertiary -order-1">
       {isError ? (
         <XCircleIcon className="h-3.5 w-3.5 text-danger" />
       ) : (

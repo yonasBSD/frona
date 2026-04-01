@@ -138,7 +138,7 @@ function VaultApprovalRenderer({
   const durationValue = typeof duration === "string" ? duration : "hours" in duration ? "hours" : "days";
 
   return (
-    <div className="rounded-xl border border-border bg-surface-secondary p-4 space-y-4 my-2 w-3/4">
+    <div className="rounded-xl border border-border bg-surface-secondary p-4 space-y-4 my-2 w-3/4 -order-1">
       <SectionHeader title="Credential Request" description={reason} icon={KeyIcon} />
 
       <SelectInput

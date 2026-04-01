@@ -63,7 +63,7 @@ function HumanInTheLoopRenderer({
   };
 
   return (
-    <div className="my-2">
+    <div className="my-2 -order-1">
       <p className="text-base text-text-primary mb-2">{reason}</p>
       <div className="flex flex-wrap gap-2">
         {debuggerUrl && (

@@ -16,7 +16,7 @@ export function ApprovalResult({
   const Icon = denied ? XCircleIcon : CheckCircleIcon;
   return (
     <div
-      className={`inline-block rounded-lg border px-3 py-2 text-base my-2 ${colorClasses}`}
+      className={`inline-block rounded-lg border px-3 py-2 text-base my-2 -order-1 ${colorClasses}`}
     >
       <span className="inline-flex items-center gap-1.5">
         <Icon className="h-4 w-4 shrink-0 inline" />

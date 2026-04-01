@@ -68,7 +68,7 @@ function QuestionRenderer({
   };
 
   return (
-    <div className="my-2">
+    <div className="my-2 -order-1">
       <p className="text-base text-text-primary mb-2">{question}</p>
       <div className="flex flex-col gap-2">
         {options.map((option) => {

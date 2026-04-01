@@ -111,7 +111,7 @@ function ServiceApprovalRenderer({
   };
 
   return (
-    <div className="rounded-xl border border-border bg-surface-secondary p-4 space-y-4 my-2 w-3/4">
+    <div className="rounded-xl border border-border bg-surface-secondary p-4 space-y-4 my-2 w-3/4 -order-1">
       <div className="mb-5 pb-3 border-b border-border flex items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
