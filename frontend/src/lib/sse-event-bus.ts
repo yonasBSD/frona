@@ -208,7 +208,7 @@ class SSEEventBus {
 
     let res: Response;
     try {
-      res = await fetch(`${API_URL}/api/stream`, { headers, signal });
+      res = await fetch(`${API_URL}/api/stream`, { headers, signal, credentials: "include" });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       throw err;
