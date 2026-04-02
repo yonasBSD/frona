@@ -12,6 +12,8 @@ import {
 type ThemeMode = "system" | "light" | "dark";
 type ResolvedTheme = "light" | "dark";
 
+export const CODE_THEME = "everforest-dark";
+
 interface ThemeContextValue {
   mode: ThemeMode;
   resolved: ResolvedTheme;

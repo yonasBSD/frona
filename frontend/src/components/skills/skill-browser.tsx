@@ -3,8 +3,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect, forwardRef, useImperativeHandle } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { CodeBlock } from "@/components/ui/code-block";
 import {
   MagnifyingGlassIcon,
   ArrowDownTrayIcon,
@@ -614,20 +613,7 @@ export const SkillBrowser = forwardRef<SkillBrowserHandle, SkillBrowserProps>(fu
                     const match = /language-(\w+)/.exec(className || "");
                     const code = String(children).replace(/\n$/, "");
                     if (match) {
-                      return (
-                        <SyntaxHighlighter
-                          language={match[1]}
-                          PreTag="div"
-                          style={{
-                            ...oneDark,
-                            'pre[class*="language-"]': { ...oneDark['pre[class*="language-"]'], background: "var(--surface-nav)" },
-                            'code[class*="language-"]': { ...oneDark['code[class*="language-"]'], background: "var(--surface-nav)" },
-                          }}
-                          customStyle={{ margin: 0, borderRadius: "0.5rem", fontSize: "0.8125rem" }}
-                        >
-                          {code}
-                        </SyntaxHighlighter>
-                      );
+                      return <CodeBlock code={code} language={match[1]} />;
                     }
                     return (
                       <code className={className} {...props}>
