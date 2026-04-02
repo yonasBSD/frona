@@ -499,13 +499,16 @@ impl TaskExecutor {
         text: Option<String>,
         attachments: Vec<Attachment>,
     ) {
-        let TaskKind::Delegation {
-            ref source_chat_id,
-            resume_parent,
-            ..
-        } = task.kind
-        else {
-            return;
+        let (source_chat_id, resume_parent) = match &task.kind {
+            TaskKind::Delegation {
+                source_chat_id,
+                resume_parent,
+                ..
+            } => (source_chat_id.as_str(), *resume_parent),
+            TaskKind::Direct {
+                source_chat_id: Some(source_chat_id),
+            } => (source_chat_id.as_str(), false),
+            _ => return,
         };
 
         let content = text.unwrap_or_default();

@@ -17,7 +17,7 @@ use crate::inference::InferenceResponse;
 use crate::memory::repository::MemoryEntryRepository;
 use crate::memory::models::MemorySourceType;
 use crate::space::repository::SpaceRepository;
-use crate::tool::schedule::next_cron_occurrence;
+use crate::tool::task::next_cron_occurrence;
 
 pub struct Scheduler {
     app_state: AppState,

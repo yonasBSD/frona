@@ -92,13 +92,12 @@ pub fn build_tool_registry(
 ) -> AgentToolRegistry {
     use super::browser::tool::BrowserTool;
     use super::cli::CliTool;
-    use super::delegate::DelegateTaskTool;
     use super::heartbeat::HeartbeatTool;
     use super::notify_human::NotifyHumanTool;
     use super::produce_file::ProduceFileTool;
     use super::memory::{StoreAgentMemoryTool, StoreUserMemoryTool};
     use super::request_credentials::RequestCredentialsTool;
-    use super::schedule::ScheduleTaskTool;
+    use super::task::TaskTool;
     use super::task_control::TaskControlTool;
     use super::update_identity::UpdateIdentityTool;
     use super::web_fetch::WebFetchTool;
@@ -160,22 +159,14 @@ pub fn build_tool_registry(
         registry.register(Arc::new(WebSearchTool::new(state.search_provider.clone(), prompts.clone())));
     }
 
-    if allowed_tools.iter().any(|t| t == "delegate")
+    if allowed_tools.iter().any(|t| t == "task")
         && let Some(executor) = state.task_executor()
     {
-        registry.register(Arc::new(DelegateTaskTool::new(
+        registry.register(Arc::new(TaskTool::new(
             state.task_service.clone(),
             state.agent_service.clone(),
             executor,
             state.broadcast_service.clone(),
-            prompts.clone(),
-        )));
-    }
-
-    if allowed_tools.iter().any(|t| t == "schedule") {
-        registry.register(Arc::new(ScheduleTaskTool::new(
-            state.task_service.clone(),
-            state.agent_service.clone(),
             prompts.clone(),
         )));
     }
@@ -265,7 +256,7 @@ pub async fn build_agent_summaries(
     current_agent_id: &str,
     tools: &[String],
 ) -> Vec<(String, String)> {
-    if !tools.iter().any(|t| t == "delegate") {
+    if !tools.iter().any(|t| t == "task") {
         return Vec::new();
     }
 

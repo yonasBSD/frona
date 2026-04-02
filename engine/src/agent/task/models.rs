@@ -14,12 +14,14 @@ pub enum TaskStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, SurrealValue)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[serde(tag = "type")]
 #[surreal(crate = "surrealdb::types", tag = "type")]
 pub enum TaskKind {
-    #[default]
-    Direct,
+    Direct {
+        #[serde(default)]
+        source_chat_id: Option<String>,
+    },
     Delegation {
         source_agent_id: String,
         source_chat_id: String,
@@ -34,10 +36,16 @@ pub enum TaskKind {
     },
 }
 
+impl Default for TaskKind {
+    fn default() -> Self {
+        TaskKind::Direct { source_chat_id: None }
+    }
+}
+
 impl TaskKind {
     pub fn source_chat_id(&self) -> Option<&str> {
         match self {
-            TaskKind::Direct => None,
+            TaskKind::Direct { source_chat_id } => source_chat_id.as_deref(),
             TaskKind::Delegation { source_chat_id, .. } => Some(source_chat_id),
             TaskKind::Cron { source_chat_id, .. } => source_chat_id.as_deref(),
         }
@@ -129,7 +137,13 @@ mod tests {
 
     #[test]
     fn source_chat_id_direct() {
-        assert_eq!(TaskKind::Direct.source_chat_id(), None);
+        assert_eq!(TaskKind::Direct { source_chat_id: None }.source_chat_id(), None);
+    }
+
+    #[test]
+    fn source_chat_id_direct_with_source() {
+        let kind = TaskKind::Direct { source_chat_id: Some("c0".to_string()) };
+        assert_eq!(kind.source_chat_id(), Some("c0"));
     }
 
     #[test]

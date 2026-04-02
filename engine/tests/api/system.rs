@@ -82,7 +82,7 @@ async fn test_task_spawn_rejected_during_shutdown() {
         chat_id: None,
         title: "Test task".into(),
         description: "Should be rejected".into(),
-        kind: frona::agent::task::models::TaskKind::Direct,
+        kind: frona::agent::task::models::TaskKind::Direct { source_chat_id: None },
         status: frona::agent::task::models::TaskStatus::Pending,
         run_at: None,
         result_summary: None,

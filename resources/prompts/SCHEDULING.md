@@ -4,13 +4,14 @@ You have three ways to schedule work:
 
 ## Tasks (One-Off)
 
-A task runs once and is done. Use `delegate_task` (fire-and-forget) or `run_subtask` (resume with result) to assign work to another agent.
-Set `run_at` to defer execution to a specific time (e.g., a reminder), or omit it to run immediately.
+A task runs once and is done. Use `create_task` to create a task for yourself or another agent.
+Set `run_at` or `delay_minutes` to defer execution, or omit both to run immediately.
+Set `process_result: true` to receive the result and continue your work; omit it for fire-and-forget (result posted to chat).
 
 ## Cron (Recurring)
 
 A cron runs a fixed instruction at exact, recurring times using a cron expression.
-Use `schedule_task` to create, list, or cancel cron jobs.
+Use `create_task` with `cron_expression` to create a cron job, `list_tasks` to view active jobs, and `delete_task` to cancel one.
 Each run executes the same instruction verbatim. All runs share a single persistent chat.
 
 Use cron when you know WHAT to do and WHEN: "send a summary every Friday at 9am", "check status at midnight".
@@ -24,4 +25,4 @@ Unlike cron, a heartbeat gives you autonomy — you reason about what actions to
 
 ## Cross-Agent Scheduling
 
-`delegate_task`, `run_subtask`, and `schedule_task` accept a `target_agent` parameter to schedule work for another agent listed in `<available_agents>`.
+`create_task` accepts a `target_agent` parameter to assign work to another agent listed in `<available_agents>`. Omit it to schedule work for yourself.

@@ -99,7 +99,7 @@ fn make_task(kind: TaskKind) -> Task {
 async fn ensure_task_chat_creates_when_missing() {
     let (state, _tmp) = test_app_state().await;
     let executor = make_executor(&state);
-    let mut task = make_task(TaskKind::Direct);
+    let mut task = make_task(TaskKind::Direct { source_chat_id: None });
     assert!(task.chat_id.is_none());
 
     let chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
@@ -112,7 +112,7 @@ async fn ensure_task_chat_creates_when_missing() {
 async fn ensure_task_chat_returns_existing() {
     let (state, _tmp) = test_app_state().await;
     let executor = make_executor(&state);
-    let mut task = make_task(TaskKind::Direct);
+    let mut task = make_task(TaskKind::Direct { source_chat_id: None });
     task.chat_id = Some("existing-chat-id".to_string());
 
     let chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
@@ -125,7 +125,7 @@ async fn ensure_task_chat_returns_existing() {
 async fn save_initial_message_saves_on_first_run() {
     let (state, _tmp) = test_app_state().await;
     let executor = make_executor(&state);
-    let mut task = make_task(TaskKind::Direct);
+    let mut task = make_task(TaskKind::Direct { source_chat_id: None });
     let chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
 
     executor
@@ -142,7 +142,7 @@ async fn save_initial_message_saves_on_first_run() {
 async fn save_initial_message_skips_on_resume() {
     let (state, _tmp) = test_app_state().await;
     let executor = make_executor(&state);
-    let mut task = make_task(TaskKind::Direct);
+    let mut task = make_task(TaskKind::Direct { source_chat_id: None });
     let chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
 
     executor
@@ -162,7 +162,7 @@ async fn save_initial_message_skips_on_resume() {
 async fn handle_cancelled_marks_task_cancelled() {
     let (state, _tmp) = test_app_state().await;
     let executor = make_executor(&state);
-    let mut task = make_task(TaskKind::Direct);
+    let mut task = make_task(TaskKind::Direct { source_chat_id: None });
     let _chat_id = executor.ensure_task_chat(&mut task).await.unwrap();
 
     let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
@@ -324,7 +324,7 @@ async fn mark_deferred_sets_pending_with_run_at() {
     let (state, _tmp) = test_app_state().await;
 
     let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
-    let mut task = make_task(TaskKind::Direct);
+    let mut task = make_task(TaskKind::Direct { source_chat_id: None });
     task.status = TaskStatus::InProgress;
     repo.create(&task).await.unwrap();
 
@@ -344,7 +344,7 @@ async fn mark_deferred_sets_pending_with_run_at() {
 async fn deliver_to_source_skips_direct_tasks() {
     let (state, _tmp) = test_app_state().await;
     let executor = make_executor(&state);
-    let task = make_task(TaskKind::Direct);
+    let task = make_task(TaskKind::Direct { source_chat_id: None });
 
     executor
         .deliver_to_source(&task, TaskStatus::Completed, Some("result".to_string()), vec![])
@@ -390,6 +390,42 @@ async fn deliver_to_source_sends_to_delegation() {
 }
 
 #[tokio::test]
+async fn deliver_to_source_sends_to_direct_with_source_chat() {
+    let (state, _tmp) = test_app_state().await;
+    let executor = make_executor(&state);
+
+    let source_chat = state
+        .chat_service
+        .create_chat(
+            "user-1",
+            frona::chat::models::CreateChatRequest {
+                space_id: None,
+                task_id: None,
+                agent_id: "agent-1".to_string(),
+                title: Some("User chat".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut task = make_task(TaskKind::Direct {
+        source_chat_id: Some(source_chat.id.clone()),
+    });
+    task.chat_id = Some("self-task-chat".to_string());
+
+    executor
+        .deliver_to_source(&task, TaskStatus::Completed, Some("Self-task result".to_string()), vec![])
+        .await;
+
+    let messages = state
+        .chat_service
+        .get_stored_messages(&source_chat.id)
+        .await;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].content, "Self-task result");
+}
+
+#[tokio::test]
 async fn broadcast_task_status_emits_event() {
     let (state, _tmp) = test_app_state().await;
     let executor = make_executor(&state);
@@ -397,7 +433,7 @@ async fn broadcast_task_status_emits_event() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     state.broadcast_service.register_session("user-1", tx).await;
 
-    let mut task = make_task(TaskKind::Direct);
+    let mut task = make_task(TaskKind::Direct { source_chat_id: None });
     task.chat_id = Some("chat-123".to_string());
 
     executor.broadcast_task_status(&task, "completed", Some("All done"));
@@ -420,7 +456,7 @@ async fn concurrency_global_limit() {
 
     let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
 
-    let mut task1 = make_task(TaskKind::Direct);
+    let mut task1 = make_task(TaskKind::Direct { source_chat_id: None });
     task1.id = "task-1".to_string();
     task1.status = TaskStatus::InProgress;
     repo.create(&task1).await.unwrap();
@@ -428,7 +464,7 @@ async fn concurrency_global_limit() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let mut task2 = make_task(TaskKind::Direct);
+    let mut task2 = make_task(TaskKind::Direct { source_chat_id: None });
     task2.id = "task-2".to_string();
     repo.create(&task2).await.unwrap();
     executor.spawn_execution(task2).await.unwrap();

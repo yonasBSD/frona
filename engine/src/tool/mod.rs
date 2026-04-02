@@ -1,7 +1,6 @@
 pub mod browser;
 pub mod cli;
 pub mod create_agent;
-pub mod delegate;
 pub mod heartbeat;
 pub mod manage_service;
 pub mod notify_human;
@@ -9,7 +8,7 @@ pub mod produce_file;
 pub mod registry;
 pub mod memory;
 pub mod request_credentials;
-pub mod schedule;
+pub mod task;
 pub mod send_message;
 pub mod task_control;
 pub mod update_identity;
@@ -38,8 +37,7 @@ pub fn init_configurable_tools(cli_tools: &[CliToolConfig]) {
     names.push("browser".to_string());
     names.push("web_fetch".to_string());
     names.push("search".to_string());
-    names.push("delegate".to_string());
-    names.push("schedule".to_string());
+    names.push("task".to_string());
     names.push("heartbeat".to_string());
     names.push("credentials".to_string());
     names.push("app".to_string());

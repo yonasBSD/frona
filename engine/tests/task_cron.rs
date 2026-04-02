@@ -4,7 +4,7 @@ use frona::agent::task::service::TaskService;
 use frona::db::init as db;
 use frona::db::repo::generic::SurrealRepo;
 use frona::core::repository::Repository;
-use frona::tool::schedule::next_cron_occurrence;
+use frona::tool::task::next_cron_occurrence;
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
 
@@ -176,7 +176,7 @@ async fn find_resumable_excludes_cron_templates() {
         title: "Direct task".to_string(),
         description: "A regular task".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,
@@ -193,7 +193,7 @@ async fn find_resumable_excludes_cron_templates() {
     let resumable = svc.find_resumable().await.unwrap();
     assert_eq!(resumable.len(), 1);
     assert_eq!(resumable[0].id, direct_task.id);
-    assert!(matches!(resumable[0].kind, TaskKind::Direct));
+    assert!(matches!(resumable[0].kind, TaskKind::Direct { .. }));
 }
 
 #[tokio::test]
@@ -212,7 +212,7 @@ async fn find_resumable_includes_in_progress_tasks() {
         title: "Was running when server crashed".to_string(),
         description: "Interrupted task".to_string(),
         status: TaskStatus::InProgress,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,
@@ -282,7 +282,7 @@ async fn find_resumable_excludes_terminal_states() {
             title: format!("Terminal task {}", i),
             description: "Should not resume".to_string(),
             status: status.clone(),
-            kind: TaskKind::Direct,
+            kind: TaskKind::Direct { source_chat_id: None },
             run_at: None,
             result_summary: None,
             error_message: None,
@@ -314,7 +314,7 @@ async fn find_resumable_orders_by_created_at_asc() {
             title: format!("Task {}", i),
             description: "desc".to_string(),
             status: TaskStatus::Pending,
-            kind: TaskKind::Direct,
+            kind: TaskKind::Direct { source_chat_id: None },
             run_at: None,
             result_summary: None,
             error_message: None,
@@ -350,7 +350,7 @@ async fn find_resumable_mixed_scenario() {
         title: "Pending direct".to_string(),
         description: "d".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,
@@ -398,7 +398,7 @@ async fn find_resumable_mixed_scenario() {
         title: "Completed".to_string(),
         description: "d".to_string(),
         status: TaskStatus::Completed,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: Some("done".to_string()),
         error_message: None,
@@ -417,7 +417,7 @@ async fn find_resumable_mixed_scenario() {
         title: "Failed".to_string(),
         description: "d".to_string(),
         status: TaskStatus::Failed,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: Some("err".to_string()),
@@ -456,7 +456,7 @@ async fn find_resumable_excludes_future_run_at() {
         title: "Future scheduled task".to_string(),
         description: "Should wait for scheduler".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: Some(now + Duration::hours(1)),
         result_summary: None,
         error_message: None,
@@ -475,7 +475,7 @@ async fn find_resumable_excludes_future_run_at() {
         title: "Past scheduled task".to_string(),
         description: "Should resume".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: Some(now - Duration::minutes(5)),
         result_summary: None,
         error_message: None,
@@ -494,7 +494,7 @@ async fn find_resumable_excludes_future_run_at() {
         title: "Immediate task".to_string(),
         description: "No run_at".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,
@@ -550,7 +550,7 @@ async fn mark_in_progress_then_find_resumable() {
         title: "Task to resume".to_string(),
         description: "desc".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,
@@ -588,7 +588,7 @@ async fn completed_during_execution_not_resumable() {
         title: "Will complete".to_string(),
         description: "desc".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,
@@ -626,7 +626,7 @@ async fn failed_during_execution_not_resumable() {
         title: "Will fail".to_string(),
         description: "desc".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,
@@ -662,7 +662,7 @@ async fn cancelled_during_execution_not_resumable() {
         title: "Will cancel".to_string(),
         description: "desc".to_string(),
         status: TaskStatus::InProgress,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,
@@ -741,7 +741,7 @@ async fn deferred_task_found_when_due() {
         title: "Past deferred".to_string(),
         description: "Should be found".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: Some(now - Duration::minutes(5)),
         result_summary: None,
         error_message: None,
@@ -760,7 +760,7 @@ async fn deferred_task_found_when_due() {
         title: "Future deferred".to_string(),
         description: "Should not be found".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: Some(now + Duration::hours(2)),
         result_summary: None,
         error_message: None,
@@ -779,7 +779,7 @@ async fn deferred_task_found_when_due() {
         title: "Immediate".to_string(),
         description: "No run_at".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,
@@ -821,7 +821,7 @@ async fn task_run_at_serialization() {
         title: "Deferred".to_string(),
         description: "desc".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: Some(now),
         result_summary: None,
         error_message: None,

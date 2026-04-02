@@ -35,7 +35,8 @@ impl TaskService {
                 source_chat_id,
                 resume_parent: req.resume_parent.unwrap_or(false),
             },
-            _ => TaskKind::Direct,
+            (None, source_chat_id) => TaskKind::Direct { source_chat_id },
+            (Some(_), None) => TaskKind::Direct { source_chat_id: None },
         };
 
         let task = Task {

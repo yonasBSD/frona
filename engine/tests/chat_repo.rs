@@ -339,7 +339,7 @@ fn test_task(user_id: &str, agent_id: &str, chat_id: Option<&str>) -> Task {
         title: "Test task".to_string(),
         description: "Test description".to_string(),
         status: TaskStatus::Completed,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,

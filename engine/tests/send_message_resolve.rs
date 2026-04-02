@@ -185,7 +185,7 @@ async fn test_heartbeat_chat_excluded_from_standalone() {
 /// TaskKind::source_chat_id() returns the correct value for each variant.
 #[test]
 fn test_task_kind_source_chat_id() {
-    assert_eq!(TaskKind::Direct.source_chat_id(), None);
+    assert_eq!(TaskKind::Direct { source_chat_id: None }.source_chat_id(), None);
 
     let delegation = TaskKind::Delegation {
         source_agent_id: "a".into(),

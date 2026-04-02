@@ -139,7 +139,7 @@ fn make_task() -> Task {
         title: "Test task".to_string(),
         description: "Say hello".to_string(),
         status: TaskStatus::Pending,
-        kind: TaskKind::Direct,
+        kind: TaskKind::Direct { source_chat_id: None },
         run_at: None,
         result_summary: None,
         error_message: None,

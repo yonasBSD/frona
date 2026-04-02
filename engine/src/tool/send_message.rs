@@ -215,16 +215,15 @@ impl SendMessageTool {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let prompt_template = self
+        let system_prompt = self
             .prompts
-            .read("send_message_resolve.md")
+            .read_with_vars("send_message_resolve.md", &[
+                ("message", message_content),
+                ("chats", &chats_text),
+            ])
             .ok_or_else(|| {
                 AppError::Internal("send_message_resolve.md prompt not found".into())
             })?;
-
-        let system_prompt = prompt_template
-            .replace("{{message}}", message_content)
-            .replace("{{chats}}", &chats_text);
         let registry = self.chat_service.provider_registry();
         let model_group = registry.get_model_group("compaction")
             .or_else(|_| registry.get_model_group("primary"))?;
