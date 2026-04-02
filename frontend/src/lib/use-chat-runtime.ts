@@ -6,7 +6,7 @@ import type { CompleteAttachment, AppendMessage, AttachmentAdapter, PendingAttac
 import type { ExternalStoreAdapter } from "@assistant-ui/react";
 import { ChatStore, type RetryInfo } from "./chat-store";
 import { sseBus } from "./sse-event-bus";
-import { sendMessage as apiSendMessage, cancelGeneration, api, fileDownloadUrl, uploadFile } from "./api-client";
+import { sendMessage as apiSendMessage, cancelGeneration, api, uploadFile } from "./api-client";
 import type { MessageResponse, ChatResponse, Attachment } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -24,8 +24,7 @@ export function getBackendAttachment(id: string): Attachment | undefined {
 }
 
 function convertBackendAttachment(att: Attachment): CompleteAttachment {
-  const username = att.owner.startsWith("user:") ? att.owner.substring(5) : "";
-  const url = fileDownloadUrl(att, username);
+  const url = att.url ?? "";
   const isImage = att.content_type.startsWith("image/");
   registerBackendAttachment(att.path, att);
   return {
@@ -204,6 +203,7 @@ export function convertMessage(msg: MessageResponse) {
         custom: {
           agentId: msg.agent_id,
           originalRole: msg.role,
+          ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
         },
       },
     };

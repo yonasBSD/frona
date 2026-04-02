@@ -108,14 +108,22 @@ pub(crate) async fn upload_file(
 
     let content_type = detect_content_type(&final_filename).to_string();
     let size_bytes = bytes.len() as u64;
+    let owner = format!("user:{}", auth.user_id);
+
+    let url = state
+        .presign_service
+        .sign(&owner, &relative, &auth.user_id, &auth.username)
+        .await
+        .ok()
+        .filter(|u| !u.is_empty());
 
     Ok(Json(Attachment {
         filename: final_filename,
         content_type,
         size_bytes,
-        owner: format!("user:{}", auth.user_id),
+        owner,
         path: relative,
-        url: None,
+        url,
     }))
 }
 

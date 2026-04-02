@@ -9,8 +9,10 @@ import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
 import { useRetryInfo } from "@/lib/retry-context";
 import { agentDisplayName } from "@/lib/types";
+import type { Attachment } from "@/lib/types";
 import { DefaultToolCallUI } from "./tool-uis/default-tool-call-ui";
 import { ToolTimelineProvider } from "./tool-uis/tool-timeline-context";
+import { DocumentIcon, ArrowDownTrayIcon } from "@heroicons/react/24/outline";
 
 function ReasoningPart({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -139,6 +141,58 @@ function RetryBadge() {
   );
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function AttachmentItem({ attachment }: { attachment: Attachment }) {
+  const url = attachment.url;
+  const isImage = attachment.content_type.startsWith("image/");
+
+  if (!url) return null;
+
+  if (isImage) {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer">
+        <img
+          src={url}
+          alt={attachment.filename}
+          className="max-w-xs max-h-48 rounded-md border border-border"
+        />
+      </a>
+    );
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1.5 rounded-md bg-surface-tertiary px-2.5 py-1.5 text-xs text-text-secondary hover:text-text-primary transition"
+    >
+      <span className="truncate max-w-[200px]">{attachment.filename}</span>
+      <span className="text-text-tertiary">({formatFileSize(attachment.size_bytes)})</span>
+    </a>
+  );
+}
+
+function MessageAttachments() {
+  const message = useMessage();
+  const attachments = (message.metadata as Record<string, any>)?.custom?.attachments as Attachment[] | undefined;
+
+  if (!attachments?.length) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2 mt-2">
+      {attachments.map((att, i) => (
+        <AttachmentItem key={i} attachment={att} />
+      ))}
+    </div>
+  );
+}
+
 export function FronaAssistantMessage() {
   const { agentId: sessionAgentId } = useSession();
   const message = useMessage();
@@ -175,6 +229,7 @@ export function FronaAssistantMessage() {
               }}
             />
           </ToolTimelineProvider>
+          <MessageAttachments />
         </div>
       </div>
     </MessagePrimitive.Root>

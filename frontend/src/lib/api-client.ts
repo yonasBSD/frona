@@ -218,15 +218,7 @@ export async function presignFile(owner: string, path: string): Promise<string> 
   return data.url;
 }
 
-export function fileDownloadUrl(attachment: Attachment, username: string): string {
-  if (attachment.owner.startsWith("user:")) {
-    return `${API_URL}/api/files/user/${username}/${attachment.path}`;
-  } else if (attachment.owner.startsWith("agent:")) {
-    const agentId = attachment.owner.replace("agent:", "");
-    return `${API_URL}/api/files/agent/${agentId}/${attachment.path}`;
-  }
-  return "";
-}
+
 
 export async function sendMessage(
   chatId: string,

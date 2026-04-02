@@ -115,7 +115,7 @@ describe("convertMessage: agent messages", () => {
     const msg = makeAgentMessage({ agent_id: "researcher" });
 
     const result = convertMessage(msg);
-    expect(result!.metadata.custom.agentId).toBe("researcher");
+    expect((result!.metadata.custom as Record<string, unknown>).agentId).toBe("researcher");
   });
 
   it("adds empty text part when no content and no reasoning", () => {
