@@ -460,10 +460,14 @@ impl TaskExecutor {
             } => source_agent_id.as_str(),
             _ => &task.agent_id,
         };
-        self.app_state
+        let msg = self
+            .app_state
             .chat_service
             .save_agent_message(chat_id, source_agent_id, task.description.clone())
             .await?;
+        self.app_state
+            .broadcast_service
+            .broadcast_chat_message(&task.user_id, chat_id, msg);
         Ok(())
     }
 
