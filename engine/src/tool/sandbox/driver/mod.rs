@@ -134,7 +134,7 @@ pub fn create_driver(disabled: bool) -> Box<dyn SandboxDriver> {
     #[cfg(target_os = "linux")]
     {
         if syd::syd_available() {
-            tracing::info!("Sandbox: syd (seccomp-notify)");
+            tracing::info!("Sandbox: enabled");
             Box::new(syd::SydDriver::new())
         } else {
             tracing::info!("Sandbox: Landlock");
