@@ -74,8 +74,19 @@ impl BrowserSessionManager {
         let options = browser_use::ConnectionOptions::new(&ws_url)
             .timeout(config.connection_timeout_ms);
 
-        let session = browser_use::BrowserSession::connect(options)
+        let mut session = browser_use::BrowserSession::connect(options)
             .map_err(|e| AppError::Browser(format!("Failed to connect to browser: {e}")))?;
+
+        // Create an initial tab so get_active_tab() works in headless mode.
+        // BrowserSession::connect() (unlike launch()) doesn't create a tab,
+        // and the visibility-based tab detection fails in headless browserless.
+        let tab = session
+            .new_tab()
+            .map_err(|e| AppError::Browser(format!("Failed to create initial tab: {e}")))?;
+        tab.navigate_to("about:blank")
+            .map_err(|e| AppError::Browser(format!("Failed to initialize tab: {e}")))?;
+        tab.activate()
+            .map_err(|e| AppError::Browser(format!("Failed to activate tab: {e}")))?;
 
         let mut sessions = self.sessions.write().await;
         sessions.insert(key, ManagedSession { session });

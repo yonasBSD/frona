@@ -39,12 +39,23 @@ impl WebFetchTool {
 
         let navigate_params = serde_json::json!({
             "url": url,
-            "wait_for_load": true,
+            "wait_for_load": false,
         });
 
         self.session_manager
             .execute_tool(session_key, self.provider(), "navigate", navigate_params)
             .await?;
+
+        // Wait for the page body to be present rather than relying on
+        // headless_chrome's wait_until_navigated() which hangs on newer
+        // Chrome versions (networkAlmostIdle lifecycle event never fires).
+        let wait_params = serde_json::json!({
+            "selector": "body",
+            "timeout_ms": 15000,
+        });
+        let _ = self.session_manager
+            .execute_tool(session_key, self.provider(), "wait", wait_params)
+            .await;
 
         let markdown = self
             .session_manager
