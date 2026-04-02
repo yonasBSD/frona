@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { BellIcon } from "@heroicons/react/24/solid";
 import { XMarkIcon } from "@heroicons/react/24/outline";
 import { useNotifications } from "@/lib/notification-context";
@@ -47,11 +48,22 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-function getNotificationHref(notification: Notification): string | null {
-  if (notification.data.type !== "App") return null;
-  const { action } = notification.data;
-  if (action === "stop" || notification.level === "error") return null;
-  return `${API_URL}/apps/${notification.data.app_id}/`;
+function getNotificationLink(notification: Notification): {
+  href: string;
+  external: boolean;
+} | null {
+  if (notification.data.type === "Agent") {
+    return { href: `/chat?id=${notification.data.chat_id}`, external: false };
+  }
+  if (notification.data.type === "App") {
+    const { action } = notification.data;
+    if (action === "stop" || notification.level === "error") return null;
+    return {
+      href: `${API_URL}/apps/${notification.data.app_id}/`,
+      external: true,
+    };
+  }
+  return null;
 }
 
 function NotificationItem({
@@ -63,12 +75,17 @@ function NotificationItem({
   onRead: (id: string) => void;
   onClose: () => void;
 }) {
-  const href = getNotificationHref(notification);
+  const router = useRouter();
+  const link = getNotificationLink(notification);
 
   const handleClick = () => {
     if (!notification.read) onRead(notification.id);
-    if (href) {
-      window.open(href, "_blank");
+    if (link) {
+      if (link.external) {
+        window.open(link.href, "_blank");
+      } else {
+        router.push(link.href);
+      }
       onClose();
     }
   };
@@ -78,7 +95,7 @@ function NotificationItem({
       onClick={handleClick}
       className={`w-full text-left px-4 py-3 transition hover:bg-surface-tertiary ${
         notification.read ? "opacity-60" : ""
-      } ${href ? "cursor-pointer" : ""}`}
+      } ${link ? "cursor-pointer" : ""}`}
     >
       <div className="flex-1 min-w-0">
         <p

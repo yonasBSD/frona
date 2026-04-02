@@ -297,6 +297,7 @@ export interface CredentialResponse {
 // Notification types
 export type NotificationData =
   | { type: "App"; app_id: string; action: string }
+  | { type: "Agent"; agent_id: string; chat_id: string }
   | { type: "Task"; task_id: string }
   | { type: "System" }
   | { type: "Security" };
