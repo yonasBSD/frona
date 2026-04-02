@@ -166,7 +166,28 @@ pub async fn seed_config_agents(db: &Surreal<Db>, agent_service: &AgentService, 
 
 pub async fn init(path: &str) -> Result<Surreal<Db>, surrealdb::Error> {
     info!("Initializing SurrealDB at {path}");
-    let db = Surreal::new::<RocksDb>(path).await?;
+
+    let timeout = std::time::Duration::from_secs(60);
+    let interval = std::time::Duration::from_secs(2);
+    let start = std::time::Instant::now();
+
+    let db = loop {
+        match Surreal::new::<RocksDb>(path).await {
+            Ok(db) => break db,
+            Err(e) => {
+                let elapsed = start.elapsed();
+                if elapsed >= timeout {
+                    tracing::error!("Failed to open database after {elapsed:.0?}: {e}");
+                    std::process::exit(1);
+                }
+                tracing::warn!(
+                    "Database locked, retrying ({:.0?} elapsed): {e}",
+                    elapsed
+                );
+                tokio::time::sleep(interval).await;
+            }
+        }
+    };
 
     setup_schema(&db).await?;
 
