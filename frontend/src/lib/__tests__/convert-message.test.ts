@@ -321,6 +321,50 @@ describe("convertMessage: special roles", () => {
     const result = convertMessage(msg);
     expect(result).toBeNull();
   });
+
+  it("filters signal-only taskcompletion (empty content, non-failed)", () => {
+    const msg: MessageResponse = {
+      id: "msg-tc-signal",
+      chat_id: "chat-1",
+      role: "taskcompletion",
+      content: "",
+      event: { type: "TaskCompletion", data: { task_id: "t1", chat_id: null, status: "Completed" } },
+      created_at: "2026-01-01T00:00:00Z",
+    };
+
+    const result = convertMessage(msg);
+    expect(result).toBeNull();
+  });
+
+  it("shows failed taskcompletion even with empty content", () => {
+    const msg: MessageResponse = {
+      id: "msg-tc-fail",
+      chat_id: "chat-1",
+      role: "taskcompletion",
+      content: "",
+      event: { type: "TaskCompletion", data: { task_id: "t1", chat_id: null, status: "Failed" } },
+      created_at: "2026-01-01T00:00:00Z",
+    };
+
+    const result = convertMessage(msg);
+    expect(result).not.toBeNull();
+    expect(result!.role).toBe("assistant");
+  });
+
+  it("shows taskcompletion with result content", () => {
+    const msg: MessageResponse = {
+      id: "msg-tc-result",
+      chat_id: "chat-1",
+      role: "taskcompletion",
+      content: "# Research Findings\n\nHere are the results...",
+      event: { type: "TaskCompletion", data: { task_id: "t1", chat_id: null, status: "Completed" } },
+      created_at: "2026-01-01T00:00:00Z",
+    };
+
+    const result = convertMessage(msg);
+    expect(result).not.toBeNull();
+    expect(result!.role).toBe("assistant");
+  });
 });
 
 // ---------------------------------------------------------------------------

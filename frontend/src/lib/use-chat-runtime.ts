@@ -109,6 +109,17 @@ export function promoteTurnText(parts: AssistantContentPart[]): AssistantContent
 }
 
 export function convertMessage(msg: MessageResponse) {
+  // Filter out signal-only task completions (no content, non-failed status).
+  // The task status update SSE event still fires so the task list updates.
+  if (
+    msg.role === "taskcompletion" &&
+    !msg.content &&
+    msg.event?.type === "TaskCompletion" &&
+    msg.event.data.status !== "Failed"
+  ) {
+    return null;
+  }
+
   if (msg.role === "user" || msg.role === "contact" || msg.role === "livecall") {
     const attachments = msg.attachments?.map(convertBackendAttachment);
     return {
@@ -314,9 +325,15 @@ export function useChatRuntime({ chatId, agentId, onChatCreated }: ChatRuntimeOp
     }
   }, []);
 
+  // Filter out messages that convertMessage returns null for (e.g. signal-only task completions)
+  const filteredMessages = useMemo(
+    () => storeSnapshot.messages.filter((msg) => convertMessage(msg) !== null),
+    [storeSnapshot.messages],
+  );
+
   // Build the external store adapter with MessageResponse as the source type
   const adapter: ExternalStoreAdapter<MessageResponse> = useMemo(() => ({
-    messages: storeSnapshot.messages,
+    messages: filteredMessages,
     isRunning: storeSnapshot.isRunning,
     convertMessage: (msg: MessageResponse) => convertMessage(msg) ?? {
       id: msg.id,
@@ -333,7 +350,7 @@ export function useChatRuntime({ chatId, agentId, onChatCreated }: ChatRuntimeOp
     adapters: {
       attachments: fronaAttachmentAdapter,
     },
-  }), [storeSnapshot.messages, storeSnapshot.isRunning, onNew, onCancel]);
+  }), [filteredMessages, storeSnapshot.isRunning, onNew, onCancel]);
 
   const runtime = useExternalStoreRuntime(adapter);
 
