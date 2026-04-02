@@ -243,12 +243,12 @@ async fn task_execution_emits_expected_sse_events() {
     }
 
     // Assert the exact sequence of SSE events for the first turn:
-    //   task_update(inprogress) → token → inference_done → ...
+    //   task_update(inprogress) → chat_message → token → inference_done → ...
     // The executor retries multiple turns (no lifecycle tool), but we only
     // care about the first turn's sequence plus the final task_update.
     assert!(
-        event_names.len() >= 3,
-        "Expected at least 3 events, got {}: {event_names:?}",
+        event_names.len() >= 4,
+        "Expected at least 4 events, got {}: {event_names:?}",
         event_names.len()
     );
 
@@ -260,17 +260,20 @@ async fn task_execution_emits_expected_sse_events() {
         "First task_update should be inprogress"
     );
 
-    // Second event: token (streamed text from the mock provider)
-    assert_eq!(event_names[1], "token", "Second event should be token");
+    // Second event: chat_message (task description saved to the task chat)
+    assert_eq!(event_names[1], "chat_message", "Second event should be chat_message");
+
+    // Third event: token (streamed text from the mock provider)
+    assert_eq!(event_names[2], "token", "Third event should be token");
     assert_eq!(
-        frames[1].data["content"].as_str().unwrap(),
+        frames[2].data["content"].as_str().unwrap(),
         "Hello from the task!",
         "Token should carry the response text"
     );
 
-    // Third event: inference_done with the completed message
-    assert_eq!(event_names[2], "inference_done", "Third event should be inference_done");
-    let message = &frames[2].data["message"];
+    // Fourth event: inference_done with the completed message
+    assert_eq!(event_names[3], "inference_done", "Fourth event should be inference_done");
+    let message = &frames[3].data["message"];
     assert!(message.is_object(), "inference_done should carry a message object");
     assert_eq!(
         message["content"].as_str().unwrap(),

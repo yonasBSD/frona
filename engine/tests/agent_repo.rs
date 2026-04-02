@@ -165,9 +165,9 @@ async fn test_seed_config_agents_visible_in_find_by_user_id() {
     let agents = repo.find_by_user_id("any-user").await.unwrap();
     let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
 
-    assert!(names.contains(&"tester"), "Seeded agents should include 'tester', got: {names:?}");
     assert!(names.contains(&"developer"), "Seeded agents should include 'developer', got: {names:?}");
     assert!(names.contains(&"researcher"), "Seeded agents should include 'researcher', got: {names:?}");
+    assert!(names.contains(&"receptionist"), "Seeded agents should include 'receptionist', got: {names:?}");
     assert!(names.contains(&"system"), "Seeded agents should include 'system', got: {names:?}");
 }
 
