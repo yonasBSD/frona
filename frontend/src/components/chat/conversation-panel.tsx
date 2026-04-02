@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
+import { useNotifications } from "@/lib/notification-context";
 import { ChatProvider } from "@/lib/chat-context";
 import { useChatRuntime } from "@/lib/use-chat-runtime";
 import { RetryContext } from "@/lib/retry-context";
@@ -86,6 +87,7 @@ interface ChatSlot {
 export function ConversationPanel() {
   const router = useRouter();
   const { activeChatId, activeChat, activeTask, agentId } = useSession();
+  const { markReadByChat } = useNotifications();
 
   const [pendingSessionId, setPendingSessionId] = useState(0);
   const [prevActiveChat, setPrevActiveChat] = useState(activeChat);
@@ -127,6 +129,10 @@ export function ConversationPanel() {
       });
     }
   }
+
+  useEffect(() => {
+    if (activeChatId) markReadByChat(activeChatId);
+  }, [activeChatId, markReadByChat]);
 
   // Ensure a pending slot exists when there is no active chat
   const pendingSlotId = !activeChatId ? `pending-${pendingSessionId}` : null;
