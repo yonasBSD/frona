@@ -1,5 +1,9 @@
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
+
+use crate::core::error::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[surreal(crate = "surrealdb::types")]
@@ -35,6 +39,46 @@ pub struct SearchTarget {
     pub dir: std::path::PathBuf,
     pub root: std::path::PathBuf,
     pub source: String,
+}
+
+/// Resolve a relative workspace path to an Attachment struct by reading file metadata.
+pub async fn resolve_workspace_attachment(
+    workspaces_path: &Path,
+    agent_id: &str,
+    relative_path: &str,
+) -> Result<Attachment, AppError> {
+    if relative_path.contains("..") {
+        return Err(AppError::Validation("Path traversal not allowed".into()));
+    }
+
+    let resolved = workspaces_path.join(agent_id).join(relative_path);
+
+    if !resolved.exists() {
+        return Err(AppError::NotFound(format!(
+            "File not found in workspace: {relative_path}"
+        )));
+    }
+
+    let metadata = tokio::fs::metadata(&resolved)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to read file metadata: {e}")))?;
+
+    let filename = resolved
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(relative_path)
+        .to_string();
+
+    let content_type = super::detect_content_type(&filename).to_string();
+
+    Ok(Attachment {
+        filename,
+        content_type,
+        size_bytes: metadata.len(),
+        owner: format!("agent:{agent_id}"),
+        path: relative_path.to_string(),
+        url: None,
+    })
 }
 
 /// Build the URL path segment for an attachment.
