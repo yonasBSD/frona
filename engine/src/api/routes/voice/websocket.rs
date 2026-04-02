@@ -160,7 +160,7 @@ async fn handle_voice_socket(
         let summary = last_response;
 
         if let Ok(task) = state.task_service.mark_completed(&task.id, Some(summary.clone())).await {
-            executor.deliver_to_source(&task, crate::agent::task::models::TaskStatus::Completed, summary).await;
+            executor.deliver_to_source(&task, crate::agent::task::models::TaskStatus::Completed, Some(summary), vec![]).await;
             executor.broadcast_task_status(&task, "completed", None);
         }
     }

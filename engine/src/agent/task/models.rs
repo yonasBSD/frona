@@ -24,7 +24,7 @@ pub enum TaskKind {
         source_agent_id: String,
         source_chat_id: String,
         #[serde(default)]
-        deliver_directly: bool,
+        resume_parent: bool,
     },
     Cron {
         cron_expression: String,
@@ -75,7 +75,7 @@ pub struct CreateTaskRequest {
     pub description: Option<String>,
     pub source_agent_id: Option<String>,
     pub source_chat_id: Option<String>,
-    pub deliver_directly: Option<bool>,
+    pub resume_parent: Option<bool>,
     pub run_at: Option<DateTime<Utc>>,
 }
 
@@ -137,7 +137,7 @@ mod tests {
         let kind = TaskKind::Delegation {
             source_agent_id: "a1".to_string(),
             source_chat_id: "c1".to_string(),
-            deliver_directly: false,
+            resume_parent: false,
         };
         assert_eq!(kind.source_chat_id(), Some("c1"));
     }

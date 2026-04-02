@@ -1,20 +1,24 @@
+use std::path::PathBuf;
+
 use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
 use crate::agent::task::models::TaskStatus;
 use crate::inference::tool_execution::MessageTool;
+use crate::storage::resolve_workspace_attachment;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;
 
 use super::{InferenceContext, ToolOutput};
 
 pub struct TaskControlTool {
+    workspaces_path: PathBuf,
     prompts: PromptLoader,
 }
 
 impl TaskControlTool {
-    pub fn new(prompts: PromptLoader) -> Self {
-        Self { prompts }
+    pub fn new(workspaces_path: PathBuf, prompts: PromptLoader) -> Self {
+        Self { workspaces_path, prompts }
     }
 }
 
@@ -33,14 +37,34 @@ impl TaskControlTool {
 
         match tool_name {
             "complete_task" => {
-                Ok(ToolOutput::text("Task marked as complete.").with_tool_data(
+                let result = arguments
+                    .get("result")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let mut output = ToolOutput::text("Task marked as complete.").with_tool_data(
                     MessageTool::TaskCompletion {
                         task_id: task.id.clone(),
                         chat_id: Some(ctx.chat.id.clone()),
                         status: TaskStatus::Completed,
-                        summary: None,
+                        summary: result,
                     },
-                ))
+                );
+
+                if let Some(deliverables) = arguments.get("deliverables").and_then(|v| v.as_array()) {
+                    for path_val in deliverables {
+                        if let Some(path) = path_val.as_str() {
+                            let attachment = resolve_workspace_attachment(
+                                &self.workspaces_path,
+                                &ctx.agent.id,
+                                path,
+                            ).await?;
+                            output = output.with_attachment(attachment);
+                        }
+                    }
+                }
+
+                Ok(output)
             }
             "fail_task" => {
                 let reason = arguments

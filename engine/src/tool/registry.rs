@@ -230,6 +230,7 @@ pub fn build_tool_registry(
 
     if is_task {
         registry.register(Arc::new(TaskControlTool::new(
+            state.config.storage.workspaces_path.clone().into(),
             state.prompts.clone(),
         )));
     }

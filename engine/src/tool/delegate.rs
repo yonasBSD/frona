@@ -42,7 +42,7 @@ impl DelegateTaskTool {
 #[agent_tool(name = "delegate", files("delegate_task", "run_subtask"))]
 impl DelegateTaskTool {
     async fn execute(&self, tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
-        let deliver_directly = tool_name == "delegate_task";
+        let resume_parent = tool_name == "run_subtask";
 
         let user_id = &ctx.user.id;
         let agent_id = &ctx.agent.id;
@@ -92,7 +92,7 @@ impl DelegateTaskTool {
             description: Some(instruction.to_string()),
             source_agent_id: Some(agent_id.clone()),
             source_chat_id: Some(chat_id.clone()),
-            deliver_directly: Some(deliver_directly),
+            resume_parent: Some(resume_parent),
             run_at,
         };
 
@@ -121,16 +121,16 @@ impl DelegateTaskTool {
             }
         }
 
-        let message = match (run_at, deliver_directly) {
+        let message = match (run_at, resume_parent) {
             (Some(at), _) => format!(
                 "Task '{}' delegated to {}, deferred until {}.",
                 title, target_agent.name, at.format("%Y-%m-%d %H:%M UTC")
             ),
-            (None, true) => format!(
+            (None, false) => format!(
                 "Task '{}' delegated to {}. Results will be posted to this chat when complete.",
                 title, target_agent.name
             ),
-            (None, false) => format!(
+            (None, true) => format!(
                 "Subtask '{}' dispatched to {}. You will be resumed with the result.",
                 title, target_agent.name
             ),

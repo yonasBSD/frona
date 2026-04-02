@@ -199,7 +199,7 @@ async fn handle_error_marks_failed_and_delivers() {
     let mut task = make_task(TaskKind::Delegation {
         source_agent_id: "agent-1".to_string(),
         source_chat_id: source_chat.id.clone(),
-        deliver_directly: true,
+        resume_parent: false,
     });
     task.chat_id = Some("task-chat-id".to_string());
 
@@ -347,7 +347,7 @@ async fn deliver_to_source_skips_direct_tasks() {
     let task = make_task(TaskKind::Direct);
 
     executor
-        .deliver_to_source(&task, TaskStatus::Completed, "result".to_string())
+        .deliver_to_source(&task, TaskStatus::Completed, Some("result".to_string()), vec![])
         .await;
 }
 
@@ -373,12 +373,12 @@ async fn deliver_to_source_sends_to_delegation() {
     let mut task = make_task(TaskKind::Delegation {
         source_agent_id: "agent-1".to_string(),
         source_chat_id: source_chat.id.clone(),
-        deliver_directly: true,
+        resume_parent: false,
     });
     task.chat_id = Some("task-chat".to_string());
 
     executor
-        .deliver_to_source(&task, TaskStatus::Completed, "All done".to_string())
+        .deliver_to_source(&task, TaskStatus::Completed, Some("All done".to_string()), vec![])
         .await;
 
     let messages = state
@@ -438,69 +438,42 @@ async fn concurrency_global_limit() {
 }
 
 #[tokio::test]
-async fn find_lifecycle_event_uses_last_assistant_message_as_summary() {
+async fn deliver_to_source_signal_only_sends_empty_content() {
     let (state, _tmp) = test_app_state().await;
+    let executor = make_executor(&state);
 
-    let chat = state
+    let source_chat = state
         .chat_service
         .create_chat(
             "user-1",
             frona::chat::models::CreateChatRequest {
                 space_id: None,
-                task_id: Some("task-lf".to_string()),
+                task_id: None,
                 agent_id: "agent-1".to_string(),
-                title: Some("Task chat".to_string()),
+                title: Some("Source".to_string()),
             },
         )
         .await
         .unwrap();
 
-    // Save an assistant message (the actual answer)
-    state
-        .chat_service
-        .save_agent_message(&chat.id, "agent-1", "The answer is 42.".to_string())
-        .await
-        .unwrap();
-
-    // Save lifecycle event AFTER the assistant message (no summary)
-    state
-        .chat_service
-        .save_system_event(
-            &chat.id,
-            MessageEvent::TaskCompletion {
-                task_id: "task-lf".to_string(),
-                chat_id: Some(chat.id.clone()),
-                status: TaskStatus::Completed,
-                summary: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    // Create a task and ensure it exists in DB
     let mut task = make_task(TaskKind::Delegation {
         source_agent_id: "agent-1".to_string(),
-        source_chat_id: "source-chat".to_string(),
-        deliver_directly: true,
+        source_chat_id: source_chat.id.clone(),
+        resume_parent: false,
     });
-    task.id = "task-lf".to_string();
-    task.chat_id = Some(chat.id.clone());
-    task.status = TaskStatus::InProgress;
-    let repo: SurrealRepo<Task> = SurrealRepo::new(state.db.clone());
-    repo.create(&task).await.unwrap();
+    task.chat_id = Some("task-chat".to_string());
 
-    // Verify: the lifecycle event should resolve its summary from the assistant message
-    let messages = state.chat_service.get_stored_messages(&chat.id).await;
-    let agent_msg = messages.iter().find(|m| m.role == MessageRole::Agent);
-    assert!(agent_msg.is_some());
-    assert_eq!(agent_msg.unwrap().content, "The answer is 42.");
+    // Signal-only completion: no result text, no deliverables
+    executor
+        .deliver_to_source(&task, TaskStatus::Completed, None, vec![])
+        .await;
 
-    let system_msg = messages.iter().find(|m| m.role == MessageRole::System);
-    assert!(system_msg.is_some());
-    assert!(matches!(
-        &system_msg.unwrap().event,
-        Some(MessageEvent::TaskCompletion { summary: None, .. })
-    ));
+    let messages = state
+        .chat_service
+        .get_stored_messages(&source_chat.id)
+        .await;
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].content.is_empty(), "Signal-only completion should have empty content");
 }
 
 #[tokio::test]
@@ -508,7 +481,7 @@ async fn deliver_to_source_saves_message_to_user_chat() {
     let (state, _tmp) = test_app_state().await;
     let executor = make_executor(&state);
 
-    // Create a user chat (no task_id) — deliver_directly=false so
+    // Create a user chat (no task_id) — resume_parent=true so
     // check_and_resume_parent runs, but it should bail out because
     // the source chat is not a task chat.
     let user_chat = state
@@ -528,7 +501,7 @@ async fn deliver_to_source_saves_message_to_user_chat() {
     let mut task = make_task(TaskKind::Delegation {
         source_agent_id: "agent-1".to_string(),
         source_chat_id: user_chat.id.clone(),
-        deliver_directly: false,
+        resume_parent: true,
     });
     task.chat_id = Some("task-chat".to_string());
 
@@ -536,7 +509,7 @@ async fn deliver_to_source_saves_message_to_user_chat() {
     repo.create(&task).await.unwrap();
 
     executor
-        .deliver_to_source(&task, TaskStatus::Completed, "Done".to_string())
+        .deliver_to_source(&task, TaskStatus::Completed, Some("Done".to_string()), vec![])
         .await;
 
     // Message should be delivered

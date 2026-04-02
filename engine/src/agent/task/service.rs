@@ -33,7 +33,7 @@ impl TaskService {
             (Some(source_agent_id), Some(source_chat_id)) => TaskKind::Delegation {
                 source_agent_id,
                 source_chat_id,
-                deliver_directly: req.deliver_directly.unwrap_or(false),
+                resume_parent: req.resume_parent.unwrap_or(false),
             },
             _ => TaskKind::Direct,
         };

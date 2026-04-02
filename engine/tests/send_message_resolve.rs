@@ -96,7 +96,7 @@ async fn test_task_chain_walk_resolves_to_origin() {
         TaskKind::Delegation {
             source_agent_id: "agent-a".to_string(),
             source_chat_id: "chat-1".to_string(),
-            deliver_directly: false,
+            resume_parent: true,
         },
     );
     task_repo.create(&t1).await.unwrap();
@@ -113,7 +113,7 @@ async fn test_task_chain_walk_resolves_to_origin() {
         TaskKind::Delegation {
             source_agent_id: "agent-b".to_string(),
             source_chat_id: "chat-2".to_string(),
-            deliver_directly: false,
+            resume_parent: true,
         },
     );
     task_repo.create(&t2).await.unwrap();
@@ -190,7 +190,7 @@ fn test_task_kind_source_chat_id() {
     let delegation = TaskKind::Delegation {
         source_agent_id: "a".into(),
         source_chat_id: "chat-1".into(),
-        deliver_directly: false,
+        resume_parent: true,
     };
     assert_eq!(delegation.source_chat_id(), Some("chat-1"));
 

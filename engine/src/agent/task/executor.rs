@@ -14,6 +14,7 @@ use crate::chat::models::CreateChatRequest;
 use crate::core::error::AppError;
 use crate::core::state::AppState;
 use crate::inference::InferenceResponse;
+use crate::storage::Attachment;
 
 const MAX_TASK_RETRIES: usize = 10;
 
@@ -207,7 +208,7 @@ impl TaskExecutor {
                 Ok(execution::AgentLoopOutcome { response }) => match response {
                     InferenceResponse::Completed { text, attachments, lifecycle_event, reasoning, .. } => {
                         if let Ok(msg) = self.app_state.chat_service
-                            .complete_agent_message(&agent_msg_id, text.clone(), attachments, reasoning)
+                            .complete_agent_message(&agent_msg_id, text.clone(), attachments.clone(), reasoning)
                             .await
                         {
                             event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
@@ -216,7 +217,7 @@ impl TaskExecutor {
                         if let Some(event) = lifecycle_event {
                             let action = self.lifecycle_action_from_event(
                                 event,
-                                &text,
+                                attachments,
                             );
                             self.handle_lifecycle_action(&task, &chat_id, action)
                                 .await?;
@@ -271,7 +272,8 @@ impl TaskExecutor {
         self.deliver_to_source(
             &task,
             TaskStatus::Completed,
-            "Task auto-completed after max retries".into(),
+            Some("Task auto-completed after max retries".into()),
+            vec![],
         )
         .await;
         self.broadcast_task_status(&task, "completed", Some("Task auto-completed after max retries"));
@@ -284,12 +286,13 @@ impl TaskExecutor {
     async fn find_lifecycle_event(&self, chat_id: &str) -> Option<LifecycleAction> {
         let messages = self.app_state.chat_service.get_stored_messages(chat_id).await;
 
-        // Find the last assistant message to use as fallback summary
-        let last_assistant_content = messages
+        // Collect attachments from the last agent message (explicitly marked deliverables)
+        let last_agent_attachments = messages
             .iter()
             .rev()
-            .find(|m| m.role == MessageRole::Agent && !m.content.is_empty())
-            .map(|m| m.content.clone());
+            .find(|m| m.role == MessageRole::Agent)
+            .map(|m| m.attachments.clone())
+            .unwrap_or_default();
 
         for msg in messages.iter().rev() {
             if msg.role != MessageRole::System {
@@ -299,13 +302,10 @@ impl TaskExecutor {
                 Some(MessageEvent::TaskCompletion {
                     status, summary, ..
                 }) => {
-                    let resolved_summary = summary
-                        .clone()
-                        .or(last_assistant_content)
-                        .unwrap_or_default();
                     return Some(LifecycleAction::Complete {
                         status: status.clone(),
-                        summary: resolved_summary,
+                        summary: summary.clone(),
+                        attachments: last_agent_attachments,
                     });
                 }
                 Some(MessageEvent::TaskDeferred {
@@ -327,23 +327,19 @@ impl TaskExecutor {
     fn lifecycle_action_from_event(
         &self,
         event: MessageTool,
-        fallback_summary: &str,
+        attachments: Vec<Attachment>,
     ) -> LifecycleAction {
         match event {
             MessageTool::TaskCompletion { status, summary, .. } => {
-                let resolved_summary = summary
-                    .or_else(|| {
-                        if fallback_summary.is_empty() { None } else { Some(fallback_summary.to_string()) }
-                    })
-                    .unwrap_or_default();
-                LifecycleAction::Complete { status, summary: resolved_summary }
+                LifecycleAction::Complete { status, summary, attachments }
             }
             MessageTool::TaskDeferred { delay_minutes, reason, .. } => {
                 LifecycleAction::Defer { delay_minutes, reason }
             }
             _ => LifecycleAction::Complete {
                 status: TaskStatus::Completed,
-                summary: fallback_summary.to_string(),
+                summary: None,
+                attachments,
             },
         }
     }
@@ -358,24 +354,27 @@ impl TaskExecutor {
             LifecycleAction::Complete {
                 status: TaskStatus::Completed,
                 summary,
+                attachments,
             } => {
                 self.app_state
                     .task_service
-                    .mark_completed(&task.id, Some(summary.clone()))
+                    .mark_completed(&task.id, summary.clone())
                     .await?;
-                self.deliver_to_source(task, TaskStatus::Completed, summary.clone())
+                self.deliver_to_source(task, TaskStatus::Completed, summary.clone(), attachments)
                     .await;
-                self.broadcast_task_status(task, "completed", Some(&summary));
+                self.broadcast_task_status(task, "completed", summary.as_deref());
             }
             LifecycleAction::Complete {
                 status: TaskStatus::Failed,
                 summary,
+                attachments,
             } => {
+                let error_msg = summary.clone().unwrap_or_default();
                 self.app_state
                     .task_service
-                    .mark_failed(&task.id, summary.clone())
+                    .mark_failed(&task.id, error_msg)
                     .await?;
-                self.deliver_to_source(task, TaskStatus::Failed, summary)
+                self.deliver_to_source(task, TaskStatus::Failed, summary, attachments)
                     .await;
                 self.broadcast_task_status(task, "failed", None);
             }
@@ -487,48 +486,41 @@ impl TaskExecutor {
             .task_service
             .mark_failed(&task.id, error_msg)
             .await?;
-        self.deliver_to_source(task, TaskStatus::Failed, error.to_string())
+        self.deliver_to_source(task, TaskStatus::Failed, Some(error.to_string()), vec![])
             .await;
         self.broadcast_task_status(task, "failed", None);
         Ok(())
     }
 
-    pub async fn deliver_to_source(&self, task: &Task, status: TaskStatus, text: String) {
+    pub async fn deliver_to_source(
+        &self,
+        task: &Task,
+        status: TaskStatus,
+        text: Option<String>,
+        attachments: Vec<Attachment>,
+    ) {
         let TaskKind::Delegation {
             ref source_chat_id,
-            deliver_directly,
+            resume_parent,
             ..
         } = task.kind
         else {
             return;
         };
 
-        let attachments = if status == TaskStatus::Completed {
-            task.chat_id.as_ref().map(|cid| {
-                self.app_state
-                    .chat_service
-                    .find_attachments_by_chat_id(cid)
-            })
-        } else {
-            None
-        };
-
-        let attachments = match attachments {
-            Some(fut) => fut.await.unwrap_or_default(),
-            None => vec![],
-        };
+        let content = text.unwrap_or_default();
 
         let event = MessageEvent::TaskCompletion {
             task_id: task.id.clone(),
             chat_id: task.chat_id.clone(),
             status,
-            summary: Some(text.clone()),
+            summary: if content.is_empty() { None } else { Some(content.clone()) },
         };
 
         match self
             .app_state
             .chat_service
-            .save_task_completion_message(source_chat_id, &task.agent_id, text, event, attachments)
+            .save_task_completion_message(source_chat_id, &task.agent_id, content, event, attachments)
             .await
         {
             Ok(msg) => {
@@ -543,7 +535,7 @@ impl TaskExecutor {
             }
         }
 
-        if !deliver_directly {
+        if resume_parent {
             self.check_and_resume_parent(source_chat_id, &task.user_id)
                 .await;
         }
@@ -632,7 +624,8 @@ impl TaskExecutor {
 enum LifecycleAction {
     Complete {
         status: TaskStatus,
-        summary: String,
+        summary: Option<String>,
+        attachments: Vec<Attachment>,
     },
     Defer {
         delay_minutes: u32,

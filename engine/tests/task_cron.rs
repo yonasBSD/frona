@@ -246,7 +246,7 @@ async fn find_resumable_includes_delegation_tasks() {
         kind: TaskKind::Delegation {
             source_agent_id: "agent-1".to_string(),
             source_chat_id: "chat-origin".to_string(),
-            deliver_directly: false,
+            resume_parent: true,
         },
         run_at: None,
         result_summary: None,
@@ -372,7 +372,7 @@ async fn find_resumable_mixed_scenario() {
         kind: TaskKind::Delegation {
             source_agent_id: "agent-1".to_string(),
             source_chat_id: "chat-origin".to_string(),
-            deliver_directly: false,
+            resume_parent: true,
         },
         run_at: None,
         result_summary: None,
