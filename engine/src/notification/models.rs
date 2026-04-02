@@ -15,6 +15,10 @@ pub enum NotificationData {
     Task {
         task_id: String,
     },
+    Agent {
+        agent_id: String,
+        chat_id: String,
+    },
     System {},
     Security {},
 }

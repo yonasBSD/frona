@@ -10,6 +10,7 @@ pub mod registry;
 pub mod memory;
 pub mod request_credentials;
 pub mod schedule;
+pub mod send_message;
 pub mod task_control;
 pub mod update_identity;
 pub mod voice;

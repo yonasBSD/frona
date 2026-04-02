@@ -110,6 +110,15 @@ pub fn build_tool_registry(
 
     registry.register(Arc::new(NotifyHumanTool::new(state.vault_service.clone(), prompts.clone())));
 
+    registry.register(Arc::new(super::send_message::SendMessageTool::new(
+        state.chat_service.clone(),
+        state.notification_service.clone(),
+        state.broadcast_service.clone(),
+        state.agent_service.clone(),
+        state.task_service.clone(),
+        prompts.clone(),
+    )));
+
     let workspaces_path = std::path::PathBuf::from(&state.config.storage.workspaces_path);
     registry.register(Arc::new(ProduceFileTool::new(
         workspaces_path,

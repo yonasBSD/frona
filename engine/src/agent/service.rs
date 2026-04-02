@@ -151,6 +151,16 @@ impl AgentService {
         Ok(agents.into_iter().map(Into::into).collect())
     }
 
+    pub async fn heartbeat_chat_ids(&self, user_id: &str) -> Vec<String> {
+        self.repo
+            .find_by_user_id(user_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|a| a.heartbeat_chat_id)
+            .collect()
+    }
+
     pub async fn update(
         &self,
         user_id: &str,
