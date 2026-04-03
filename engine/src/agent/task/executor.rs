@@ -207,10 +207,19 @@ impl TaskExecutor {
             match result {
                 Ok(execution::AgentLoopOutcome { response }) => match response {
                     InferenceResponse::Completed { text, attachments, lifecycle_event, reasoning, .. } => {
-                        if let Ok(msg) = self.app_state.chat_service
+                        if let Ok(mut msg) = self.app_state.chat_service
                             .complete_agent_message(&agent_msg_id, text.clone(), attachments.clone(), reasoning)
                             .await
                         {
+                            // Populate tool_executions so the SSE has complete_task/TaskCompletion data
+                            if let Ok(tes) = self.app_state.chat_service
+                                .get_tool_executions_by_message(&agent_msg_id).await
+                            {
+                                msg.tool_executions = tes.into_iter().map(Into::into).collect();
+                            }
+                            crate::credential::presign::presign_response_by_user_id(
+                                &self.app_state.presign_service, &mut msg, &task.user_id,
+                            ).await;
                             event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
                         }
 

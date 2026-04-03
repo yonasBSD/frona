@@ -103,6 +103,9 @@ pub async fn resume_agent_loop(
                     .complete_agent_message(message_id, text, attachments, reasoning)
                     .await
                 {
+                    if let Ok(tes) = state.chat_service.get_tool_executions_by_message(message_id).await {
+                        msg.tool_executions = tes.into_iter().map(Into::into).collect();
+                    }
                     presign_response_by_user_id(&state.presign_service, &mut msg, user_id).await;
                     event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
                 }

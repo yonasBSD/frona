@@ -39,6 +39,9 @@ async fn handle_inference_result(
                     .complete_agent_message(message_id, text, attachments, reasoning)
                     .await
                 {
+                    if let Ok(tes) = chat_service.get_tool_executions_by_message(message_id).await {
+                        msg.tool_executions = tes.into_iter().map(Into::into).collect();
+                    }
                     presign_response(presign_svc, &mut msg, user_id, username).await;
                     event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
                 }
