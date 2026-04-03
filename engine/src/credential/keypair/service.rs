@@ -49,10 +49,10 @@ impl KeyPairService {
             .map_err(|e| AppError::Internal(format!("AES init failed: {e}")))?;
 
         let nonce_bytes: [u8; 12] = rand::random();
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let encrypted = cipher
-            .encrypt(nonce, private_bytes.as_ref())
+            .encrypt(&nonce, private_bytes.as_ref())
             .map_err(|e| AppError::Internal(format!("Encryption failed: {e}")))?;
 
         let now = chrono::Utc::now();
@@ -161,9 +161,11 @@ impl KeyPairService {
         let cipher = Aes256Gcm::new_from_slice(&self.encryption_key)
             .map_err(|e| AppError::Internal(format!("AES init failed: {e}")))?;
 
-        let nonce = Nonce::from_slice(&kp.nonce);
+        let nonce_arr: [u8; 12] = kp.nonce.as_slice().try_into()
+            .map_err(|_| AppError::Internal("Invalid nonce length".into()))?;
+        let nonce = Nonce::from(nonce_arr);
         let decrypted = cipher
-            .decrypt(nonce, kp.private_key_enc.as_ref())
+            .decrypt(&nonce, kp.private_key_enc.as_ref())
             .map_err(|e| AppError::Decryption(format!("Decryption failed: {e}")))?;
 
         let mut key = [0u8; 32];

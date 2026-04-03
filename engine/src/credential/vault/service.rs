@@ -715,10 +715,10 @@ impl VaultService {
             .map_err(|e| AppError::Internal(format!("AES init failed: {e}")))?;
 
         let nonce_bytes: [u8; 12] = rand::random();
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let encrypted = cipher
-            .encrypt(nonce, json.as_ref())
+            .encrypt(&nonce, json.as_ref())
             .map_err(|e| AppError::Internal(format!("Encryption failed: {e}")))?;
 
         Ok((encrypted, nonce_bytes.to_vec()))
@@ -731,9 +731,11 @@ impl VaultService {
         let cipher = Aes256Gcm::new_from_slice(&self.encryption_key)
             .map_err(|e| AppError::Internal(format!("AES init failed: {e}")))?;
 
-        let nonce = Nonce::from_slice(&connection.nonce);
+        let nonce_arr: [u8; 12] = connection.nonce.as_slice().try_into()
+            .map_err(|_| AppError::Internal("Invalid nonce length".into()))?;
+        let nonce = Nonce::from(nonce_arr);
         let decrypted = cipher
-            .decrypt(nonce, connection.config_encrypted.as_ref())
+            .decrypt(&nonce, connection.config_encrypted.as_ref())
             .map_err(|e| AppError::Internal(format!("Decryption failed: {e}")))?;
 
         serde_json::from_slice(&decrypted)
@@ -746,10 +748,10 @@ pub fn encrypt_password(password: &str, key: &[u8; 32]) -> Result<String, AppErr
         .map_err(|e| AppError::Internal(format!("AES init failed: {e}")))?;
 
     let nonce_bytes: [u8; 12] = rand::random();
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::from(nonce_bytes);
 
     let encrypted = cipher
-        .encrypt(nonce, password.as_bytes())
+        .encrypt(&nonce, password.as_bytes())
         .map_err(|e| AppError::Internal(format!("Encryption failed: {e}")))?;
 
     let mut combined = nonce_bytes.to_vec();
@@ -767,13 +769,15 @@ pub fn decrypt_password(encrypted_b64: &str, key: &[u8; 32]) -> Result<String, A
     }
 
     let (nonce_bytes, encrypted_data) = combined.split_at(12);
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let nonce_arr: [u8; 12] = nonce_bytes.try_into()
+        .map_err(|_| AppError::Internal("Invalid nonce length".into()))?;
+    let nonce = Nonce::from(nonce_arr);
 
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| AppError::Internal(format!("AES init failed: {e}")))?;
 
     let decrypted = cipher
-        .decrypt(nonce, encrypted_data)
+        .decrypt(&nonce, encrypted_data)
         .map_err(|e| AppError::Internal(format!("Decryption failed: {e}")))?;
 
     String::from_utf8(decrypted)

@@ -423,9 +423,11 @@ fn decrypt_with_key(
 ) -> Result<Vec<u8>, String> {
     let cipher =
         Aes256Gcm::new_from_slice(key).map_err(|e| format!("AES init failed: {e}"))?;
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let nonce_arr: [u8; 12] = nonce_bytes.try_into()
+        .map_err(|_| "Invalid nonce length".to_string())?;
+    let nonce = Nonce::from(nonce_arr);
     cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|e| format!("Decryption failed: {e}"))
 }
 
@@ -436,9 +438,9 @@ fn encrypt_with_key(
     let new_nonce_bytes: [u8; 12] = rand::random();
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| RotateError::Failed(format!("AES init failed: {e}")))?;
-    let nonce = Nonce::from_slice(&new_nonce_bytes);
+    let nonce = Nonce::from(new_nonce_bytes);
     let encrypted = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(&nonce, plaintext)
         .map_err(|e| RotateError::Failed(format!("Encryption failed: {e}")))?;
     Ok((encrypted, new_nonce_bytes.to_vec()))
 }

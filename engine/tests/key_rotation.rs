@@ -16,15 +16,16 @@ async fn setup_db() -> surrealdb::Surreal<surrealdb::engine::local::Db> {
 fn encrypt_blob(data: &[u8], key: &[u8; 32]) -> (Vec<u8>, Vec<u8>) {
     let cipher = Aes256Gcm::new_from_slice(key).unwrap();
     let nonce_bytes: [u8; 12] = rand::random();
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let encrypted = cipher.encrypt(nonce, data).unwrap();
+    let nonce = Nonce::from(nonce_bytes);
+    let encrypted = cipher.encrypt(&nonce, data).unwrap();
     (encrypted, nonce_bytes.to_vec())
 }
 
 fn decrypt_blob(data: &[u8], nonce: &[u8], key: &[u8; 32]) -> Vec<u8> {
     let cipher = Aes256Gcm::new_from_slice(key).unwrap();
-    let n = Nonce::from_slice(nonce);
-    cipher.decrypt(n, data).unwrap()
+    let nonce_arr: [u8; 12] = nonce.try_into().unwrap();
+    let n = Nonce::from(nonce_arr);
+    cipher.decrypt(&n, data).unwrap()
 }
 
 async fn insert_vault_connection(
