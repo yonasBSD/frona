@@ -333,6 +333,11 @@
   }
 }
 
+/* Gap after the last external-tool status pill before the next message part */
+.tool-status-item + :not(.tool-status-item) {
+  margin-top: 0.75rem;
+}
+
 @keyframes wave {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-6px); opacity: 1; }
