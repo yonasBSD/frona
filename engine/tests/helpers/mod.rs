@@ -171,6 +171,45 @@ impl AgentTool for MockInternalTool {
     }
 }
 
+pub struct MockAttachmentTool {
+    pub tool_name: String,
+    pub attachment: frona::storage::Attachment,
+}
+
+impl MockAttachmentTool {
+    pub fn new(name: &str, attachment: frona::storage::Attachment) -> Self {
+        Self {
+            tool_name: name.to_string(),
+            attachment,
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for MockAttachmentTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        vec![ToolDefinition {
+            id: self.tool_name.clone(),
+            group: self.tool_name.clone(),
+            description: format!("Attachment tool {}", self.tool_name),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }]
+    }
+
+    async fn execute(
+        &self,
+        _tool_name: &str,
+        _arguments: Value,
+        _ctx: &InferenceContext,
+    ) -> Result<ToolOutput, frona::core::error::AppError> {
+        Ok(ToolOutput::text("file produced").with_attachment(self.attachment.clone()))
+    }
+}
+
 pub struct MockExternalTool {
     pub tool_name: String,
 }

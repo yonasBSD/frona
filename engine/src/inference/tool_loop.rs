@@ -526,6 +526,10 @@ pub async fn run_tool_loop(
         }
     }
 
+    // Deduplicate attachments by path (e.g. produce_file + complete_task with same deliverable)
+    let mut seen_paths = std::collections::HashSet::new();
+    all_attachments.retain(|a| seen_paths.insert(a.path.clone()));
+
     Ok(ToolLoopOutcome::Completed {
         text: final_text,
         attachments: all_attachments,

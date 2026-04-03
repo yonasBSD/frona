@@ -1229,3 +1229,62 @@ async fn test_tool_result_sse_includes_summary() {
         "detailed result data here"
     );
 }
+
+#[tokio::test]
+async fn test_tool_loop_deduplicates_attachments() {
+    init_metrics();
+
+    let attachment = frona::storage::Attachment {
+        filename: "report.md".to_string(),
+        content_type: "text/markdown".to_string(),
+        size_bytes: 1234,
+        owner: "agent:test".to_string(),
+        path: "report.md".to_string(),
+        url: None,
+    };
+
+    // Two tools both produce the same attachment (e.g. produce_file + complete_task with deliverables)
+    let provider = Arc::new(MockModelProvider::new(vec![MockResponse::ToolCalls(vec![
+        ("c1".into(), "produce_file".into(), serde_json::json!({})),
+        ("c2".into(), "complete_task".into(), serde_json::json!({})),
+    ])]));
+    let registry = test_registry_with_provider("mock", provider);
+    let model_group = test_model_group();
+    let mut tool_registry = AgentToolRegistry::new();
+    tool_registry.register(Arc::new(MockAttachmentTool::new("produce_file", attachment.clone())));
+    tool_registry.register(Arc::new(MockAttachmentTool::new("complete_task", attachment)));
+    let (event_sender, _sse_rx, _broadcast) = test_event_sender().await;
+    let cancel = CancellationToken::new();
+    let ctx = mock_context();
+    let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
+
+    let outcome = run_tool_loop(
+        &registry,
+        &model_group,
+        "system",
+        vec![RigMessage::user("produce and complete")],
+        &tool_registry,
+        event_sender,
+        cancel,
+        &ctx,
+        &metrics,
+        &chat_service,
+        "test-msg",
+    )
+    .await
+    .unwrap();
+
+    match outcome {
+        ToolLoopOutcome::Completed { attachments, .. } => {
+            assert_eq!(
+                attachments.len(),
+                1,
+                "Same attachment from two tools should be deduplicated, got {} attachments",
+                attachments.len()
+            );
+            assert_eq!(attachments[0].path, "report.md");
+        }
+        other => panic!("Expected Completed, got {other:?}"),
+    }
+}
