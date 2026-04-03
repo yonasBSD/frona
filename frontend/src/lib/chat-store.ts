@@ -37,6 +37,8 @@ export class ChatStore {
   streamingReasoning = "";
   streamingToolCalls = new Map<string, ToolCallPart>();
   streamingToolResults = new Map<string, { result: string; isError: boolean }>();
+  /** External tools waiting for user resolution (keyed by tool_call_id). */
+  pendingExternalTools = new Map<string, ToolExecution>();
   isRunning = false;
   retryInfo: RetryInfo | null = null;
   loaded = false;
@@ -164,16 +166,16 @@ export class ChatStore {
       }
 
       case "tool_message": {
-        // External tool pending — finalize as an "executing" message with the tool execution
         if (event.tool_execution) {
-          this.finalizeAsExternalTool(event.tool_execution);
+          this.pendingExternalTools.set(event.tool_execution.tool_call_id, event.tool_execution);
         }
-        this.clearStreaming();
         break;
       }
 
       case "tool_resolved": {
-        if (event.message) {
+        if (event.tool_execution && this.pendingExternalTools.has(event.tool_execution.tool_call_id)) {
+          this.pendingExternalTools.set(event.tool_execution.tool_call_id, event.tool_execution);
+        } else if (event.message) {
           const msg = event.message;
           const idx = this.messages.findIndex((m) => m.id === msg.id);
           if (idx >= 0) {
@@ -184,7 +186,6 @@ export class ChatStore {
             this.messages[idx] = msg;
           }
         } else if (event.tool_execution) {
-          // Update the specific tool execution within its message
           this.updateToolExecution(event.tool_execution);
         }
         break;
@@ -312,53 +313,45 @@ export class ChatStore {
   private buildToolExecutions(): ToolExecution[] {
     const result: ToolExecution[] = [];
     for (const tc of this.streamingToolCalls.values()) {
-      const res = this.streamingToolResults.get(tc.toolCallId);
-      result.push({
-        id: tc.toolCallId,
-        chat_id: "",
-        message_id: "",
-        turn: 0,
-        tool_call_id: tc.toolCallId,
-        name: tc.toolName,
-        arguments: tc.args as Record<string, unknown>,
-        result: res?.result ?? "",
-        success: res ? !res.isError : true,
-        duration_ms: 0,
-        description: tc.args.description as string | undefined,
-        turn_text: tc.args.turnText as string | undefined,
-        created_at: "",
-      });
+      const pending = this.pendingExternalTools.get(tc.toolCallId);
+      if (pending) {
+        result.push(pending);
+      } else {
+        const res = this.streamingToolResults.get(tc.toolCallId);
+        result.push({
+          id: tc.toolCallId,
+          chat_id: "",
+          message_id: "",
+          turn: 0,
+          tool_call_id: tc.toolCallId,
+          name: tc.toolName,
+          arguments: tc.args as Record<string, unknown>,
+          result: res?.result ?? "",
+          success: res ? !res.isError : true,
+          duration_ms: 0,
+          description: tc.args.description as string | undefined,
+          turn_text: tc.args.turnText as string | undefined,
+          created_at: "",
+        });
+      }
     }
     return result;
   }
 
-  private finalizeAsExternalTool(te: ToolExecution) {
-    this.streamingToolCalls.delete(te.tool_call_id);
-
-    const displayText = this.lastTextSnapshot > 0
-      ? this.streamingText.slice(this.lastTextSnapshot)
-      : this.streamingText;
-
-    const toolExecutions = this.buildToolExecutions();
-
-    // Add the external tool execution itself
-    toolExecutions.push(te);
-
-    const msg: MessageResponse = {
-      id: te.message_id || `__external_tool_${te.id}`,
-      chat_id: te.chat_id,
-      role: "agent",
-      content: displayText,
-      reasoning: this.streamingReasoning || undefined,
-      tool_executions: toolExecutions,
-      status: "executing",
-      created_at: new Date().toISOString(),
-    };
-
-    this.messages.push(msg);
-  }
-
   resolveToolCall(toolCallId: string, result: string) {
+    // Check pending external tools (streaming state) — optimistic update
+    const pending = this.pendingExternalTools.get(toolCallId);
+    if (pending?.tool_data) {
+      this.pendingExternalTools.set(toolCallId, {
+        ...pending,
+        result,
+        tool_data: { ...pending.tool_data, data: { ...pending.tool_data.data, status: "resolved", response: result } } as typeof pending.tool_data,
+      });
+      this.notify();
+      return;
+    }
+
+    // Fall through to message-based resolution
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const msg = this.messages[i];
       if (!msg.tool_executions) continue;
@@ -412,6 +405,7 @@ export class ChatStore {
     this.streamingReasoning = "";
     this.streamingToolCalls.clear();
     this.streamingToolResults.clear();
+    this.pendingExternalTools.clear();
     this.lastTextSnapshot = 0;
     this.retryInfo = null;
     if (this.retryTimer) {

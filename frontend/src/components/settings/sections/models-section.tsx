@@ -246,7 +246,7 @@ export function ModelsSection({ models, enabledProviders, providerConfigs, onCha
                     <label className="block text-sm font-medium text-text-secondary">
                       Fallbacks
                     </label>
-                    {group.fallbacks.map((fb, i) => (
+                    {(group.fallbacks ?? []).map((fb, i) => (
                       <div key={i} className="flex items-start gap-2">
                         <span className="text-xs text-text-tertiary w-5 text-right shrink-0 pt-8">
                           {i + 1}.

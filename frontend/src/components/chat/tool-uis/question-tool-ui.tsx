@@ -57,13 +57,9 @@ function QuestionRenderer({
     if (acted.current) return;
     acted.current = true;
     setLoading(true);
-    await api.post(`/api/chats/${chatId}/tool-executions/${toolCallId}/resolve`, {
-      response: answer,
-    }).catch(() =>
-      api.post(`/api/chats/${chatId}/messages/${toolCallId}/resolve`, {
-        response: answer,
-      })
-    );
+    await api.post(`/api/chats/${chatId}/tool-executions/resolve`, {
+      resolutions: [{ tool_execution_id: toolCallId, response: answer }],
+    });
     addResult(answer);
   };
 
