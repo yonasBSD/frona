@@ -187,6 +187,8 @@ export interface MessageResponse {
   reasoning?: string;
   tool_executions?: ToolExecution[];
   created_at: string;
+  /** Set by mergeConsecutiveMessages — this message continues the previous agent message. */
+  _continuation?: boolean;
 }
 
 // App types

@@ -278,21 +278,23 @@ export function FronaAssistantMessage() {
 
   const agent = agents.find((a) => a.id === agentId);
   const agentName = agentDisplayName(agentId, agent?.name);
+  const isContinuation = (message.metadata as Record<string, any>)?.custom?.continuation;
 
   return (
     <MessagePrimitive.Root>
       <div className="w-full">
-        <div className="flex items-center gap-2.5 h-8">
-          <AgentAvatar name={agentName} avatar={agent?.identity?.avatar} />
-          <p className="text-xs font-medium text-text-tertiary">
-            {agentName}
-          </p>
-          <MessagePrimitive.If last>
-            <RetryBadge />
-          </MessagePrimitive.If>
-        </div>
-        <div className="pl-[42px] text-base text-text-primary flex flex-col items-start">
-          <MessageAttachments />
+        {!isContinuation && (
+          <div className="flex items-center gap-2.5 h-8">
+            <AgentAvatar name={agentName} avatar={agent?.identity?.avatar} />
+            <p className="text-xs font-medium text-text-tertiary">
+              {agentName}
+            </p>
+            <MessagePrimitive.If last>
+              <RetryBadge />
+            </MessagePrimitive.If>
+          </div>
+        )}
+        <div className={`${isContinuation ? "pl-[42px] -mt-1" : "pl-[42px]"} text-base text-text-primary flex flex-col items-start`}>
           <ToolTimelineProvider>
             <MessagePrimitive.Parts
               unstable_showEmptyOnNonTextEnd={false}

@@ -440,25 +440,23 @@ export class ChatStore {
  * Merge consecutive agent messages from the same agent into a single message.
  * This prevents fragmentation when the backend sends multiple messages in sequence.
  */
+/**
+ * Tag consecutive agent messages from the same agent so the UI can hide
+ * repeated headers. No content merging — each message keeps its own order.
+ */
 export function mergeConsecutiveMessages(messages: MessageResponse[]): MessageResponse[] {
   const result: MessageResponse[] = [];
   for (const msg of messages) {
     const prev = result[result.length - 1];
-    if (
+    const isContinuation =
       prev &&
       prev.role === "agent" &&
-      (msg.role === "agent" || (msg.role === "system" && msg.event)) &&
-      (prev.agent_id === msg.agent_id || msg.role === "system") &&
-      prev.status !== "executing"
-    ) {
-      const mergedTools = [...(prev.tool_executions ?? []), ...(msg.tool_executions ?? [])];
-      result[result.length - 1] = {
-        ...prev,
-        content: [prev.content, msg.content].filter(Boolean).join("\n\n"),
-        reasoning: [prev.reasoning, msg.reasoning].filter(Boolean).join("\n\n") || undefined,
-        tool_executions: mergedTools.length > 0 ? mergedTools : undefined,
-        status: msg.status,
-      };
+      (msg.role === "agent" || (msg.role === "system" && msg.event) || msg.role === "taskcompletion") &&
+      (prev.agent_id === msg.agent_id || msg.role === "system" || msg.role === "taskcompletion") &&
+      prev.status !== "executing";
+
+    if (isContinuation) {
+      result.push({ ...msg, _continuation: true } as MessageResponse);
     } else {
       result.push(msg);
     }

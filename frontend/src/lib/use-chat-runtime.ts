@@ -143,9 +143,11 @@ export function convertMessage(msg: MessageResponse) {
       content.push({ type: "reasoning", text: msg.reasoning });
     }
 
+    // User-facing external tools (questions, approvals) render BEFORE text
+    const BEFORE_TEXT_TOOLS = new Set(["Question", "HumanInTheLoop", "VaultApproval", "ServiceApproval"]);
     if (msg.tool_executions?.length) {
       for (const te of msg.tool_executions) {
-        if (te.tool_data) {
+        if (te.tool_data && BEFORE_TEXT_TOOLS.has(te.tool_data.type)) {
           const toolName = te.tool_data.type;
           const status = te.tool_data.data.status;
           const resolved = status === "resolved" || status === "denied";
@@ -173,6 +175,43 @@ export function convertMessage(msg: MessageResponse) {
       content.push({ type: "text", text: "" });
     }
 
+    // Attachments render between text and tools
+    if (msg.attachments?.length) {
+      content.push({
+        type: "tool-call",
+        toolCallId: `__attachments_${msg.id}`,
+        toolName: "Attachments",
+        args: {} as Record<string, string | number | boolean | null>,
+        argsText: "{}",
+        result: "done",
+      });
+    }
+
+    // Lifecycle tool_data tools (TaskCompletion etc.) — after attachments, before regular tools
+    if (msg.tool_executions?.length) {
+      for (const te of msg.tool_executions) {
+        if (te.tool_data && !BEFORE_TEXT_TOOLS.has(te.tool_data.type)) {
+          const toolName = te.tool_data.type;
+          const status = te.tool_data.data.status;
+          const resolved = status === "resolved" || status === "denied";
+          const toolData = te.tool_data.data as Record<string, string | number | boolean | null>;
+          const response = "response" in te.tool_data.data
+            ? (te.tool_data.data as { response?: string | null }).response
+            : null;
+          content.push({
+            type: "tool-call",
+            toolCallId: te.id,
+            toolName,
+            args: toolData,
+            argsText: JSON.stringify(toolData),
+            ...(resolved && response != null ? { result: response } : {}),
+            ...(resolved && response == null ? { result: String(status) } : {}),
+          });
+        }
+      }
+    }
+
+    // Regular tools (no tool_data) — last
     if (msg.tool_executions?.length) {
       for (const te of msg.tool_executions) {
         if (!te.tool_data) {
@@ -184,6 +223,7 @@ export function convertMessage(msg: MessageResponse) {
               description: te.description ?? te.name,
               ...te.arguments,
               ...(te.turn_text ? { turnText: te.turn_text } : {}),
+              ...(!te.success ? { isError: true } : {}),
             } as Record<string, string | number | boolean | null>,
             argsText: JSON.stringify(te.arguments || {}),
             result: te.result,
@@ -210,6 +250,7 @@ export function convertMessage(msg: MessageResponse) {
         custom: {
           agentId: msg.agent_id,
           originalRole: msg.role,
+          continuation: msg._continuation,
           ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
         },
       },

@@ -23,6 +23,7 @@ const EXCLUDED_TOOLS = new Set([
   "VaultApproval",
   "ServiceApproval",
   "TaskCompletion",
+  "Attachments",
 ]);
 
 interface ToolTimelineContextValue {
@@ -180,7 +181,7 @@ export function ToolTimelineProvider({
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.2 }}
             onClick={handleToggle}
-            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-secondary transition-colors mt-1"
+            className="inline-flex items-center gap-1.5 rounded-md py-1 text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-secondary transition-colors mt-2"
           >
             <WrenchScrewdriverIcon className="h-3 w-3" />
             <span>
@@ -197,7 +198,7 @@ export function ToolTimelineProvider({
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.2 }}
             onClick={handleToggle}
-            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-secondary transition-colors mt-1"
+            className="inline-flex items-center gap-1.5 rounded-md py-1 text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-secondary transition-colors mt-1"
           >
             <WrenchScrewdriverIcon className="h-3 w-3" />
             <span>
