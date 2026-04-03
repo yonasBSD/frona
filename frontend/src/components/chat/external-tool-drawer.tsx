@@ -9,6 +9,8 @@ import {
   ForwardIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
+  ChevronDownIcon,
 } from "@heroicons/react/24/outline";
 import type { ToolExecution } from "@/lib/types";
 import { usePendingTools } from "@/lib/pending-tools-context";
@@ -53,18 +55,19 @@ export interface WizardAnswer {
   callback?: () => Promise<void>;
 }
 
-/** Stores the wizard's local state — answers + current index + submitted flag. */
+/** Stores the wizard's local state — answers + current index + submitted flag + collapsed. */
 export function useToolWizard() {
   const [answers, setAnswers] = useState<Map<string, WizardAnswer>>(() => new Map());
   const [currentIndex, setCurrentIndex] = useState(0);
   const [submitted, setSubmitted] = useState(false);
-  return { answers, setAnswers, currentIndex, setCurrentIndex, submitted, setSubmitted };
+  const [collapsed, setCollapsed] = useState(false);
+  return { answers, setAnswers, currentIndex, setCurrentIndex, submitted, setSubmitted, collapsed, setCollapsed };
 }
 
 export type ToolWizardState = ReturnType<typeof useToolWizard>;
 
 export function ExternalToolDrawer({ wizard }: { wizard: ToolWizardState }) {
-  const { answers, setAnswers, currentIndex, setCurrentIndex, submitted, setSubmitted } = wizard;
+  const { answers, setAnswers, currentIndex, setCurrentIndex, submitted, setSubmitted, collapsed, setCollapsed } = wizard;
   const pendingTools = usePendingTools();
   const chatCtx = useContext(ChatContext);
   const chatId = chatCtx?.chatId;
@@ -150,8 +153,21 @@ export function ExternalToolDrawer({ wizard }: { wizard: ToolWizardState }) {
   const isLast = safeIndex === total - 1;
   const isFirst = safeIndex === 0;
 
+  if (collapsed) return null;
+
   return (
-    <div className="tool-drawer px-4 pt-3 pb-2">
+    <div className="tool-drawer group/drawer relative px-4 pt-3 pb-2">
+      {/* Invisible hover zone extending above so the pill is reachable */}
+      <div className="absolute inset-x-0 -top-4 h-5" />
+      {/* Collapse pill — centered at the top, visible on hover */}
+      <button
+        onClick={() => setCollapsed(true)}
+        className="absolute left-1/2 -translate-x-1/2 -top-3 z-10 flex items-center justify-center h-6 w-6 rounded-full border border-border bg-surface shadow-sm text-text-tertiary hover:text-text-primary hover:bg-surface-secondary transition opacity-0 group-hover/drawer:opacity-100"
+        title="Collapse"
+      >
+        <ChevronDownIcon className="h-3 w-3" />
+      </button>
+
       <div className="space-y-2">
         {/* Header with navigation */}
         <div className="flex items-center justify-between">
@@ -208,5 +224,34 @@ export function ExternalToolDrawer({ wizard }: { wizard: ToolWizardState }) {
 
       </div>
     </div>
+  );
+}
+
+export function CollapsedToolTab({ wizard }: { wizard: ToolWizardState }) {
+  const { collapsed, setCollapsed, currentIndex, submitted } = wizard;
+  const pendingTools = usePendingTools();
+
+  const total = pendingTools.length;
+  const safeIndex = Math.min(currentIndex, Math.max(0, total - 1));
+  const currentTool = pendingTools[safeIndex];
+
+  if (!currentTool || submitted || !collapsed) return null;
+
+  return (
+    <button
+      onClick={() => setCollapsed(false)}
+      className="mb-[-1px] flex items-center gap-2 rounded-t-xl border border-b-0 border-border bg-surface-secondary px-4 py-1.5 hover:bg-surface-tertiary transition"
+    >
+      {toolIcon(currentTool)}
+      <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+        {toolTitle(currentTool)}
+      </span>
+      {total > 1 && (
+        <span className="rounded-full bg-surface-tertiary px-2 py-0.5 text-[10px] font-medium text-text-tertiary">
+          {safeIndex + 1} of {total}
+        </span>
+      )}
+      <ChevronUpIcon className="h-3.5 w-3.5 text-text-tertiary" />
+    </button>
   );
 }
