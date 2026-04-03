@@ -108,11 +108,12 @@ export function promoteTurnText(parts: AssistantContentPart[]): AssistantContent
 }
 
 export function convertMessage(msg: MessageResponse) {
-  // Filter out signal-only task completions (no content, non-failed status).
+  // Filter out signal-only task completions (no content, no attachments, non-failed status).
   // The task status update SSE event still fires so the task list updates.
   if (
     msg.role === "taskcompletion" &&
     !msg.content &&
+    !msg.attachments?.length &&
     msg.event?.type === "TaskCompletion" &&
     msg.event.data.status !== "Failed"
   ) {

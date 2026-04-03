@@ -215,26 +215,16 @@ export class ChatStore {
       case "inference_done": {
         const msg = event.message;
 
-        // Merge tool_executions: existing (API-loaded) + streaming state + inference_done msg
-        const existingIdx = this.messages.findIndex((m) => m.id === msg.id);
-        const existingTools = existingIdx >= 0
-          ? (this.messages[existingIdx].tool_executions ?? [])
-          : [];
-        const streamingTools = this.buildToolExecutions();
-
-        // Combine all tools, dedup by id
-        const seenIds = new Set<string>();
-        const allTools: ToolExecution[] = [];
-        for (const t of [...existingTools, ...streamingTools, ...(msg.tool_executions ?? [])]) {
-          if (!seenIds.has(t.id)) {
-            seenIds.add(t.id);
-            allTools.push(t);
+        // If backend sent tool_executions, use them as-is (source of truth).
+        // Otherwise fall back to streaming state (interactive chats where complete_agent_message doesn't populate them).
+        if (!msg.tool_executions?.length) {
+          const streamingTools = this.buildToolExecutions();
+          if (streamingTools.length > 0) {
+            msg.tool_executions = streamingTools;
           }
         }
-        if (allTools.length > 0) {
-          msg.tool_executions = allTools;
-        }
 
+        const existingIdx = this.messages.findIndex((m) => m.id === msg.id);
         if (existingIdx >= 0) {
           this.messages[existingIdx] = msg;
         } else {
@@ -452,7 +442,7 @@ export function mergeConsecutiveMessages(messages: MessageResponse[]): MessageRe
       prev &&
       prev.role === "agent" &&
       (msg.role === "agent" || (msg.role === "system" && msg.event) || msg.role === "taskcompletion") &&
-      (prev.agent_id === msg.agent_id || msg.role === "system" || msg.role === "taskcompletion") &&
+      (prev.agent_id === msg.agent_id || msg.role === "system") &&
       prev.status !== "executing";
 
     if (isContinuation) {
