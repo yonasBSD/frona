@@ -699,6 +699,19 @@ impl ChatService {
         self.tool_execution_repo.find_by_message_id(message_id).await
     }
 
+    pub async fn has_pending_tools_for_message(
+        &self,
+        message_id: &str,
+    ) -> Result<bool, AppError> {
+        let tes = self.get_tool_executions_by_message(message_id).await?;
+        Ok(tes.iter().any(|te| {
+            te.tool_data
+                .as_ref()
+                .and_then(|td| td.tool_status())
+                .is_some_and(|s| *s == ToolStatus::Pending)
+        }))
+    }
+
     pub async fn find_executing_message_for_chat(
         &self,
         chat_id: &str,

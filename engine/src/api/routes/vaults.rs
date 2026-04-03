@@ -241,12 +241,16 @@ async fn approve_request(
             kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: resolved },
         });
 
-        let user_id = auth.user_id.clone();
-        let chat_id = req.chat_id.clone();
-        let state_clone = state.clone();
-        tokio::spawn(async move {
-            crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id, &message_id).await;
-        });
+        let still_pending = state.chat_service
+            .has_pending_tools_for_message(&message_id).await.unwrap_or(false);
+        if !still_pending {
+            let user_id = auth.user_id.clone();
+            let chat_id = req.chat_id.clone();
+            let state_clone = state.clone();
+            tokio::spawn(async move {
+                crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id, &message_id).await;
+            });
+        }
     }
 
     Ok(Json(serde_json::json!({ "approved": true })))
@@ -286,12 +290,16 @@ async fn deny_request(
             kind: crate::chat::broadcast::BroadcastEventKind::ToolResolved { message: denied },
         });
 
-        let user_id = auth.user_id.clone();
-        let chat_id = req.chat_id.clone();
-        let state_clone = state.clone();
-        tokio::spawn(async move {
-            crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id, &message_id).await;
-        });
+        let still_pending = state.chat_service
+            .has_pending_tools_for_message(&message_id).await.unwrap_or(false);
+        if !still_pending {
+            let user_id = auth.user_id.clone();
+            let chat_id = req.chat_id.clone();
+            let state_clone = state.clone();
+            tokio::spawn(async move {
+                crate::agent::task::executor::resume_or_notify(&state_clone, &user_id, &chat_id, &message_id).await;
+            });
+        }
     }
 
     Ok(Json(serde_json::json!({ "denied": true })))

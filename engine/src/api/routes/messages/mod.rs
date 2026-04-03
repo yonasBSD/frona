@@ -27,8 +27,8 @@ pub fn router() -> Router<AppState> {
             post(stream::stream_message),
         )
         .route(
-            "/api/chats/{chat_id}/tool-executions/{tool_execution_id}/resolve",
-            post(resolve_tool_execution),
+            "/api/chats/{chat_id}/tool-executions/resolve",
+            post(resolve_tool_executions),
         )
         .route(
             "/api/chats/{chat_id}/cancel",
@@ -83,10 +83,10 @@ async fn cancel_generation(
     Ok(Json(serde_json::json!({ "cancelled": cancelled })))
 }
 
-async fn resolve_tool_execution(
+async fn resolve_tool_executions(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path((chat_id, tool_execution_id)): Path<(String, String)>,
+    Path(chat_id): Path<String>,
     Json(req): Json<ResolveToolRequest>,
 ) -> Result<Json<MessageResponse>, ApiError> {
     use crate::chat::service::ToolResolveResult;
@@ -97,32 +97,59 @@ async fn resolve_tool_execution(
         .await
         .map_err(ApiError::from)?;
 
-    let te = state
-        .chat_service
-        .get_tool_execution(&tool_execution_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::from(crate::core::error::AppError::NotFound("Tool execution not found".into())))?;
+    let mut last_msg: Option<MessageResponse> = None;
+    let mut message_id: Option<String> = None;
 
-    let message_id = te.message_id.clone();
+    for resolution in &req.resolutions {
+        let te = state
+            .chat_service
+            .get_tool_execution(&resolution.tool_execution_id)
+            .await
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::from(crate::core::error::AppError::NotFound(
+                format!("Tool execution not found: {}", resolution.tool_execution_id),
+            )))?;
 
-    let result = state
-        .chat_service
-        .resolve_tool_execution(&tool_execution_id, req.response.clone())
-        .await
-        .map_err(ApiError::from)?;
+        if message_id.is_none() {
+            message_id = Some(te.message_id.clone());
+        }
 
-    match result {
-        ToolResolveResult::Changed(msg) => {
+        let result = state
+            .chat_service
+            .resolve_tool_execution(&resolution.tool_execution_id, resolution.response.clone())
+            .await
+            .map_err(ApiError::from)?;
+
+        match result {
+            ToolResolveResult::Changed(msg) | ToolResolveResult::AlreadyResolved(msg) => {
+                last_msg = Some(msg);
+            }
+        }
+    }
+
+    let msg = last_msg.ok_or_else(|| ApiError::from(
+        crate::core::error::AppError::Validation("No resolutions provided".into()),
+    ))?;
+
+    if let Some(ref mid) = message_id {
+        let still_pending = state
+            .chat_service
+            .has_pending_tools_for_message(mid)
+            .await
+            .unwrap_or(false);
+
+        if !still_pending {
             let user_id = auth.user_id.clone();
             let state = state.clone();
+            let chat_id = chat_id.clone();
+            let mid = mid.clone();
             tokio::spawn(async move {
-                crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id, &message_id).await;
+                crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id, &mid).await;
             });
-            Ok(Json(msg))
         }
-        ToolResolveResult::AlreadyResolved(msg) => Ok(Json(msg)),
     }
+
+    Ok(Json(msg))
 }
 
 async fn event_stream(

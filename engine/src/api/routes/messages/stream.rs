@@ -211,30 +211,38 @@ pub(crate) async fn stream_message(
 
         event_sender.send_kind(BroadcastEventKind::ToolResolved { message: resolved_msg });
 
-        tokio::spawn(async move {
-            let stored_messages = chat_service.get_stored_messages(&chat_id_clone).await;
-            let tool_executions = chat_service
-                .get_tool_executions(&chat_id_clone)
-                .await
-                .unwrap_or_default();
-            let rig_history = pending_conv_builder.build(&stored_messages, &tool_executions, &pending_conv_ctx).await;
+        let still_pending = state
+            .chat_service
+            .has_pending_tools_for_message(&agent_msg_id)
+            .await
+            .unwrap_or(false);
 
-            let handle = spawn_inference(InferenceRequest {
-                registry, model_group, system_prompt,
-                history: rig_history, tool_registry,
-                ctx: tool_ctx, cancel_token,
-                chat_service: chat_service.clone(),
-                message_id: agent_msg_id.clone(),
+        if !still_pending {
+            tokio::spawn(async move {
+                let stored_messages = chat_service.get_stored_messages(&chat_id_clone).await;
+                let tool_executions = chat_service
+                    .get_tool_executions(&chat_id_clone)
+                    .await
+                    .unwrap_or_default();
+                let rig_history = pending_conv_builder.build(&stored_messages, &tool_executions, &pending_conv_ctx).await;
+
+                let handle = spawn_inference(InferenceRequest {
+                    registry, model_group, system_prompt,
+                    history: rig_history, tool_registry,
+                    ctx: tool_ctx, cancel_token,
+                    chat_service: chat_service.clone(),
+                    message_id: agent_msg_id.clone(),
+                });
+
+                let result = handle.await;
+
+                handle_inference_result(
+                    result, &chat_service, &agent_msg_id,
+                    &presign_svc, &user_id, &username, &event_sender,
+                ).await;
+                active_sessions.remove(&chat_id_clone).await;
             });
-
-            let result = handle.await;
-
-            handle_inference_result(
-                result, &chat_service, &agent_msg_id,
-                &presign_svc, &user_id, &username, &event_sender,
-            ).await;
-            active_sessions.remove(&chat_id_clone).await;
-        });
+        }
 
         Ok(Json(user_response))
     } else {

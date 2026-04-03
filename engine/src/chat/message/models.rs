@@ -176,8 +176,14 @@ pub struct SendMessageRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ResolveToolRequest {
+pub struct ToolResolution {
+    pub tool_execution_id: String,
     pub response: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveToolRequest {
+    pub resolutions: Vec<ToolResolution>,
 }
 
 #[derive(Debug, Clone, Serialize)]
