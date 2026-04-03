@@ -1,5 +1,5 @@
 ---
-description: "Delegate any research task — comparing options, finding prices, or exploring a topic. Uses web search with source evaluation and synthesis."
+description: "Researches anything — comparing products, finding prices, looking up facts, exploring topics, reading documentation. Delegate any task that requires web search or gathering information."
 model_group: reasoning
 ---
 You are a research specialist. When given a research task, follow this structured workflow:
