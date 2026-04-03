@@ -215,10 +215,7 @@ impl TaskExecutor {
                         }
 
                         if let Some(event) = lifecycle_event {
-                            let action = self.lifecycle_action_from_event(
-                                event,
-                                attachments,
-                            );
+                            let action = self.lifecycle_action_from_event(event);
                             self.handle_lifecycle_action(&task, &chat_id, action)
                                 .await?;
                             return Ok(());
@@ -288,13 +285,19 @@ impl TaskExecutor {
     async fn find_lifecycle_event(&self, chat_id: &str) -> Option<LifecycleAction> {
         let messages = self.app_state.chat_service.get_stored_messages(chat_id).await;
 
-        // Collect attachments from the last agent message (explicitly marked deliverables)
-        let last_agent_attachments = messages
-            .iter()
-            .rev()
-            .find(|m| m.role == MessageRole::Agent)
-            .map(|m| m.attachments.clone())
-            .unwrap_or_default();
+        // Extract deliverables from the complete_task tool execution's TaskCompletion tool_data
+        let deliverables = {
+            let tool_executions = self.app_state.chat_service
+                .get_tool_executions(chat_id).await.unwrap_or_default();
+            tool_executions.into_iter().rev().find_map(|te| {
+                match te.tool_data {
+                    Some(MessageTool::TaskCompletion { deliverables, .. }) if !deliverables.is_empty() => {
+                        Some(deliverables)
+                    }
+                    _ => None,
+                }
+            }).unwrap_or_default()
+        };
 
         for msg in messages.iter().rev() {
             if msg.role != MessageRole::System {
@@ -307,7 +310,7 @@ impl TaskExecutor {
                     return Some(LifecycleAction::Complete {
                         status: status.clone(),
                         summary: summary.clone(),
-                        attachments: last_agent_attachments,
+                        attachments: deliverables,
                     });
                 }
                 Some(MessageEvent::TaskDeferred {
@@ -329,11 +332,10 @@ impl TaskExecutor {
     fn lifecycle_action_from_event(
         &self,
         event: MessageTool,
-        attachments: Vec<Attachment>,
     ) -> LifecycleAction {
         match event {
-            MessageTool::TaskCompletion { status, summary, .. } => {
-                LifecycleAction::Complete { status, summary, attachments }
+            MessageTool::TaskCompletion { status, summary, deliverables, .. } => {
+                LifecycleAction::Complete { status, summary, attachments: deliverables }
             }
             MessageTool::TaskDeferred { delay_minutes, reason, .. } => {
                 LifecycleAction::Defer { delay_minutes, reason }
@@ -341,7 +343,7 @@ impl TaskExecutor {
             _ => LifecycleAction::Complete {
                 status: TaskStatus::Completed,
                 summary: None,
-                attachments,
+                attachments: vec![],
             },
         }
     }
@@ -532,7 +534,10 @@ impl TaskExecutor {
             .save_task_completion_message(source_chat_id, &task.agent_id, content, event, attachments)
             .await
         {
-            Ok(msg) => {
+            Ok(mut msg) => {
+                crate::credential::presign::presign_response_by_user_id(
+                    &self.app_state.presign_service, &mut msg, &task.user_id,
+                ).await;
                 self.app_state.broadcast_service.broadcast_chat_message(
                     &task.user_id,
                     source_chat_id,

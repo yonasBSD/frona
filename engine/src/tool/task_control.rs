@@ -42,15 +42,7 @@ impl TaskControlTool {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                let mut output = ToolOutput::text("Task marked as complete.").with_tool_data(
-                    MessageTool::TaskCompletion {
-                        task_id: task.id.clone(),
-                        chat_id: Some(ctx.chat.id.clone()),
-                        status: TaskStatus::Completed,
-                        summary: result,
-                    },
-                );
-
+                let mut resolved_deliverables = Vec::new();
                 if let Some(deliverables) = arguments.get("deliverables").and_then(|v| v.as_array()) {
                     for path_val in deliverables {
                         if let Some(path) = path_val.as_str() {
@@ -59,9 +51,23 @@ impl TaskControlTool {
                                 &ctx.agent.id,
                                 path,
                             ).await?;
-                            output = output.with_attachment(attachment);
+                            resolved_deliverables.push(attachment);
                         }
                     }
+                }
+
+                let mut output = ToolOutput::text("Task marked as complete.").with_tool_data(
+                    MessageTool::TaskCompletion {
+                        task_id: task.id.clone(),
+                        chat_id: Some(ctx.chat.id.clone()),
+                        status: TaskStatus::Completed,
+                        summary: result,
+                        deliverables: resolved_deliverables.clone(),
+                    },
+                );
+
+                for attachment in resolved_deliverables {
+                    output = output.with_attachment(attachment);
                 }
 
                 Ok(output)
@@ -78,6 +84,7 @@ impl TaskControlTool {
                         chat_id: Some(ctx.chat.id.clone()),
                         status: TaskStatus::Failed,
                         summary: Some(reason.to_string()),
+                        deliverables: vec![],
                     },
                 ))
             }

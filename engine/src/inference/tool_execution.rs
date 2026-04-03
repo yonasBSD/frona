@@ -35,6 +35,8 @@ pub enum MessageTool {
         status: crate::agent::task::models::TaskStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        deliverables: Vec<crate::storage::Attachment>,
     },
     TaskDeferred {
         task_id: String,
