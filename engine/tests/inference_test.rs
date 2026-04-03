@@ -215,8 +215,9 @@ async fn test_tool_loop_external_tool_returns_pending() {
     .unwrap();
 
     match outcome {
-        ToolLoopOutcome::ExternalToolPending { tool_execution, .. } => {
-            assert_eq!(tool_execution.name, "ext_tool");
+        ToolLoopOutcome::ExternalToolPending { tool_executions, .. } => {
+            assert_eq!(tool_executions.len(), 1);
+            assert_eq!(tool_executions[0].name, "ext_tool");
         }
         other => panic!("Expected ExternalToolPending, got {other:?}"),
     }
@@ -262,12 +263,111 @@ async fn test_tool_loop_mixed_internal_external() {
 
     match outcome {
         ToolLoopOutcome::ExternalToolPending {
-            tool_execution,
+            tool_executions,
             ..
         } => {
-            assert_eq!(tool_execution.name, "external");
+            assert_eq!(tool_executions.len(), 1);
+            assert_eq!(tool_executions[0].name, "external");
         }
         other => panic!("Expected ExternalToolPending, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_tool_loop_multiple_external_tools_in_same_turn() {
+    init_metrics();
+
+    let provider = Arc::new(MockModelProvider::new(vec![MockResponse::ToolCalls(vec![
+        ("c1".into(), "ext1".into(), serde_json::json!({})),
+        ("c2".into(), "ext2".into(), serde_json::json!({})),
+        ("c3".into(), "ext3".into(), serde_json::json!({})),
+    ])]));
+    let registry = test_registry_with_provider("mock", provider);
+    let model_group = test_model_group();
+    let mut tool_registry = AgentToolRegistry::new();
+    tool_registry.register(Arc::new(MockExternalTool::new("ext1")));
+    tool_registry.register(Arc::new(MockExternalTool::new("ext2")));
+    tool_registry.register(Arc::new(MockExternalTool::new("ext3")));
+    let (event_sender, _sse_rx, _broadcast) = test_event_sender().await;
+    let cancel = CancellationToken::new();
+    let ctx = mock_context();
+    let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
+
+    let outcome = run_tool_loop(
+        &registry,
+        &model_group,
+        "system",
+        vec![RigMessage::user("do all three")],
+        &tool_registry,
+        event_sender,
+        cancel,
+        &ctx,
+        &metrics,
+        &chat_service,
+        "test-msg",
+    )
+    .await
+    .unwrap();
+
+    match outcome {
+        ToolLoopOutcome::ExternalToolPending { tool_executions, .. } => {
+            assert_eq!(tool_executions.len(), 3);
+            assert_eq!(tool_executions[0].name, "ext1");
+            assert_eq!(tool_executions[1].name, "ext2");
+            assert_eq!(tool_executions[2].name, "ext3");
+        }
+        other => panic!("Expected ExternalToolPending with 3 tools, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_tool_loop_mixed_internal_and_multiple_external() {
+    init_metrics();
+
+    let provider = Arc::new(MockModelProvider::new(vec![MockResponse::ToolCalls(vec![
+        ("c1".into(), "internal".into(), serde_json::json!({})),
+        ("c2".into(), "ext1".into(), serde_json::json!({})),
+        ("c3".into(), "ext2".into(), serde_json::json!({})),
+    ])]));
+    let registry = test_registry_with_provider("mock", provider);
+    let model_group = test_model_group();
+    let mut tool_registry = AgentToolRegistry::new();
+    tool_registry.register(Arc::new(MockInternalTool::new(
+        "internal",
+        vec!["internal result".into()],
+    )));
+    tool_registry.register(Arc::new(MockExternalTool::new("ext1")));
+    tool_registry.register(Arc::new(MockExternalTool::new("ext2")));
+    let (event_sender, _sse_rx, _broadcast) = test_event_sender().await;
+    let cancel = CancellationToken::new();
+    let ctx = mock_context();
+    let metrics = test_metrics_ctx();
+    let chat_service = test_chat_service().await;
+
+    let outcome = run_tool_loop(
+        &registry,
+        &model_group,
+        "system",
+        vec![RigMessage::user("mixed")],
+        &tool_registry,
+        event_sender,
+        cancel,
+        &ctx,
+        &metrics,
+        &chat_service,
+        "test-msg",
+    )
+    .await
+    .unwrap();
+
+    match outcome {
+        ToolLoopOutcome::ExternalToolPending { tool_executions, .. } => {
+            assert_eq!(tool_executions.len(), 2);
+            assert_eq!(tool_executions[0].name, "ext1");
+            assert_eq!(tool_executions[1].name, "ext2");
+        }
+        other => panic!("Expected ExternalToolPending with 2 external tools, got {other:?}"),
     }
 }
 

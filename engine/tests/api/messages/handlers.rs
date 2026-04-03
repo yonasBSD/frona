@@ -143,10 +143,10 @@ async fn resolve_tool_execution_without_auth_returns_401() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/chats/fake-id/tool-executions/te-1/resolve")
+                .uri("/api/chats/fake-id/tool-executions/resolve")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    serde_json::json!({"response": "yes"}).to_string(),
+                    serde_json::json!({"resolutions": [{"tool_execution_id": "te-1", "response": "yes"}]}).to_string(),
                 ))
                 .unwrap(),
         )
@@ -170,9 +170,9 @@ async fn resolve_tool_execution_other_user_returns_error() {
     let app = build_app(state);
     let resp = app
         .oneshot(auth_post_json(
-            &format!("/api/chats/{chat_id}/tool-executions/fake-te/resolve"),
+            &format!("/api/chats/{chat_id}/tool-executions/resolve"),
             &token_b,
-            serde_json::json!({"response": "yes"}),
+            serde_json::json!({"resolutions": [{"tool_execution_id": "fake-te", "response": "yes"}]}),
         ))
         .await
         .unwrap();
