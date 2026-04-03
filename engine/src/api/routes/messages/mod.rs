@@ -114,11 +114,18 @@ async fn resolve_tool_executions(
             message_id = Some(te.message_id.clone());
         }
 
-        let result = state
-            .chat_service
-            .resolve_tool_execution(&resolution.tool_execution_id, resolution.response.clone())
-            .await
-            .map_err(ApiError::from)?;
+        use crate::chat::message::models::ToolResolutionAction;
+        let result = if resolution.action == ToolResolutionAction::Fail {
+            state.chat_service
+                .deny_tool_execution(&resolution.tool_execution_id, resolution.response.clone())
+                .await
+                .map_err(ApiError::from)?
+        } else {
+            state.chat_service
+                .resolve_tool_execution(&resolution.tool_execution_id, resolution.response.clone())
+                .await
+                .map_err(ApiError::from)?
+        };
 
         match result {
             ToolResolveResult::Changed(msg) | ToolResolveResult::AlreadyResolved(msg) => {

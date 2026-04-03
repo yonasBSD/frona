@@ -318,5 +318,5 @@ function SmoothMarkdownText() {
 
   if (!text && isRunning) return <StreamingIndicator />;
   if (!text) return null;
-  return <span className="-order-1 w-full"><MarkdownText smooth /></span>;
+  return <span className="w-full"><MarkdownText smooth /></span>;
 }

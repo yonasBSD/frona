@@ -4,9 +4,14 @@ import { ThreadPrimitive } from "@assistant-ui/react";
 import { FronaUserMessage } from "./frona-user-message";
 import { FronaAssistantMessage } from "./frona-assistant-message";
 import { FronaComposer } from "./frona-composer";
+import { ExternalToolDrawer, useToolWizard } from "./external-tool-drawer";
+import { WizardAnswersContext } from "@/lib/wizard-answers-context";
 
 export function AssistantThread() {
+  const wizard = useToolWizard();
+
   return (
+    <WizardAnswersContext value={wizard.answers}>
     <ThreadPrimitive.Root className="flex flex-1 flex-col min-h-0">
       <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto min-h-0">
         <ThreadPrimitive.If empty>
@@ -30,9 +35,13 @@ export function AssistantThread() {
           </button>
         </ThreadPrimitive.ScrollToBottom>
         <div className="mx-auto w-full max-w-3xl px-3 md:px-6 pb-4">
-          <FronaComposer />
+          <div className="rounded-2xl focus-within:border-accent has-[.tool-drawer]:border has-[.tool-drawer]:border-border has-[.tool-drawer]:bg-surface-secondary has-[.tool-drawer]:focus-within:border-accent transition-colors">
+            <ExternalToolDrawer wizard={wizard} />
+            <FronaComposer wizard={wizard} />
+          </div>
         </div>
       </ThreadPrimitive.ViewportFooter>
     </ThreadPrimitive.Root>
+    </WizardAnswersContext>
   );
 }

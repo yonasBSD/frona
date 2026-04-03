@@ -9,6 +9,7 @@ import { useNotifications } from "@/lib/notification-context";
 import { ChatProvider } from "@/lib/chat-context";
 import { useChatRuntime } from "@/lib/use-chat-runtime";
 import { RetryContext } from "@/lib/retry-context";
+import { PendingToolsContext } from "@/lib/pending-tools-context";
 import { ChatHeader } from "./chat-header";
 import { TaskHeader } from "./task-header";
 import { AssistantThread } from "./assistant-thread";
@@ -35,7 +36,7 @@ function ChatView({
     onChatPromoted?.(chat.id);
   }, [addStandaloneChat, setActiveChat, onChatPromoted]);
 
-  const { runtime, loaded, sendMessage, retryInfo } = useChatRuntime({ chatId, agentId, onChatCreated });
+  const { runtime, loaded, sendMessage, retryInfo, pendingTools } = useChatRuntime({ chatId, agentId, onChatCreated });
 
   const pendingHandled = useRef(false);
   useEffect(() => {
@@ -56,6 +57,7 @@ function ChatView({
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <PendingToolsContext value={pendingTools}>
       <RetryContext value={retryInfo}>
         {currentChatId ? (
           <ChatProvider chatId={currentChatId} agentId={agentId}>
@@ -65,6 +67,7 @@ function ChatView({
           content
         )}
       </RetryContext>
+      </PendingToolsContext>
     </AssistantRuntimeProvider>
   );
 }

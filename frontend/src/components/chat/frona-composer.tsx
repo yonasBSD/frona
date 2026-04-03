@@ -2,10 +2,16 @@
 
 import { useRef, useState, useEffect, useCallback } from "react";
 import { ComposerPrimitive, ThreadPrimitive, AttachmentPrimitive, useComposerRuntime } from "@assistant-ui/react";
+import { useThreadIsRunning } from "@assistant-ui/core/react";
 import { PaperAirplaneIcon, StopIcon, PlusIcon, XMarkIcon } from "@heroicons/react/24/solid";
 import { ArrowUpTrayIcon, CloudIcon, FolderOpenIcon } from "@heroicons/react/24/outline";
 import { FileBrowserModal } from "@/components/chat/file-browser-modal";
 import { registerBackendAttachment, getBackendAttachment } from "@/lib/use-chat-runtime";
+import { useContext } from "react";
+import { usePendingTools } from "@/lib/pending-tools-context";
+import { ChatContext } from "@/lib/chat-context";
+import { api } from "@/lib/api-client";
+import type { ToolWizardState } from "./external-tool-drawer";
 import type { Attachment } from "@/lib/types";
 
 function ComposerAttachmentBadge() {
@@ -26,16 +32,70 @@ function ComposerAttachmentBadge() {
 export function FronaComposer({
   placeholder = "Send a message...",
   onSend,
+  wizard,
 }: {
   placeholder?: string;
   /** Called on form submit for custom send handling (e.g. HomeComposer navigation). */
   onSend?: (content: string, attachments?: Attachment[]) => void;
+  wizard?: ToolWizardState;
 }) {
   const composerRuntime = useComposerRuntime();
   const [menuOpen, setMenuOpen] = useState(false);
   const [browseOpen, setBrowseOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  const threadRunning = useThreadIsRunning();
+  const pendingTools = usePendingTools();
+  const chatCtx = useContext(ChatContext);
+  const currentIndex = wizard?.currentIndex ?? 0;
+  const safeIndex = Math.min(currentIndex, Math.max(0, pendingTools.length - 1));
+  const currentPendingTool = pendingTools.length > 0 ? pendingTools[safeIndex] : undefined;
+
+  const handleWizardAnswer = useCallback(() => {
+    if (!currentPendingTool || !wizard) return;
+    const text = composerRuntime.getState().text.trim();
+    if (!text) return;
+    composerRuntime.setText("");
+
+    // Question: typed text is a valid freeform answer (success)
+    // Other tools: typed text is a reason for declining (fail)
+    const isQuestion = currentPendingTool.tool_data?.type === "Question";
+    const action: "success" | "fail" = isQuestion ? "success" : "fail";
+
+    const nextAnswers = new Map(wizard.answers);
+    nextAnswers.set(currentPendingTool.id, { response: text, action });
+    wizard.setAnswers(nextAnswers);
+
+    // If all tools now have answers, auto-submit
+    const allNowAnswered = pendingTools.every((te) => nextAnswers.has(te.id));
+    if (allNowAnswered && chatCtx?.chatId) {
+      const callbacks = pendingTools
+        .map((te) => nextAnswers.get(te.id)?.callback)
+        .filter((cb): cb is () => Promise<void> => !!cb);
+      Promise.all(callbacks.map((cb) => cb()));
+      const resolutions = pendingTools
+        .filter((te) => !nextAnswers.get(te.id)?.callback)
+        .map((te) => {
+          const ans = nextAnswers.get(te.id);
+          return {
+            tool_execution_id: te.id,
+            response: ans?.response ?? "User declined to answer",
+            action: ans?.action ?? "fail",
+          };
+        });
+      wizard.setSubmitted(true);
+      if (resolutions.length > 0) {
+        api.post(`/api/chats/${chatCtx.chatId}/tool-executions/resolve`, { resolutions });
+      }
+    } else if (safeIndex < pendingTools.length - 1) {
+      wizard.setCurrentIndex(safeIndex + 1);
+    }
+  }, [currentPendingTool, wizard, composerRuntime, pendingTools, safeIndex, chatCtx?.chatId]);
+
+  const activePlaceholder = currentPendingTool
+    ? "Type your answer or click an option above..."
+    : placeholder;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -70,8 +130,11 @@ export function FronaComposer({
   return (
     <div>
       <ComposerPrimitive.Root
-        className="rounded-2xl border border-border bg-surface-secondary p-4 focus-within:border-accent transition-colors"
-        {...(onSend ? { onSubmit: () => {
+        className={currentPendingTool
+          ? "bg-transparent p-4"
+          : "rounded-2xl border border-border bg-surface-secondary p-4 focus-within:border-accent transition-colors"
+        }
+        {...(currentPendingTool ? { onSubmit: handleWizardAnswer } : onSend ? { onSubmit: () => {
           const state = composerRuntime.getState();
           const text = state.text.trim();
           if (!text && !state.attachments.length) return;
@@ -88,7 +151,7 @@ export function FronaComposer({
         </div>
         <ComposerPrimitive.Input
           autoFocus
-          placeholder={placeholder}
+          placeholder={activePlaceholder}
           rows={1}
           className="w-full bg-transparent text-sm leading-5 text-text-primary placeholder:text-text-tertiary focus:outline-none resize-none max-h-[200px] overflow-y-auto"
         />
@@ -141,6 +204,17 @@ export function FronaComposer({
             )}
           </div>
           <div className="flex items-center gap-1">
+            {wizard?.submitted && threadRunning ? (
+              <ComposerPrimitive.Cancel asChild>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary transition"
+                >
+                  <StopIcon className="h-5 w-5" />
+                </button>
+              </ComposerPrimitive.Cancel>
+            ) : (
+            <>
             <ThreadPrimitive.If running>
               <ComposerPrimitive.Cancel asChild>
                 <button
@@ -152,7 +226,7 @@ export function FronaComposer({
               </ComposerPrimitive.Cancel>
             </ThreadPrimitive.If>
             <ThreadPrimitive.If running={false}>
-              {onSend ? (
+              {onSend || currentPendingTool ? (
                 <button
                   type="submit"
                   className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary transition"
@@ -170,6 +244,8 @@ export function FronaComposer({
                 </ComposerPrimitive.Send>
               )}
             </ThreadPrimitive.If>
+            </>
+            )}
           </div>
         </div>
       </ComposerPrimitive.Root>

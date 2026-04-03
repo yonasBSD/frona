@@ -175,10 +175,20 @@ pub struct SendMessageRequest {
     pub attachments: Vec<Attachment>,
 }
 
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolResolutionAction {
+    #[default]
+    Success,
+    Fail,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ToolResolution {
     pub tool_execution_id: String,
     pub response: Option<String>,
+    #[serde(default)]
+    pub action: ToolResolutionAction,
 }
 
 #[derive(Debug, Deserialize)]

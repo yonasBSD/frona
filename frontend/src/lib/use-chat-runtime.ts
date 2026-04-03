@@ -142,12 +142,6 @@ export function convertMessage(msg: MessageResponse) {
     if (msg.reasoning) {
       content.push({ type: "reasoning", text: msg.reasoning });
     }
-    if (msg.content) {
-      content.push({ type: "text", text: msg.content });
-    }
-    if (!msg.content && !msg.reasoning && !msg.event) {
-      content.push({ type: "text", text: "" });
-    }
 
     if (msg.tool_executions?.length) {
       for (const te of msg.tool_executions) {
@@ -168,7 +162,20 @@ export function convertMessage(msg: MessageResponse) {
             ...(resolved && response != null ? { result: response } : {}),
             ...(resolved && response == null ? { result: String(status) } : {}),
           });
-        } else {
+        }
+      }
+    }
+
+    if (msg.content) {
+      content.push({ type: "text", text: msg.content });
+    }
+    if (!msg.content && !msg.reasoning && !msg.event) {
+      content.push({ type: "text", text: "" });
+    }
+
+    if (msg.tool_executions?.length) {
+      for (const te of msg.tool_executions) {
+        if (!te.tool_data) {
           content.push({
             type: "tool-call",
             toolCallId: te.tool_call_id,
@@ -373,6 +380,7 @@ export function useChatRuntime({ chatId, agentId, onChatCreated }: ChatRuntimeOp
     loaded: storeSnapshot.loaded,
     sendMessage,
     retryInfo: storeSnapshot.retryInfo,
+    pendingTools: storeSnapshot.pendingTools,
   };
 }
 

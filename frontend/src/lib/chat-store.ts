@@ -23,6 +23,7 @@ export interface StoreSnapshot {
   isRunning: boolean;
   loaded: boolean;
   retryInfo: RetryInfo | null;
+  pendingTools: ToolExecution[];
 }
 
 /**
@@ -61,6 +62,7 @@ export class ChatStore {
         isRunning: this.isRunning,
         loaded: this.loaded,
         retryInfo: this.retryInfo,
+        pendingTools: this.getPendingExternalTools(),
       };
     }
     return this._snapshot;
@@ -79,6 +81,12 @@ export class ChatStore {
   markRunning() {
     this.isRunning = true;
     this.notify();
+  }
+
+  getPendingExternalTools(): ToolExecution[] {
+    return [...this.pendingExternalTools.values()].filter(
+      (te) => te.tool_data?.data.status === "pending",
+    );
   }
 
   /** Add a user message optimistically (before backend echo). */
@@ -111,8 +119,21 @@ export class ChatStore {
         this.messages = [];
       }
     }
+    this.hydrateExternalTools();
     this.loaded = true;
     this.notify();
+  }
+
+  /** Scan loaded messages for pending external tool executions and populate the map. */
+  private hydrateExternalTools() {
+    for (const msg of this.messages) {
+      if (!msg.tool_executions) continue;
+      for (const te of msg.tool_executions) {
+        if (te.tool_data && te.tool_data.data.status === "pending") {
+          this.pendingExternalTools.set(te.tool_call_id, te);
+        }
+      }
+    }
   }
 
   handleEvent(event: ChatSSEEvent) {

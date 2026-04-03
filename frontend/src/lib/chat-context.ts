@@ -7,7 +7,7 @@ interface ChatContextValue {
   agentId: string;
 }
 
-const ChatContext = createContext<ChatContextValue | null>(null);
+export const ChatContext = createContext<ChatContextValue | null>(null);
 
 export function ChatProvider({
   chatId,

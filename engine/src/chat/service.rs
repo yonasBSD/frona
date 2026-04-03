@@ -656,7 +656,9 @@ impl ChatService {
 
         match &mut te.tool_data {
             Some(MessageTool::VaultApproval { status, response: resp, .. })
-            | Some(MessageTool::ServiceApproval { status, response: resp, .. }) => {
+            | Some(MessageTool::ServiceApproval { status, response: resp, .. })
+            | Some(MessageTool::Question { status, response: resp, .. })
+            | Some(MessageTool::HumanInTheLoop { status, response: resp, .. }) => {
                 *status = ToolStatus::Denied;
                 *resp = Some(response_text.clone());
             }
