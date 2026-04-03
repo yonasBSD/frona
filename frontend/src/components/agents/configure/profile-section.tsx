@@ -52,7 +52,7 @@ export function ProfileSection({ agentId, description, enabled, identity, onChan
           />
         ))}
         <div className="space-y-1">
-          <label className="inline-flex items-center gap-1 text-sm font-medium text-text-secondary">Description</label>
+          <label className="inline-flex items-center gap-1 text-sm font-medium text-text-secondary">Specialty</label>
           <textarea
             value={description}
             onChange={(e) => onChange({ description: e.target.value })}

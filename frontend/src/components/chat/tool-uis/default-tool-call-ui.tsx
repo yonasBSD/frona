@@ -123,7 +123,8 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
     rawDescription && rawDescription !== toolName ? rawDescription : null;
   const turnText =
     typeof args?.turnText === "string" ? args.turnText : null;
-  const statusType = status?.type ?? "complete";
+  const isToolError = args?.isError === true;
+  const statusType = isToolError ? "incomplete" : (status?.type ?? "complete");
   const isLast = timeline ? timeline.isLastVisible(toolCallId) : false;
   const isFirst = timeline ? timeline.isFirstVisible(toolCallId) : false;
   const toolIndex = timeline ? timeline.getToolIndex(toolCallId) : 0;
@@ -152,7 +153,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
         </div>
       )}
       {turnText && (
-        <div className={cn("relative pb-3 flex items-start", isFirst && hiddenCount === 0 && "mt-3")}>
+        <div className={cn("relative pb-2 flex items-start", isFirst && hiddenCount === 0 && "mt-3")}>
           <div className="absolute left-[11px] top-0 bottom-0 w-px bg-border" />
           <span className="inline-block rounded-r-full bg-surface-tertiary pl-4 pr-3 py-1.5 text-xs text-text-secondary leading-none" style={{ marginLeft: "11px" }}>
             {turnText}
@@ -165,7 +166,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
       exit={{ opacity: 0, height: 0 }}
       transition={{ duration: 0.25, ease: "easeInOut" }}
       className={cn(
-        "relative pl-8 pb-3",
+        "relative pl-8 pb-2",
         isFirst && hiddenCount === 0 && !turnText && "mt-3",
         isLast && "pb-0",
         isCancelled && "opacity-60",

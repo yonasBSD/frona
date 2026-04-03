@@ -30,7 +30,7 @@ export function ToolStatusLine({ toolCallId, pendingIcon, label, serverStatus, s
 
   if (denied) {
     return (
-      <div className="my-1 flex items-start gap-2 rounded-lg bg-surface-tertiary/50 px-3 py-2 text-sm">
+      <div className="mt-1 flex items-start gap-2 rounded-lg bg-surface-tertiary/50 px-3 py-2 text-sm">
         <XCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-text-tertiary" />
         <div className="min-w-0 break-all">
           <span className="text-text-tertiary">{preview}</span>
@@ -42,7 +42,7 @@ export function ToolStatusLine({ toolCallId, pendingIcon, label, serverStatus, s
 
   if (resolved) {
     return (
-      <div className="my-1 flex items-start gap-2 rounded-lg bg-surface-tertiary/50 px-3 py-2 text-sm">
+      <div className="mt-1 flex items-start gap-2 rounded-lg bg-surface-tertiary/50 px-3 py-2 text-sm">
         <CheckCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
         <div className="min-w-0 break-all">
           <span className="text-text-tertiary">{preview}</span>
@@ -55,7 +55,7 @@ export function ToolStatusLine({ toolCallId, pendingIcon, label, serverStatus, s
   }
 
   return (
-    <div className="my-1 flex items-start gap-2 rounded-lg bg-surface-tertiary/30 px-3 py-2 text-sm">
+    <div className="mt-1 flex items-start gap-2 rounded-lg bg-surface-tertiary/30 px-3 py-2 text-sm">
       {pendingIcon ?? <QuestionMarkCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-text-tertiary" />}
       <div className="min-w-0 break-all">
         <span className="text-text-tertiary">{preview}</span>
