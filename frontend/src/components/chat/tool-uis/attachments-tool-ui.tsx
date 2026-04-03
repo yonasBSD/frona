@@ -83,21 +83,29 @@ function AttachmentItem({ attachment }: { attachment: Attachment }) {
     );
   }
 
+  if (canPreview) {
+    return (
+      <>
+        <button
+          onClick={() => setShowPreview(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-tertiary px-3 py-2 text-xs text-text-secondary cursor-pointer hover:bg-surface-secondary transition-colors"
+        >
+          <span className="truncate max-w-[200px]">{attachment.filename}</span>
+        </button>
+        {showPreview && <FilePreviewModal attachment={attachment} onClose={() => setShowPreview(false)} />}
+      </>
+    );
+  }
+
   return (
-    <>
-      <button
-        onClick={canPreview ? () => setShowPreview(true) : undefined}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-tertiary px-3 py-2 text-xs text-text-secondary cursor-pointer hover:bg-surface-secondary transition-colors"
-      >
-        <span className="truncate max-w-[200px]">{attachment.filename}</span>
-        {!canPreview && (
-          <a href={url} download={attachment.filename} onClick={(e) => e.stopPropagation()}>
-            <ArrowDownTrayIcon className="h-3.5 w-3.5 text-text-tertiary hover:text-text-primary" />
-          </a>
-        )}
-      </button>
-      {showPreview && <FilePreviewModal attachment={attachment} onClose={() => setShowPreview(false)} />}
-    </>
+    <a
+      href={url}
+      download={attachment.filename}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-tertiary px-3 py-2 text-xs text-text-secondary cursor-pointer hover:bg-surface-secondary transition-colors"
+    >
+      <span className="truncate max-w-[200px]">{attachment.filename}</span>
+      <ArrowDownTrayIcon className="h-3.5 w-3.5 text-text-tertiary" />
+    </a>
   );
 }
 
