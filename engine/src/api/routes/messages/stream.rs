@@ -50,9 +50,11 @@ async fn handle_inference_result(
                 });
             }
             InferenceResponse::ExternalToolPending {
-                tool_execution, ..
+                tool_executions, ..
             } => {
-                event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution });
+                for te in tool_executions {
+                    event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution: te });
+                }
             }
         },
         Ok(Err(e)) => {

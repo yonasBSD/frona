@@ -79,7 +79,7 @@ pub enum InferenceResponse {
     Cancelled(String),
     ExternalToolPending {
         turn_text: String,
-        tool_execution: crate::inference::tool_execution::ToolExecutionResponse,
+        tool_executions: Vec<crate::inference::tool_execution::ToolExecutionResponse>,
         system_prompt: Option<String>,
     },
 }

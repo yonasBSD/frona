@@ -231,8 +231,10 @@ impl TaskExecutor {
                         }
                         continue;
                     }
-                    InferenceResponse::ExternalToolPending { tool_execution, .. } => {
-                        event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution });
+                    InferenceResponse::ExternalToolPending { tool_executions, .. } => {
+                        for te in tool_executions {
+                            event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution: te });
+                        }
                         self.wait_for_resolution(&task.id, &cancel_token).await?;
                         continue;
                     }

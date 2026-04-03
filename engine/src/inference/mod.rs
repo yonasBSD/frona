@@ -106,11 +106,11 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
             tool_loop::ToolLoopOutcome::Cancelled(text) => InferenceResponse::Cancelled(text),
             tool_loop::ToolLoopOutcome::ExternalToolPending {
                 turn_text,
-                tool_execution,
+                tool_executions,
                 system_prompt,
             } => InferenceResponse::ExternalToolPending {
                 turn_text,
-                tool_execution,
+                tool_executions,
                 system_prompt,
             },
         })

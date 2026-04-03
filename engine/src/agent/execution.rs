@@ -117,11 +117,11 @@ pub async fn resume_agent_loop(
                 });
             }
             InferenceResponse::ExternalToolPending {
-                tool_execution,
-                system_prompt: _,
-                ..
+                tool_executions, ..
             } => {
-                event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution });
+                for te in tool_executions {
+                    event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution: te });
+                }
             }
         },
         Err(e) => {

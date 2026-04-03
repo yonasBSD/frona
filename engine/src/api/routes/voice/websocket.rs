@@ -204,8 +204,9 @@ async fn handle_voice_turn(
 
         match outcome.response {
             InferenceResponse::ExternalToolPending {
-                ref tool_execution, ref turn_text, ..
-            } if tool_execution.name == "send_dtmf" => {
+                ref tool_executions, ref turn_text, ..
+            } if tool_executions.iter().any(|te| te.name == "send_dtmf") => {
+                let tool_execution = tool_executions.iter().find(|te| te.name == "send_dtmf").unwrap();
                 tracing::debug!(chat_id = %chat_id, digits = %tool_execution.result, "Sending DTMF digits");
 
                 // Tool executions already persisted by the tool loop.
@@ -230,8 +231,9 @@ async fn handle_voice_turn(
                     .await;
             }
             InferenceResponse::ExternalToolPending {
-                ref tool_execution, ref turn_text, ..
-            } if tool_execution.name == "hangup_call" => {
+                ref tool_executions, ref turn_text, ..
+            } if tool_executions.iter().any(|te| te.name == "hangup_call") => {
+                let tool_execution = tool_executions.iter().find(|te| te.name == "hangup_call").unwrap();
                 tracing::debug!(chat_id = %chat_id, "Hangup requested by agent");
 
                 // Tool executions already persisted by the tool loop.

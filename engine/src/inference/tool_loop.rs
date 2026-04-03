@@ -76,7 +76,7 @@ pub enum ToolLoopOutcome {
     Cancelled(String),
     ExternalToolPending {
         turn_text: String,
-        tool_execution: crate::inference::tool_execution::ToolExecutionResponse,
+        tool_executions: Vec<crate::inference::tool_execution::ToolExecutionResponse>,
         system_prompt: Option<String>,
     },
 }
@@ -192,9 +192,7 @@ fn build_tool_result_message(
 }
 
 struct ToolExecutionResult {
-    has_external: bool,
-    external_tool_execution: Option<crate::inference::tool_execution::ToolExecutionResponse>,
-    external_tool_result: Option<ToolCallResult>,
+    external_tools: Vec<(crate::inference::tool_execution::ToolExecutionResponse, ToolCallResult)>,
     internal_tool_results: Vec<ToolCallResult>,
     accumulated_system_prompts: Vec<String>,
 }
@@ -214,9 +212,7 @@ async fn execute_tool_calls(
     turn_text: Option<&str>,
 ) -> Result<ToolExecutionResult, AppError> {
     let mut result = ToolExecutionResult {
-        has_external: false,
-        external_tool_execution: None,
-        external_tool_result: None,
+        external_tools: Vec::new(),
         internal_tool_results: Vec::new(),
         accumulated_system_prompts: Vec::new(),
     };
@@ -333,9 +329,7 @@ async fn execute_tool_calls(
         let is_pending_external = tool_output.as_ref().is_some_and(|o| o.is_pending_external());
 
         if is_pending_external {
-            result.has_external = true;
-            result.external_tool_execution = Some(te_response);
-            result.external_tool_result = Some(tool_call_result);
+            result.external_tools.push((te_response, tool_call_result));
         } else {
             event_tx.send(InferenceEvent {
                 kind: InferenceEventKind::ToolResult {
@@ -479,17 +473,19 @@ pub async fn run_tool_loop(
             });
         }
 
-        if exec_result.has_external {
-            let external_tool = exec_result.external_tool_result.unwrap();
-            let system_prompt_injection = external_tool.system_prompt.clone();
-            let tool_exec = exec_result.external_tool_execution.unwrap();
+        if !exec_result.external_tools.is_empty() {
+            let system_prompt_injection = exec_result.external_tools.last()
+                .and_then(|(_, tcr)| tcr.system_prompt.clone());
+            let tool_executions = exec_result.external_tools.into_iter()
+                .map(|(te, _)| te)
+                .collect();
 
             event_tx.send(InferenceEvent {
                     kind: InferenceEventKind::Done(String::new()),
                 });
             return Ok(ToolLoopOutcome::ExternalToolPending {
                 turn_text,
-                tool_execution: tool_exec,
+                tool_executions,
                 system_prompt: system_prompt_injection,
             });
         }
