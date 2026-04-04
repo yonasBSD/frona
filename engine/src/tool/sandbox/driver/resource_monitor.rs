@@ -118,7 +118,6 @@ impl SystemResourceManager {
             true,
             ProcessRefreshKind::nothing().with_cpu().with_memory(),
         );
-        sys.refresh_cpu_usage();
         sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
 
         if self.tracked.is_empty() {
@@ -175,7 +174,7 @@ impl SystemResourceManager {
         }
 
         self.enforce_agent_limits(&pid_usage);
-        self.enforce_global_limits(sys, total_memory, &pid_usage);
+        self.enforce_global_limits(&pid_usage);
     }
 
     fn enforce_agent_limits(&self, pid_usage: &[(u32, String, f64, f64, u64)]) {
@@ -239,24 +238,37 @@ impl SystemResourceManager {
         }
     }
 
-    fn enforce_global_limits(
-        &self,
-        sys: &System,
-        total_memory: u64,
-        pid_usage: &[(u32, String, f64, f64, u64)],
-    ) {
-        let global_cpu = sys.global_cpu_usage() as f64;
-        let global_mem = (sys.used_memory() as f64 / total_memory as f64) * 100.0;
+    fn enforce_global_limits(&self, pid_usage: &[(u32, String, f64, f64, u64)]) {
+        let mut total_cpu = 0.0f64;
+        let mut total_mem_pct = 0.0f64;
 
-        if global_cpu <= self.max_total_cpu_pct && global_mem <= self.max_total_memory_pct {
+        for &(pid, _, cpu, mem_pct, _) in pid_usage {
+            if self
+                .tracked
+                .get(&pid)
+                .is_some_and(|t| t.killed.load(Relaxed))
+            {
+                continue;
+            }
+            total_cpu += cpu;
+            total_mem_pct += mem_pct;
+        }
+
+        if total_cpu <= self.max_total_cpu_pct && total_mem_pct <= self.max_total_memory_pct {
             return;
         }
 
-        let exceeded_cpu = global_cpu > self.max_total_cpu_pct;
+        let exceeded_cpu = total_cpu > self.max_total_cpu_pct;
         let reason = if exceeded_cpu {
-            format!("global CPU {global_cpu:.1}% > {:.1}%", self.max_total_cpu_pct)
+            format!(
+                "tracked CPU {total_cpu:.1}% > {:.1}%",
+                self.max_total_cpu_pct
+            )
         } else {
-            format!("global memory {global_mem:.1}% > {:.1}%", self.max_total_memory_pct)
+            format!(
+                "tracked memory {total_mem_pct:.1}% > {:.1}%",
+                self.max_total_memory_pct
+            )
         };
 
         let mut candidates: Vec<(u32, String, f64, u64)> = pid_usage.iter()
@@ -419,4 +431,290 @@ mod tests {
         assert_eq!(mem, 0);
     }
 
+    fn spawn_sleep() -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            std::process::Command::new("sleep")
+                .arg("60")
+                .pre_exec(|| {
+                    libc::setpgid(0, 0);
+                    Ok(())
+                })
+                .spawn()
+                .expect("failed to spawn sleep process")
+        }
+    }
+
+    fn assert_process_dead(child: &mut std::process::Child) {
+        let status = child
+            .wait()
+            .expect("failed to wait on child");
+        assert!(!status.success(), "process should have been killed");
+    }
+
+    // --- enforce_agent_limits tests ---
+
+    #[test]
+    fn test_enforce_agent_limits_below_threshold_no_kill() {
+        let mut c1 = spawn_sleep();
+        let mut c2 = spawn_sleep();
+        let p1 = c1.id();
+        let p2 = c2.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(p1, "agent_1");
+        manager.register(p2, "agent_1");
+
+        let usage = vec![
+            (p1, "agent_1".into(), 30.0, 20.0, 1000u64),
+            (p2, "agent_1".into(), 40.0, 25.0, 2000),
+        ];
+
+        manager.enforce_agent_limits(&usage);
+
+        assert!(!manager.is_killed(p1));
+        assert!(!manager.is_killed(p2));
+
+        let _ = c1.kill();
+        let _ = c2.kill();
+        let _ = c1.wait();
+        let _ = c2.wait();
+    }
+
+    #[test]
+    fn test_enforce_agent_limits_cpu_exceeded_kills_largest() {
+        let mut c1 = spawn_sleep();
+        let mut c2 = spawn_sleep();
+        let p1 = c1.id();
+        let p2 = c2.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(p1, "agent_1");
+        manager.register(p2, "agent_1");
+
+        // Total CPU = 50 + 40 = 90 > 80 threshold
+        let usage = vec![
+            (p1, "agent_1".into(), 50.0, 10.0, 1000u64),
+            (p2, "agent_1".into(), 40.0, 10.0, 2000),
+        ];
+
+        manager.enforce_agent_limits(&usage);
+
+        assert!(manager.is_killed(p1));
+        assert!(!manager.is_killed(p2));
+        assert_process_dead(&mut c1);
+
+        let _ = c2.kill();
+        let _ = c2.wait();
+    }
+
+    #[test]
+    fn test_enforce_agent_limits_memory_exceeded_kills_largest() {
+        let mut c1 = spawn_sleep();
+        let mut c2 = spawn_sleep();
+        let p1 = c1.id();
+        let p2 = c2.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(p1, "agent_1");
+        manager.register(p2, "agent_1");
+
+        // Total mem = 50 + 40 = 90 > 80 threshold
+        let usage = vec![
+            (p1, "agent_1".into(), 10.0, 40.0, 4000u64),
+            (p2, "agent_1".into(), 10.0, 50.0, 5000),
+        ];
+
+        manager.enforce_agent_limits(&usage);
+
+        assert!(manager.is_killed(p2));
+        assert!(!manager.is_killed(p1));
+        assert_process_dead(&mut c2);
+
+        let _ = c1.kill();
+        let _ = c1.wait();
+    }
+
+    #[test]
+    fn test_enforce_agent_limits_respects_custom_limits() {
+        let mut c1 = spawn_sleep();
+        let p1 = c1.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.set_agent_limits("agent_1", Some(30.0), None);
+        manager.register(p1, "agent_1");
+
+        // CPU 35 > custom limit 30
+        let usage = vec![(p1, "agent_1".into(), 35.0, 10.0, 1000u64)];
+
+        manager.enforce_agent_limits(&usage);
+
+        assert!(manager.is_killed(p1));
+        assert_process_dead(&mut c1);
+    }
+
+    #[test]
+    fn test_enforce_agent_limits_isolates_agents() {
+        let mut c1 = spawn_sleep();
+        let mut c2 = spawn_sleep();
+        let p1 = c1.id();
+        let p2 = c2.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(p1, "agent_1");
+        manager.register(p2, "agent_2");
+
+        // Each agent is under the limit individually
+        let usage = vec![
+            (p1, "agent_1".into(), 70.0, 10.0, 1000u64),
+            (p2, "agent_2".into(), 70.0, 10.0, 1000),
+        ];
+
+        manager.enforce_agent_limits(&usage);
+
+        assert!(!manager.is_killed(p1));
+        assert!(!manager.is_killed(p2));
+
+        let _ = c1.kill();
+        let _ = c2.kill();
+        let _ = c1.wait();
+        let _ = c2.wait();
+    }
+
+    // --- enforce_global_limits tests ---
+
+    #[test]
+    fn test_enforce_global_limits_below_threshold_no_kill() {
+        let mut c1 = spawn_sleep();
+        let mut c2 = spawn_sleep();
+        let p1 = c1.id();
+        let p2 = c2.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(p1, "agent_1");
+        manager.register(p2, "agent_2");
+
+        let usage = vec![
+            (p1, "agent_1".into(), 40.0, 30.0, 3000u64),
+            (p2, "agent_2".into(), 40.0, 30.0, 3000),
+        ];
+
+        manager.enforce_global_limits(&usage);
+
+        assert!(!manager.is_killed(p1));
+        assert!(!manager.is_killed(p2));
+
+        let _ = c1.kill();
+        let _ = c2.kill();
+        let _ = c1.wait();
+        let _ = c2.wait();
+    }
+
+    #[test]
+    fn test_enforce_global_limits_cpu_exceeded_kills_largest() {
+        let mut c1 = spawn_sleep();
+        let mut c2 = spawn_sleep();
+        let p1 = c1.id();
+        let p2 = c2.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(p1, "agent_1");
+        manager.register(p2, "agent_2");
+
+        // Total tracked CPU = 60 + 40 = 100 > 90 threshold
+        let usage = vec![
+            (p1, "agent_1".into(), 60.0, 10.0, 1000u64),
+            (p2, "agent_2".into(), 40.0, 10.0, 1000),
+        ];
+
+        manager.enforce_global_limits(&usage);
+
+        assert!(manager.is_killed(p1));
+        assert!(!manager.is_killed(p2));
+        assert_process_dead(&mut c1);
+
+        let _ = c2.kill();
+        let _ = c2.wait();
+    }
+
+    #[test]
+    fn test_enforce_global_limits_memory_exceeded_kills_largest() {
+        let mut c1 = spawn_sleep();
+        let mut c2 = spawn_sleep();
+        let p1 = c1.id();
+        let p2 = c2.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(p1, "agent_1");
+        manager.register(p2, "agent_2");
+
+        // Total tracked mem = 50 + 50 = 100 > 90 threshold
+        let usage = vec![
+            (p1, "agent_1".into(), 10.0, 50.0, 5000u64),
+            (p2, "agent_2".into(), 10.0, 50.0, 6000),
+        ];
+
+        manager.enforce_global_limits(&usage);
+
+        assert!(manager.is_killed(p2));
+        assert!(!manager.is_killed(p1));
+        assert_process_dead(&mut c2);
+
+        let _ = c1.kill();
+        let _ = c1.wait();
+    }
+
+    #[test]
+    fn test_enforce_global_limits_skips_already_killed() {
+        let mut c1 = spawn_sleep();
+        let mut c2 = spawn_sleep();
+        let p1 = c1.id();
+        let p2 = c2.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 90.0, 90.0);
+        manager.register(p1, "agent_1");
+        manager.register(p2, "agent_2");
+
+        // Pre-kill pid 1
+        manager
+            .tracked
+            .get(&p1)
+            .unwrap()
+            .killed
+            .store(true, Relaxed);
+
+        // Only pid 2 counts: CPU 50 < 90 threshold
+        let usage = vec![
+            (p1, "agent_1".into(), 60.0, 10.0, 1000u64),
+            (p2, "agent_2".into(), 50.0, 10.0, 1000),
+        ];
+
+        manager.enforce_global_limits(&usage);
+
+        assert!(!manager.is_killed(p2));
+
+        let _ = c1.kill();
+        let _ = c2.kill();
+        let _ = c1.wait();
+        let _ = c2.wait();
+    }
+
+    #[test]
+    fn test_enforce_global_limits_uses_tracked_not_system_cpu() {
+        let mut c1 = spawn_sleep();
+        let p1 = c1.id();
+
+        let manager = SystemResourceManager::new(80.0, 80.0, 10.0, 10.0);
+        manager.register(p1, "agent_1");
+
+        // Tracked CPU is only 5% — under the 10% global threshold
+        let usage = vec![(p1, "agent_1".into(), 5.0, 5.0, 500u64)];
+
+        manager.enforce_global_limits(&usage);
+
+        assert!(!manager.is_killed(p1));
+
+        let _ = c1.kill();
+        let _ = c1.wait();
+    }
 }
