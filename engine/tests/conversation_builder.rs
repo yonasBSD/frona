@@ -44,6 +44,7 @@ fn test_ctx() -> ConversationContext {
         model_ref: ModelRef {
             provider: "mock".into(),
             model_id: "test-model".into(),
+            additional_params: None,
         },
         user_id: "test-user".into(),
     }

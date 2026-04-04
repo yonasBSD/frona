@@ -15,14 +15,6 @@ function formatGroupName(name: string): string {
   return name.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
-function formatModelId(modelId: string): { provider: string; model: string } {
-  const parts = modelId.split("/");
-  if (parts.length >= 2) {
-    return { provider: parts[0], model: parts.slice(1).join("/") };
-  }
-  return { provider: "—", model: modelId || "—" };
-}
-
 export function ModelSection({ modelGroup, onModelGroupChange }: ModelSectionProps) {
   const [groupOptions, setGroupOptions] = useState<{ value: string; label: string }[]>([]);
   const [models, setModels] = useState<Record<string, ModelGroupConfig>>({});
@@ -39,7 +31,6 @@ export function ModelSection({ modelGroup, onModelGroupChange }: ModelSectionPro
   }, []);
 
   const group = models[modelGroup];
-  const main = group ? formatModelId(group.main) : null;
 
   return (
     <div>
@@ -58,21 +49,18 @@ export function ModelSection({ modelGroup, onModelGroupChange }: ModelSectionPro
         {group && (
           <div className="grid grid-cols-2 gap-4">
             <Field label="Provider">
-              <p className="text-sm text-text-primary">{main?.provider}</p>
+              <p className="text-sm text-text-primary">{group.provider || "—"}</p>
             </Field>
             <Field label="Model">
-              <p className="text-sm text-text-primary font-mono">{main?.model}</p>
+              <p className="text-sm text-text-primary font-mono">{group.model || "—"}</p>
             </Field>
-            {group.fallbacks.length > 0 && (
+            {(group.fallbacks ?? []).length > 0 && (
               <Field label="Fallbacks">
-                {group.fallbacks.map((fb, i) => {
-                  const f = formatModelId(fb);
-                  return (
-                    <p key={i} className="text-sm text-text-primary font-mono">
-                      {f.provider}/{f.model}
-                    </p>
-                  );
-                })}
+                {(group.fallbacks ?? []).map((fb, i) => (
+                  <p key={i} className="text-sm text-text-primary font-mono">
+                    {fb.provider}/{fb.model}
+                  </p>
+                ))}
               </Field>
             )}
             {group.temperature != null && (

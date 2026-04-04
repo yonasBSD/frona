@@ -149,23 +149,36 @@
 
 models:
   primary:
-    main: anthropic/claude-sonnet-4-6
+    provider: anthropic
+    model: claude-sonnet-4-6
     fallbacks:
-      - anthropic/claude-haiku-4-5
+      - provider: anthropic
+        model: claude-haiku-4-5
     max_tokens: 64000
 #  coding:
-#    main: anthropic/claude-opus-4-6
+#    provider: anthropic
+#    model: claude-opus-4-6
 #    max_tokens: 100000
+#    thinking:
+#      type: enabled
+#      budget_tokens: 16000
 #  reasoning:
-#    main: anthropic/claude-opus-4-6
+#    provider: anthropic
+#    model: claude-opus-4-6
 #    max_tokens: 100000
 
 # Model group options:
-#   main: provider/model-id (required)
-#   fallbacks: list of provider/model-id to try if main fails
+#   provider: provider name (required) — anthropic, openai, ollama, gemini, groq, etc.
+#   model: model id (required) — without provider prefix
+#   fallbacks: list of model configs to try if primary fails
 #   max_tokens: max output tokens
 #   temperature: 0.0-2.0
 #   context_window: override context window size
+#   Provider-specific params are set at the top level:
+#     Anthropic: thinking ({type, budget_tokens}), top_p, top_k
+#     Ollama: think (bool), num_ctx, num_gpu, top_k, top_p, etc.
+#     OpenAI: reasoning_effort, top_p, frequency_penalty, etc.
+#     Gemini: thinking_config ({thinking_budget}), top_p, top_k
 #   retry:
 #     max_retries: 10
 #     initial_backoff_ms: 1000

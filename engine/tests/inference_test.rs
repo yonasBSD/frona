@@ -823,10 +823,12 @@ async fn test_fallback_multiple_fallbacks_order() {
         frona::inference::ModelRef {
             provider: "fb1".into(),
             model_id: "fb1-model".into(),
+            additional_params: None,
         },
         frona::inference::ModelRef {
             provider: "fb2".into(),
             model_id: "fb2-model".into(),
+            additional_params: None,
         },
     ];
     let metrics = test_metrics_ctx();
@@ -876,6 +878,7 @@ impl frona::inference::provider::ModelProvider for StreamingMockProvider {
         _tools: Vec<rig::completion::request::ToolDefinition>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
+        _additional_params: Option<serde_json::Value>,
     ) -> Result<(Vec<rig::completion::AssistantContent>, frona::inference::Usage), InferenceError> {
         unreachable!("streaming test should not call non-streaming inference");
     }
@@ -889,6 +892,7 @@ impl frona::inference::provider::ModelProvider for StreamingMockProvider {
         token_tx: mpsc::Sender<frona::inference::provider::StreamToken>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
+        _additional_params: Option<serde_json::Value>,
     ) -> Result<Vec<rig::completion::AssistantContent>, InferenceError> {
         *self.call_count.lock().unwrap() += 1;
         let mut full_text = String::new();

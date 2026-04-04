@@ -83,13 +83,60 @@ export interface RetryConfig {
   max_backoff_ms: number;
 }
 
+export interface AnthropicThinking {
+  type: string;
+  budget_tokens?: number | null;
+}
+
+export interface GeminiThinkingConfig {
+  thinking_budget: number;
+  include_thoughts?: boolean | null;
+}
+
 export interface ModelGroupConfig {
-  main: string;
-  fallbacks: string[];
-  max_tokens: number | null;
-  temperature: number | null;
-  context_window: number | null;
-  retry: RetryConfig;
+  provider: string;
+  model: string;
+  fallbacks?: ModelGroupConfig[];
+  max_tokens?: number | null;
+  temperature?: number | null;
+  context_window?: number | null;
+  retry?: RetryConfig;
+  // Anthropic
+  thinking?: AnthropicThinking | null;
+  top_p?: number | null;
+  top_k?: number | null;
+  stop_sequences?: string[] | null;
+  // Ollama
+  think?: boolean | null;
+  num_ctx?: number | null;
+  num_predict?: number | null;
+  num_batch?: number | null;
+  num_keep?: number | null;
+  num_thread?: number | null;
+  num_gpu?: number | null;
+  min_p?: number | null;
+  repeat_penalty?: number | null;
+  repeat_last_n?: number | null;
+  frequency_penalty?: number | null;
+  presence_penalty?: number | null;
+  mirostat?: number | null;
+  mirostat_eta?: number | null;
+  mirostat_tau?: number | null;
+  tfs_z?: number | null;
+  seed?: number | null;
+  stop?: string[] | null;
+  use_mmap?: boolean | null;
+  use_mlock?: boolean | null;
+  // OpenAI-compatible
+  max_completion_tokens?: number | null;
+  reasoning_effort?: string | null;
+  logprobs?: boolean | null;
+  top_logprobs?: number | null;
+  // Gemini
+  thinking_config?: GeminiThinkingConfig | null;
+  candidate_count?: number | null;
+  // Generic catch-all
+  [key: string]: unknown;
 }
 
 export interface ModelProviderConfig {

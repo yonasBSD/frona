@@ -320,13 +320,15 @@ impl Default for RetryConfig {
     }
 }
 
+// --- Common fields shared across all model group variants ---
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
-pub struct ModelGroupConfig {
-    #[schemars(description = "Primary model ID (format: provider/model-id).")]
-    pub main: String,
+pub struct CommonModelFields {
+    #[schemars(description = "Model ID (without provider prefix).")]
+    pub model: String,
     #[serde(default)]
-    #[schemars(description = "Fallback model IDs tried in order if the primary fails.")]
-    pub fallbacks: Vec<String>,
+    #[schemars(description = "Fallback models tried in order if the primary fails.")]
+    pub fallbacks: Vec<ModelGroupConfig>,
     #[serde(default)]
     #[schemars(description = "Maximum tokens to generate per response.")]
     pub max_tokens: Option<u64>,
@@ -339,6 +341,254 @@ pub struct ModelGroupConfig {
     #[serde(default)]
     #[schemars(description = "Retry configuration for this model group.")]
     pub retry: RetryConfig,
+}
+
+// --- Provider-specific param types ---
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub struct AnthropicThinking {
+    #[serde(rename = "type")]
+    #[schemars(description = "'enabled' or 'disabled'.")]
+    pub thinking_type: String,
+    #[serde(default)]
+    #[schemars(description = "Token budget for thinking (required when type is 'enabled').")]
+    pub budget_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub struct OpenAICompatParams {
+    #[serde(default)]
+    pub top_p: Option<f64>,
+    #[serde(default)]
+    pub min_p: Option<f64>,
+    #[serde(default)]
+    pub frequency_penalty: Option<f64>,
+    #[serde(default)]
+    pub presence_penalty: Option<f64>,
+    #[serde(default)]
+    pub seed: Option<i64>,
+    #[serde(default)]
+    pub max_completion_tokens: Option<u64>,
+    #[serde(default)]
+    #[schemars(description = "Reasoning effort level (e.g. 'low', 'medium', 'high').")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub logprobs: Option<bool>,
+    #[serde(default)]
+    pub top_logprobs: Option<u64>,
+    #[serde(default)]
+    pub stop: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct GeminiThinkingConfig {
+    pub thinking_budget: u64,
+    #[serde(default)]
+    pub include_thoughts: Option<bool>,
+}
+
+// --- The tagged enum ---
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "provider")]
+pub enum ModelGroupConfig {
+    #[serde(rename = "anthropic")]
+    Anthropic {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(default)]
+        thinking: Option<AnthropicThinking>,
+        #[serde(default)]
+        top_p: Option<f64>,
+        #[serde(default)]
+        top_k: Option<u64>,
+        #[serde(default)]
+        stop_sequences: Option<Vec<String>>,
+    },
+    #[serde(rename = "ollama")]
+    Ollama {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(default)]
+        think: Option<bool>,
+        #[serde(default)]
+        num_ctx: Option<u64>,
+        #[serde(default)]
+        num_predict: Option<u64>,
+        #[serde(default)]
+        num_batch: Option<u64>,
+        #[serde(default)]
+        num_keep: Option<i64>,
+        #[serde(default)]
+        num_thread: Option<u64>,
+        #[serde(default)]
+        num_gpu: Option<u64>,
+        #[serde(default)]
+        top_k: Option<u64>,
+        #[serde(default)]
+        top_p: Option<f64>,
+        #[serde(default)]
+        min_p: Option<f64>,
+        #[serde(default)]
+        repeat_penalty: Option<f64>,
+        #[serde(default)]
+        repeat_last_n: Option<i64>,
+        #[serde(default)]
+        frequency_penalty: Option<f64>,
+        #[serde(default)]
+        presence_penalty: Option<f64>,
+        #[serde(default)]
+        mirostat: Option<u64>,
+        #[serde(default)]
+        mirostat_eta: Option<f64>,
+        #[serde(default)]
+        mirostat_tau: Option<f64>,
+        #[serde(default)]
+        tfs_z: Option<f64>,
+        #[serde(default)]
+        seed: Option<i64>,
+        #[serde(default)]
+        stop: Option<Vec<String>>,
+        #[serde(default)]
+        use_mmap: Option<bool>,
+        #[serde(default)]
+        use_mlock: Option<bool>,
+    },
+    #[serde(rename = "openai")]
+    OpenAI {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(flatten)]
+        params: OpenAICompatParams,
+    },
+    #[serde(rename = "groq")]
+    Groq {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(flatten)]
+        params: OpenAICompatParams,
+    },
+    #[serde(rename = "openrouter")]
+    OpenRouter {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(flatten)]
+        params: OpenAICompatParams,
+    },
+    #[serde(rename = "deepseek")]
+    DeepSeek {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(flatten)]
+        params: OpenAICompatParams,
+    },
+    #[serde(rename = "xai")]
+    XAI {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(flatten)]
+        params: OpenAICompatParams,
+    },
+    #[serde(rename = "together")]
+    Together {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(flatten)]
+        params: OpenAICompatParams,
+    },
+    #[serde(rename = "hyperbolic")]
+    Hyperbolic {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(flatten)]
+        params: OpenAICompatParams,
+    },
+    #[serde(rename = "gemini")]
+    Gemini {
+        #[serde(flatten)]
+        common: CommonModelFields,
+        #[serde(default)]
+        thinking_config: Option<GeminiThinkingConfig>,
+        #[serde(default)]
+        top_p: Option<f64>,
+        #[serde(default)]
+        top_k: Option<u64>,
+        #[serde(default)]
+        stop_sequences: Option<Vec<String>>,
+        #[serde(default)]
+        candidate_count: Option<u64>,
+    },
+    #[serde(rename = "generic")]
+    Generic {
+        #[serde(flatten)]
+        common: CommonModelFields,
+    },
+}
+
+impl Default for ModelGroupConfig {
+    fn default() -> Self {
+        ModelGroupConfig::Generic {
+            common: CommonModelFields::default(),
+        }
+    }
+}
+
+impl ModelGroupConfig {
+    pub fn common(&self) -> &CommonModelFields {
+        match self {
+            Self::Anthropic { common, .. }
+            | Self::Ollama { common, .. }
+            | Self::OpenAI { common, .. }
+            | Self::Groq { common, .. }
+            | Self::OpenRouter { common, .. }
+            | Self::DeepSeek { common, .. }
+            | Self::XAI { common, .. }
+            | Self::Together { common, .. }
+            | Self::Hyperbolic { common, .. }
+            | Self::Gemini { common, .. }
+            | Self::Generic { common, .. } => common,
+        }
+    }
+
+    pub fn provider_name(&self) -> &str {
+        match self {
+            Self::Anthropic { .. } => "anthropic",
+            Self::Ollama { .. } => "ollama",
+            Self::OpenAI { .. } => "openai",
+            Self::Groq { .. } => "groq",
+            Self::OpenRouter { .. } => "openrouter",
+            Self::DeepSeek { .. } => "deepseek",
+            Self::XAI { .. } => "xai",
+            Self::Together { .. } => "together",
+            Self::Hyperbolic { .. } => "hyperbolic",
+            Self::Gemini { .. } => "gemini",
+            Self::Generic { .. } => "generic",
+        }
+    }
+
+    /// Extract provider-specific params as JSON for Rig's additional_params.
+    /// Serializes the whole config, strips common fields and the provider tag,
+    /// returning only provider-specific params. Returns None if empty.
+    pub fn additional_params(&self) -> Option<serde_json::Value> {
+        const COMMON_KEYS: &[&str] = &[
+            "provider", "model", "fallbacks", "max_tokens",
+            "temperature", "context_window", "retry",
+        ];
+
+        let mut map = match serde_json::to_value(self) {
+            Ok(serde_json::Value::Object(m)) => m,
+            _ => return None,
+        };
+
+        for key in COMMON_KEYS {
+            map.remove(*key);
+        }
+
+        // Remove null values
+        map.retain(|_, v| !v.is_null());
+
+        if map.is_empty() { None } else { Some(serde_json::Value::Object(map)) }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]

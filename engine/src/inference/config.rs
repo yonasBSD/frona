@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-pub use crate::core::config::{InferenceConfig, ModelGroupConfig, ModelProviderConfig, RetryConfig};
+pub use crate::core::config::{
+    CommonModelFields, InferenceConfig, ModelGroupConfig, ModelProviderConfig, RetryConfig,
+};
 
 use super::error::InferenceError;
 use super::provider::ModelRef;
@@ -87,12 +89,21 @@ impl ModelRegistryConfig {
         let mut groups = HashMap::new();
 
         for (name, config) in &self.models {
-            let main = ModelRef::parse(&config.main)?;
-            let fallbacks = config
+            let common = config.common();
+            let main = ModelRef {
+                provider: config.provider_name().to_string(),
+                model_id: common.model.clone(),
+                additional_params: config.additional_params(),
+            };
+            let fallbacks = common
                 .fallbacks
                 .iter()
-                .map(|s| ModelRef::parse(s))
-                .collect::<Result<Vec<_>, _>>()?;
+                .map(|fb| ModelRef {
+                    provider: fb.provider_name().to_string(),
+                    model_id: fb.common().model.clone(),
+                    additional_params: fb.additional_params(),
+                })
+                .collect();
 
             groups.insert(
                 name.clone(),
@@ -100,10 +111,10 @@ impl ModelRegistryConfig {
                     name: name.clone(),
                     main,
                     fallbacks,
-                    max_tokens: config.max_tokens,
-                    temperature: config.temperature,
-                    context_window: config.context_window,
-                    retry: config.retry.clone(),
+                    max_tokens: common.max_tokens,
+                    temperature: common.temperature,
+                    context_window: common.context_window,
+                    retry: common.retry.clone(),
                     inference: inference.clone(),
                 },
             );
@@ -128,6 +139,34 @@ fn default_model_for_provider(provider: &str) -> &str {
     }
 }
 
+fn build_default_model_config(provider: &str, model: &str, max_tokens: u64) -> ModelGroupConfig {
+    let common = CommonModelFields {
+        model: model.to_string(),
+        max_tokens: Some(max_tokens),
+        ..Default::default()
+    };
+    match provider {
+        "anthropic" => ModelGroupConfig::Anthropic { common, thinking: None, top_p: None, top_k: None, stop_sequences: None },
+        "ollama" => ModelGroupConfig::Ollama {
+            common, think: None, num_ctx: None, num_predict: None, num_batch: None,
+            num_keep: None, num_thread: None, num_gpu: None, top_k: None, top_p: None,
+            min_p: None, repeat_penalty: None, repeat_last_n: None,
+            frequency_penalty: None, presence_penalty: None, mirostat: None,
+            mirostat_eta: None, mirostat_tau: None, tfs_z: None, seed: None,
+            stop: None, use_mmap: None, use_mlock: None,
+        },
+        "openai" => ModelGroupConfig::OpenAI { common, params: Default::default() },
+        "groq" => ModelGroupConfig::Groq { common, params: Default::default() },
+        "openrouter" => ModelGroupConfig::OpenRouter { common, params: Default::default() },
+        "deepseek" => ModelGroupConfig::DeepSeek { common, params: Default::default() },
+        "xai" => ModelGroupConfig::XAI { common, params: Default::default() },
+        "together" => ModelGroupConfig::Together { common, params: Default::default() },
+        "hyperbolic" => ModelGroupConfig::Hyperbolic { common, params: Default::default() },
+        "gemini" => ModelGroupConfig::Gemini { common, thinking_config: None, top_p: None, top_k: None, stop_sequences: None, candidate_count: None },
+        _ => ModelGroupConfig::Generic { common },
+    }
+}
+
 fn build_default_model_groups(
     providers: &HashMap<String, ModelProviderConfig>,
     inference: &InferenceConfig,
@@ -136,17 +175,9 @@ fn build_default_model_groups(
 
     if let Some((provider, _)) = providers.iter().next() {
         let model = default_model_for_provider(provider);
-        let main = format!("{provider}/{model}");
         models.insert(
             "primary".to_string(),
-            ModelGroupConfig {
-                main,
-                fallbacks: vec![],
-                max_tokens: Some(inference.default_max_tokens),
-                temperature: None,
-                context_window: None,
-                retry: RetryConfig::default(),
-            },
+            build_default_model_config(provider, model, inference.default_max_tokens),
         );
     }
 
@@ -169,5 +200,79 @@ mod tests {
         assert!(ModelRef::parse("no-slash").is_err());
         assert!(ModelRef::parse("/missing-provider").is_err());
         assert!(ModelRef::parse("missing-model/").is_err());
+    }
+
+    #[test]
+    fn test_model_group_config_roundtrip_anthropic() {
+        let yaml = r#"
+provider: anthropic
+model: claude-sonnet-4-6
+max_tokens: 64000
+thinking:
+  type: enabled
+  budget_tokens: 16000
+"#;
+        let config: ModelGroupConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.provider_name(), "anthropic");
+        assert_eq!(config.common().model, "claude-sonnet-4-6");
+        assert_eq!(config.common().max_tokens, Some(64000));
+        let params = config.additional_params().unwrap();
+        assert!(params.get("thinking").is_some());
+    }
+
+    #[test]
+    fn test_model_group_config_roundtrip_ollama() {
+        let yaml = r#"
+provider: ollama
+model: qwen3:32b
+think: true
+num_ctx: 8192
+"#;
+        let config: ModelGroupConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.provider_name(), "ollama");
+        assert_eq!(config.common().model, "qwen3:32b");
+        let params = config.additional_params().unwrap();
+        assert_eq!(params.get("think").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(params.get("num_ctx").and_then(|v| v.as_u64()), Some(8192));
+    }
+
+    #[test]
+    fn test_model_group_config_roundtrip_openai() {
+        let yaml = r#"
+provider: openai
+model: gpt-4o
+reasoning_effort: high
+"#;
+        let config: ModelGroupConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.provider_name(), "openai");
+        let params = config.additional_params().unwrap();
+        assert_eq!(params.get("reasoning_effort").and_then(|v| v.as_str()), Some("high"));
+    }
+
+    #[test]
+    fn test_model_group_config_with_fallbacks() {
+        let yaml = r#"
+provider: anthropic
+model: claude-sonnet-4-6
+fallbacks:
+  - provider: ollama
+    model: qwen3:32b
+    think: true
+"#;
+        let config: ModelGroupConfig = serde_yaml::from_str(yaml).unwrap();
+        let fallbacks = &config.common().fallbacks;
+        assert_eq!(fallbacks.len(), 1);
+        assert_eq!(fallbacks[0].provider_name(), "ollama");
+        assert_eq!(fallbacks[0].common().model, "qwen3:32b");
+    }
+
+    #[test]
+    fn test_model_group_config_no_params_returns_none() {
+        let yaml = r#"
+provider: generic
+model: some-model
+"#;
+        let config: ModelGroupConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.additional_params().is_none());
     }
 }

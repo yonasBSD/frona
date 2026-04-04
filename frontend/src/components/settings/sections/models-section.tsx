@@ -57,14 +57,12 @@ function GroupNameInput({ value, suggestions, onRename }: GroupNameInputProps) {
       allowFreeText
       onChange={(v) => {
         setDraft(v);
-        // Commit immediately when selecting a predefined suggestion
         const id = nameToId.get(v);
         if (id) {
           onRename(id);
         }
       }}
       onBlur={() => {
-        // Resolve display name back to ID, then sanitize
         const resolved = nameToId.get(draft) ?? draft;
         const sanitized = resolved.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
         if (sanitized && sanitized !== value) {
@@ -87,12 +85,20 @@ const DEFAULT_RETRY: RetryConfig = {
 
 function newModelGroup(): ModelGroupConfig {
   return {
-    main: "",
+    provider: "",
+    model: "",
     fallbacks: [],
     max_tokens: null,
     temperature: null,
     context_window: null,
     retry: { ...DEFAULT_RETRY },
+  };
+}
+
+function newFallback(): ModelGroupConfig {
+  return {
+    provider: "",
+    model: "",
   };
 }
 
@@ -166,24 +172,24 @@ export function ModelsSection({ models, enabledProviders, providerConfigs, onCha
     setExpandedGroups((prev) => new Set(prev).add(name));
   }
 
-  function updateFallback(groupName: string, index: number, value: string) {
-    const fallbacks = [...models[groupName].fallbacks];
-    fallbacks[index] = value;
+  function updateFallback(groupName: string, index: number, update: Partial<ModelGroupConfig>) {
+    const fallbacks = [...(models[groupName].fallbacks ?? [])];
+    fallbacks[index] = { ...fallbacks[index], ...update };
     updateGroup(groupName, { fallbacks });
   }
 
   function addFallback(groupName: string) {
-    updateGroup(groupName, { fallbacks: [...models[groupName].fallbacks, ""] });
+    updateGroup(groupName, { fallbacks: [...(models[groupName].fallbacks ?? []), newFallback()] });
   }
 
   function removeFallback(groupName: string, index: number) {
-    const fallbacks = models[groupName].fallbacks.filter((_, i) => i !== index);
+    const fallbacks = (models[groupName].fallbacks ?? []).filter((_, i) => i !== index);
     updateGroup(groupName, { fallbacks });
   }
 
   function updateRetry(groupName: string, update: Partial<RetryConfig>) {
     updateGroup(groupName, {
-      retry: { ...models[groupName].retry, ...update },
+      retry: { ...(models[groupName].retry ?? DEFAULT_RETRY), ...update },
     });
   }
 
@@ -195,6 +201,7 @@ export function ModelsSection({ models, enabledProviders, providerConfigs, onCha
           const group = models[name];
           const isExpanded = expandedGroups.has(name);
           const isRetryExpanded = expandedRetry.has(name);
+          const retry = group.retry ?? DEFAULT_RETRY;
 
           return (
             <div
@@ -228,10 +235,12 @@ export function ModelsSection({ models, enabledProviders, providerConfigs, onCha
 
                   <ModelSelector
                     label="Main Model"
-                    value={group.main}
+                    provider={group.provider}
+                    model={group.model}
                     enabledProviders={enabledProviders}
                     providerConfigs={providerConfigs}
-                    onChange={(v) => updateGroup(name, { main: v })}
+                    onProviderChange={(v) => updateGroup(name, { provider: v })}
+                    onModelChange={(v) => updateGroup(name, { model: v })}
                     onModelInfo={(info) => {
                       if (info) {
                         const update: Partial<ModelGroupConfig> = {};
@@ -254,10 +263,12 @@ export function ModelsSection({ models, enabledProviders, providerConfigs, onCha
                         <div className="flex-1">
                           <ModelSelector
                             label=""
-                            value={fb}
+                            provider={fb.provider}
+                            model={fb.model}
                             enabledProviders={enabledProviders}
                             providerConfigs={providerConfigs}
-                            onChange={(v) => updateFallback(name, i, v)}
+                            onProviderChange={(v) => updateFallback(name, i, { provider: v })}
+                            onModelChange={(v) => updateFallback(name, i, { model: v })}
                           />
                         </div>
                         <button
@@ -282,7 +293,7 @@ export function ModelsSection({ models, enabledProviders, providerConfigs, onCha
 
                   <NumberInput
                     label="Max Tokens"
-                    value={group.max_tokens}
+                    value={group.max_tokens ?? null}
                     onChange={(v) => updateGroup(name, { max_tokens: v || null })}
                     min={1}
                     placeholder="Default"
@@ -313,7 +324,7 @@ export function ModelsSection({ models, enabledProviders, providerConfigs, onCha
 
                   <NumberInput
                     label="Context Window"
-                    value={group.context_window}
+                    value={group.context_window ?? null}
                     onChange={(v) => updateGroup(name, { context_window: v || null })}
                     min={1}
                     placeholder="Default"
@@ -339,26 +350,26 @@ export function ModelsSection({ models, enabledProviders, providerConfigs, onCha
                     <div className="space-y-4">
                       <NumberInput
                         label="Max Retries"
-                        value={group.retry.max_retries}
+                        value={retry.max_retries}
                         onChange={(v) => updateRetry(name, { max_retries: v })}
                         min={0}
                       />
                       <NumberInput
                         label="Initial Backoff (ms)"
-                        value={group.retry.initial_backoff_ms}
+                        value={retry.initial_backoff_ms}
                         onChange={(v) => updateRetry(name, { initial_backoff_ms: v })}
                         min={0}
                       />
                       <NumberInput
                         label="Backoff Multiplier"
-                        value={group.retry.backoff_multiplier}
+                        value={retry.backoff_multiplier}
                         onChange={(v) => updateRetry(name, { backoff_multiplier: v })}
                         min={1}
                         step={0.1}
                       />
                       <NumberInput
                         label="Max Backoff (ms)"
-                        value={group.retry.max_backoff_ms}
+                        value={retry.max_backoff_ms}
                         onChange={(v) => updateRetry(name, { max_backoff_ms: v })}
                         min={0}
                       />

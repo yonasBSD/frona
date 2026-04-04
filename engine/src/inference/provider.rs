@@ -25,6 +25,7 @@ struct CompletionRequestBuilder<'a> {
     tools: Vec<RigToolDefinition>,
     max_tokens: Option<u64>,
     temperature: Option<f64>,
+    additional_params: Option<serde_json::Value>,
 }
 
 impl<'a> CompletionRequestBuilder<'a> {
@@ -35,6 +36,7 @@ impl<'a> CompletionRequestBuilder<'a> {
             tools: vec![],
             max_tokens: None,
             temperature: None,
+            additional_params: None,
         }
     }
 
@@ -53,6 +55,11 @@ impl<'a> CompletionRequestBuilder<'a> {
         self
     }
 
+    fn additional_params(mut self, v: Option<serde_json::Value>) -> Self {
+        self.additional_params = v;
+        self
+    }
+
     fn build(self) -> CompletionRequest {
         CompletionRequest {
             preamble: Some(self.system_prompt.to_string()),
@@ -63,7 +70,7 @@ impl<'a> CompletionRequestBuilder<'a> {
             temperature: self.temperature,
             max_tokens: self.max_tokens,
             tool_choice: None,
-            additional_params: None,
+            additional_params: self.additional_params,
         }
     }
 }
@@ -72,6 +79,7 @@ impl<'a> CompletionRequestBuilder<'a> {
 pub struct ModelRef {
     pub provider: String,
     pub model_id: String,
+    pub additional_params: Option<serde_json::Value>,
 }
 
 impl ModelRef {
@@ -91,6 +99,7 @@ impl ModelRef {
         Ok(Self {
             provider: provider.to_string(),
             model_id: model_id.to_string(),
+            additional_params: None,
         })
     }
 
@@ -154,6 +163,7 @@ pub trait ModelProvider: Send + Sync {
         tools: Vec<RigToolDefinition>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
+        additional_params: Option<serde_json::Value>,
     ) -> Result<(Vec<AssistantContent>, Usage), InferenceError>;
 
     async fn stream_inference(
@@ -165,6 +175,7 @@ pub trait ModelProvider: Send + Sync {
         token_tx: mpsc::Sender<StreamToken>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
+        additional_params: Option<serde_json::Value>,
     ) -> Result<Vec<AssistantContent>, InferenceError>;
 }
 
@@ -196,6 +207,7 @@ where
         tools: Vec<RigToolDefinition>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
+        additional_params: Option<serde_json::Value>,
     ) -> Result<(Vec<AssistantContent>, Usage), InferenceError> {
         use rig::completion::CompletionModel as _;
 
@@ -213,6 +225,7 @@ where
             .tools(tools)
             .max_tokens(max_tokens)
             .temperature(temperature)
+            .additional_params(additional_params)
             .build();
 
         let response: CompletionResponse<_> = model
@@ -241,6 +254,7 @@ where
         token_tx: mpsc::Sender<StreamToken>,
         max_tokens: Option<u64>,
         temperature: Option<f64>,
+        additional_params: Option<serde_json::Value>,
     ) -> Result<Vec<AssistantContent>, InferenceError> {
         use rig::completion::CompletionModel as _;
 
@@ -261,6 +275,7 @@ where
             .tools(tools)
             .max_tokens(max_tokens)
             .temperature(temperature)
+            .additional_params(additional_params)
             .build();
 
         let stream = model

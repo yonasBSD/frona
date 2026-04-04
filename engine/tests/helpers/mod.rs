@@ -60,6 +60,7 @@ impl ModelProvider for MockModelProvider {
         _tools: Vec<RigToolDefinition>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
+        _additional_params: Option<serde_json::Value>,
     ) -> Result<(Vec<AssistantContent>, Usage), InferenceError> {
         let usage = Usage {
             input_tokens: 10,
@@ -98,6 +99,7 @@ impl ModelProvider for MockModelProvider {
         token_tx: mpsc::Sender<frona::inference::provider::StreamToken>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
+        _additional_params: Option<serde_json::Value>,
     ) -> Result<Vec<AssistantContent>, InferenceError> {
         match self.next_response() {
             MockResponse::Text(t) => {
@@ -337,7 +339,7 @@ pub fn mock_context() -> InferenceContext {
 pub fn test_model_group() -> ModelGroup {
     ModelGroup {
         name: "test".into(),
-        main: ModelRef { provider: "mock".into(), model_id: "test-model".into() },
+        main: ModelRef { provider: "mock".into(), model_id: "test-model".into(), additional_params: None },
         fallbacks: vec![],
         max_tokens: Some(4096),
         temperature: None,
@@ -357,6 +359,7 @@ pub fn test_model_group_with_fallback(fallback_provider: &str, fallback_model: &
     group.fallbacks.push(ModelRef {
         provider: fallback_provider.into(),
         model_id: fallback_model.into(),
+        additional_params: None,
     });
     group
 }

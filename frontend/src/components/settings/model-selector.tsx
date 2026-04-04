@@ -9,10 +9,12 @@ export type { ModelInfo };
 
 interface ModelSelectorProps {
   label: string;
-  value: string; // "provider/model-id" format
+  provider: string;
+  model: string;
   enabledProviders: string[];
   providerConfigs?: Record<string, ModelProviderConfig>;
-  onChange: (value: string) => void;
+  onProviderChange: (provider: string) => void;
+  onModelChange: (model: string) => void;
   onModelInfo?: (info: ModelInfo | null) => void;
 }
 
@@ -39,21 +41,16 @@ const PROVIDER_LABELS: Record<string, string> = {
 // Cache fetched models per provider across renders
 const modelsCache: Record<string, ModelInfo[]> = {};
 
-function parseModelRef(value: string): { provider: string; model: string } {
-  const idx = value.indexOf("/");
-  if (idx === -1) return { provider: "", model: value };
-  return { provider: value.slice(0, idx), model: value.slice(idx + 1) };
-}
-
 export function ModelSelector({
   label,
-  value,
+  provider,
+  model,
   enabledProviders,
   providerConfigs,
-  onChange,
+  onProviderChange,
+  onModelChange,
   onModelInfo,
 }: ModelSelectorProps) {
-  const { provider, model } = parseModelRef(value);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>(
     modelsCache[provider] ?? []
   );
@@ -142,7 +139,8 @@ export function ModelSelector({
           onChange={(newDisplay) => {
             const newProvider = providerIdByLabel.get(newDisplay) ?? newDisplay;
             if (newProvider !== provider) {
-              onChange(newProvider ? `${newProvider}/` : "");
+              onProviderChange(newProvider);
+              onModelChange("");
               if (newProvider) fetchModels(newProvider);
             }
           }}
@@ -155,7 +153,7 @@ export function ModelSelector({
           allowFreeText
           onChange={(newDisplay) => {
             const modelId = modelIdByName.get(newDisplay) ?? newDisplay;
-            onChange(provider ? `${provider}/${modelId}` : modelId);
+            onModelChange(modelId);
           }}
         />
       </div>

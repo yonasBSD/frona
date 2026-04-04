@@ -72,6 +72,7 @@ pub async fn inference_with_retry_and_fallback(
                 tools.clone(),
                 max_tokens,
                 temperature,
+                model_group.main.additional_params.clone(),
             )
             .await
     })
@@ -126,6 +127,7 @@ pub async fn inference_with_retry_and_fallback(
                     tools.clone(),
                     max_tokens,
                     temperature,
+                    fallback.additional_params.clone(),
                 )
                 .await
         })
@@ -223,6 +225,7 @@ pub async fn stream_with_retry_and_fallback(
                 text_tx,
                 model_group.max_tokens,
                 model_group.temperature,
+                model_group.main.additional_params.clone(),
             ) => Some(result),
             _ = cancel_token.cancelled() => None,
         };
