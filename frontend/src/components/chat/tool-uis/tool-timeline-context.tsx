@@ -100,9 +100,8 @@ export function ToolTimelineProvider({
   // the component remount caused by the streaming→real message ID swap.
   useEffect(() => {
     if (isRunning && message.isLast) {
-      if (!userToggled) {
-        const timer = setTimeout(() => setCollapsed(false), 0);
-        return () => clearTimeout(timer);
+      if (!userToggled && collapsed) {
+        setCollapsed(false);
       }
       return;
     }
