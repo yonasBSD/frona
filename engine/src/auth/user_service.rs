@@ -54,4 +54,8 @@ impl UserService {
         self.cache.invalidate(id).await;
         self.repo.delete(id).await
     }
+
+    pub async fn has_users(&self) -> Result<bool, AppError> {
+        self.repo.has_users().await
+    }
 }

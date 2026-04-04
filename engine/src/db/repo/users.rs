@@ -41,4 +41,17 @@ impl UserRepository for SurrealRepo<User> {
         Ok(user)
     }
 
+    async fn has_users(&self) -> Result<bool, AppError> {
+        let mut result = self
+            .db()
+            .query("SELECT count() as total FROM user GROUP ALL LIMIT 1")
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let row: Option<serde_json::Value> = result
+            .take(0)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(row.is_some_and(|v| v.get("total").and_then(|t| t.as_u64()).unwrap_or(0) > 0))
+    }
 }

@@ -17,6 +17,7 @@ use frona::agent::service::AgentService;
 use frona::storage::StorageService;
 use frona::db::init as db;
 use frona::api::middleware::metrics::track_http_metrics;
+use frona::api::middleware::setup_redirect::setup_redirect;
 use frona::api::middleware::shutdown::shutdown_gate;
 use frona::api::routes;
 use frona::core::config::Config;
@@ -151,6 +152,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .allow_credentials(true)
     });
 
+    let has_users = state.user_service.has_users().await.unwrap_or(true);
+    if !has_users {
+        info!("No users found — registration redirect active. Restart after setup.");
+    }
+
     let mut api = axum::Router::new()
         .merge(routes::auth::router())
         .merge(routes::well_known::router())
@@ -203,6 +209,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }),
         ));
+
+    let api: axum::Router = if !has_users {
+        api.layer(axum::middleware::from_fn(setup_redirect))
+    } else {
+        api
+    };
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
     info!("Frona v{} starting on {addr}", env!("CARGO_PKG_VERSION"));
