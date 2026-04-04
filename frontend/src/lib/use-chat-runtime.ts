@@ -146,8 +146,8 @@ export function convertMessage(msg: MessageResponse) {
 
     // User-facing external tools (questions, approvals) render BEFORE text
     const BEFORE_TEXT_TOOLS = new Set(["Question", "HumanInTheLoop", "VaultApproval", "ServiceApproval"]);
-    if (msg.tool_executions?.length) {
-      for (const te of msg.tool_executions) {
+    if (msg.tool_calls?.length) {
+      for (const te of msg.tool_calls) {
         if (te.tool_data && BEFORE_TEXT_TOOLS.has(te.tool_data.type)) {
           const toolName = te.tool_data.type;
           const status = te.tool_data.data.status;
@@ -189,8 +189,8 @@ export function convertMessage(msg: MessageResponse) {
     }
 
     // Lifecycle tool_data tools (TaskCompletion etc.) — after attachments, before regular tools
-    if (msg.tool_executions?.length) {
-      for (const te of msg.tool_executions) {
+    if (msg.tool_calls?.length) {
+      for (const te of msg.tool_calls) {
         if (te.tool_data && !BEFORE_TEXT_TOOLS.has(te.tool_data.type)) {
           const toolName = te.tool_data.type;
           const status = te.tool_data.data.status;
@@ -213,12 +213,12 @@ export function convertMessage(msg: MessageResponse) {
     }
 
     // Regular tools (no tool_data) — last
-    if (msg.tool_executions?.length) {
-      for (const te of msg.tool_executions) {
+    if (msg.tool_calls?.length) {
+      for (const te of msg.tool_calls) {
         if (!te.tool_data) {
           content.push({
             type: "tool-call",
-            toolCallId: te.tool_call_id,
+            toolCallId: te.provider_call_id,
             toolName: te.name,
             args: {
               description: te.description ?? te.name,
@@ -242,7 +242,7 @@ export function convertMessage(msg: MessageResponse) {
       role: "assistant" as const,
       content: finalContent,
       createdAt: new Date(msg.created_at),
-      status: msg.tool_executions?.some(te => te.tool_data && te.tool_data.data.status === "pending")
+      status: msg.tool_calls?.some(te => te.tool_data && te.tool_data.data.status === "pending")
         ? { type: "requires-action" as const, reason: "tool-calls" as const }
         : msg.status === "executing"
           ? { type: "running" as const }

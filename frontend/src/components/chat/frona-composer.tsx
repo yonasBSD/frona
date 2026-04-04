@@ -79,14 +79,14 @@ export function FronaComposer({
         .map((te) => {
           const ans = nextAnswers.get(te.id);
           return {
-            tool_execution_id: te.id,
+            tool_call_id: te.id,
             response: ans?.response ?? "User declined to answer",
             action: ans?.action ?? "fail",
           };
         });
       wizard.setSubmitted(true);
       if (resolutions.length > 0) {
-        api.post(`/api/chats/${chatCtx.chatId}/tool-executions/resolve`, { resolutions });
+        api.post(`/api/chats/${chatCtx.chatId}/tool-calls/resolve`, { resolutions });
       }
     } else if (safeIndex < pendingTools.length - 1) {
       wizard.setCurrentIndex(safeIndex + 1);

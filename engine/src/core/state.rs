@@ -137,7 +137,7 @@ impl AppState {
 
         let chat_repo = SurrealRepo::new(db.clone());
         let message_repo = SurrealRepo::new(db.clone());
-        let tool_execution_repo = SurrealRepo::new(db.clone());
+        let tool_call_repo = SurrealRepo::new(db.clone());
 
         let shared_config_dir = PathBuf::from(&config.storage.shared_config_dir);
         let shared_config_abs = std::fs::canonicalize(&shared_config_dir)
@@ -266,7 +266,7 @@ impl AppState {
             chat_service: ChatService::new(
                 chat_repo,
                 message_repo,
-                tool_execution_repo,
+                tool_call_repo,
                 agent_service.clone(),
                 provider_registry,
                 storage.clone(),

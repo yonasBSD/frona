@@ -88,8 +88,8 @@ impl ChatSessionContext {
             .resolve_model_group(&agent_config.model_group)?;
 
         let stored_messages = state.chat_service.get_stored_messages(&chat.id).await;
-        let tool_executions = state.chat_service
-            .get_tool_executions(&chat.id)
+        let tool_calls = state.chat_service
+            .get_tool_calls(&chat.id)
             .await
             .unwrap_or_default();
 
@@ -100,7 +100,7 @@ impl ChatSessionContext {
             system_prompt.push_str(&task_prompt);
         }
 
-        for te in &tool_executions {
+        for te in &tool_calls {
             if let Some(sp) = &te.system_prompt {
                 system_prompt.push_str("\n\n");
                 system_prompt.push_str(sp);
@@ -147,13 +147,13 @@ impl ChatSessionContext {
                 user_service: state.user_service.clone(),
                 storage_service: state.storage_service.clone(),
             };
-            builder.build(&stored_messages, &tool_executions, &conv_ctx).await
+            builder.build(&stored_messages, &tool_calls, &conv_ctx).await
         } else {
             let builder = DefaultConversationBuilder {
                 user_service: state.user_service.clone(),
                 storage_service: state.storage_service.clone(),
             };
-            builder.build(&stored_messages, &tool_executions, &conv_ctx).await
+            builder.build(&stored_messages, &tool_calls, &conv_ctx).await
         };
 
         let registry = state.chat_service.provider_registry().clone();

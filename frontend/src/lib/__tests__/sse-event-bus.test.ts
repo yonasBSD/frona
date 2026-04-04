@@ -89,13 +89,13 @@ describe("SSEEventBus: chat event routing", () => {
     c2.abort();
   });
 
-  it("routes tool_execution events correctly", async () => {
+  it("routes tool_call events correctly", async () => {
     const controller = new AbortController();
     const iter = bus.subscribe("chat-1", controller.signal)[Symbol.asyncIterator]();
 
-    bus.routeEvent("tool_execution", "chat-1", {
+    bus.routeEvent("tool_call", "chat-1", {
       id: "te-1",
-      tool_call_id: "tc-1",
+      provider_call_id: "tc-1",
       name: "web_search",
       arguments: { query: "test" },
       description: "Searching",
@@ -103,9 +103,9 @@ describe("SSEEventBus: chat event routing", () => {
 
     const r = await iter.next();
     expect(r.value).toEqual({
-      type: "tool_execution",
+      type: "tool_call",
       id: "te-1",
-      tool_call_id: "tc-1",
+      provider_call_id: "tc-1",
       name: "web_search",
       arguments: { query: "test" },
       description: "Searching",
@@ -202,10 +202,10 @@ describe("SSEEventBus: chat event routing", () => {
     const iter = bus.subscribe("chat-1", controller.signal)[Symbol.asyncIterator]();
 
     const te = { id: "te-1", name: "cli" };
-    bus.routeEvent("tool_message", "chat-1", { tool_execution: te });
+    bus.routeEvent("tool_message", "chat-1", { tool_call: te });
 
     const r = await iter.next();
-    expect(r.value).toEqual({ type: "tool_message", tool_execution: te });
+    expect(r.value).toEqual({ type: "tool_message", tool_call: te });
 
     controller.abort();
   });
@@ -215,10 +215,10 @@ describe("SSEEventBus: chat event routing", () => {
     const iter = bus.subscribe("chat-1", controller.signal)[Symbol.asyncIterator]();
 
     const te = { id: "te-1", name: "cli", result: "done" };
-    bus.routeEvent("tool_resolved", "chat-1", { tool_execution: te });
+    bus.routeEvent("tool_resolved", "chat-1", { tool_call: te });
 
     const r = await iter.next();
-    expect(r.value).toEqual({ type: "tool_resolved", message: undefined, tool_execution: te });
+    expect(r.value).toEqual({ type: "tool_resolved", message: undefined, tool_call: te });
 
     controller.abort();
   });

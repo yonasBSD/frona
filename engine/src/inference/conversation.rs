@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::auth::UserService;
 use crate::chat::message::models::{Message, MessageRole, MessageStatus};
-use crate::inference::tool_execution::ToolExecution;
+use crate::inference::tool_call::ToolCall;
 use crate::storage::{Attachment, StorageService, VirtualPath, is_image_content_type};
 
 use super::ModelRef;
@@ -23,7 +23,7 @@ pub trait ConversationBuilder: Send + Sync {
     async fn build(
         &self,
         messages: &[Message],
-        tool_executions: &[ToolExecution],
+        tool_calls: &[ToolCall],
         ctx: &ConversationContext,
     ) -> Vec<RigMessage>;
 }
@@ -39,10 +39,10 @@ impl ConversationBuilder for DefaultConversationBuilder {
     async fn build(
         &self,
         messages: &[Message],
-        tool_executions: &[ToolExecution],
+        tool_calls: &[ToolCall],
         ctx: &ConversationContext,
     ) -> Vec<RigMessage> {
-        let te_map = group_tool_executions_by_message(tool_executions);
+        let te_map = group_tool_calls_by_message(tool_calls);
         let mut result = Vec::with_capacity(messages.len());
         for msg in messages {
             match msg.role {
@@ -71,7 +71,7 @@ impl ConversationBuilder for DefaultConversationBuilder {
                 }
                 MessageRole::Agent => {
                     if let Some(tes) = te_map.get(&msg.id) {
-                        convert_agent_with_tool_executions(msg, tes, &ctx.agent_id, &mut result);
+                        convert_agent_with_tool_calls(msg, tes, &ctx.agent_id, &mut result);
                     } else if let Some(m) = convert_agent_message(msg, &ctx.agent_id) {
                         result.push(m);
                     }
@@ -97,10 +97,10 @@ impl ConversationBuilder for TaskConversationBuilder {
     async fn build(
         &self,
         messages: &[Message],
-        tool_executions: &[ToolExecution],
+        tool_calls: &[ToolCall],
         ctx: &ConversationContext,
     ) -> Vec<RigMessage> {
-        let te_map = group_tool_executions_by_message(tool_executions);
+        let te_map = group_tool_calls_by_message(tool_calls);
         let mut result = Vec::with_capacity(messages.len());
         let mut instruction_wrapped = false;
         for msg in messages {
@@ -135,7 +135,7 @@ impl ConversationBuilder for TaskConversationBuilder {
                         let content = format!("<task>\n{}\n</task>", msg.content);
                         result.push(RigMessage::user(&content));
                     } else if let Some(tes) = te_map.get(&msg.id) {
-                        convert_agent_with_tool_executions(msg, tes, &ctx.agent_id, &mut result);
+                        convert_agent_with_tool_calls(msg, tes, &ctx.agent_id, &mut result);
                     } else if let Some(m) = convert_agent_message(msg, &ctx.agent_id) {
                         result.push(m);
                     }
@@ -151,25 +151,25 @@ impl ConversationBuilder for TaskConversationBuilder {
     }
 }
 
-// --- ToolExecution → RigMessage conversion ---
+// --- ToolCall → RigMessage conversion ---
 
-fn group_tool_executions_by_message(
-    tool_executions: &[ToolExecution],
-) -> HashMap<String, Vec<&ToolExecution>> {
-    let mut map: HashMap<String, Vec<&ToolExecution>> = HashMap::new();
-    for te in tool_executions {
+fn group_tool_calls_by_message(
+    tool_calls: &[ToolCall],
+) -> HashMap<String, Vec<&ToolCall>> {
+    let mut map: HashMap<String, Vec<&ToolCall>> = HashMap::new();
+    for te in tool_calls {
         map.entry(te.message_id.clone()).or_default().push(te);
     }
     // Each group is already ordered by created_at ASC from the DB query
     map
 }
 
-/// Convert an agent message that has linked ToolExecution records into RigMessages.
+/// Convert an agent message that has linked ToolCall records into RigMessages.
 /// Emits: for each turn, an Assistant message with tool calls + a User message with tool results.
 /// After all turns, emits the agent's final text (if status is Completed).
-fn convert_agent_with_tool_executions(
+fn convert_agent_with_tool_calls(
     msg: &Message,
-    tool_executions: &[&ToolExecution],
+    tool_calls: &[&ToolCall],
     agent_id: &str,
     result: &mut Vec<RigMessage>,
 ) {
@@ -180,10 +180,10 @@ fn convert_agent_with_tool_executions(
         return;
     }
 
-    // Group tool executions by turn
-    let mut turns: std::collections::BTreeMap<u32, Vec<&ToolExecution>> =
+    // Group tool calls by turn
+    let mut turns: std::collections::BTreeMap<u32, Vec<&ToolCall>> =
         std::collections::BTreeMap::new();
-    for te in tool_executions {
+    for te in tool_calls {
         turns.entry(te.turn).or_default().push(te);
     }
 
@@ -197,7 +197,7 @@ fn convert_agent_with_tool_executions(
             assistant_items.push(AssistantContent::text(text));
         }
         for te in tes {
-            assistant_items.push(AssistantContent::tool_call(&te.tool_call_id, &te.name, te.arguments.clone()));
+            assistant_items.push(AssistantContent::tool_call(&te.provider_call_id, &te.name, te.arguments.clone()));
         }
         if let Ok(content) = rig::OneOrMany::many(assistant_items) {
             result.push(RigMessage::Assistant { id: None, content });
@@ -208,7 +208,7 @@ fn convert_agent_with_tool_executions(
             .iter()
             .map(|te| {
                 UserContent::ToolResult(ToolResult {
-                    id: te.tool_call_id.clone(),
+                    id: te.provider_call_id.clone(),
                     call_id: None,
                     content: rig::OneOrMany::one(ToolResultContent::text(&te.result)),
                 })

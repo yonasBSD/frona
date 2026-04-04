@@ -1,10 +1,10 @@
 use chrono::Utc;
-use frona::inference::tool_execution::{MessageTool, ToolStatus};
+use frona::inference::tool_call::{MessageTool, ToolStatus};
 use frona::core::repository::Repository;
 use frona::db::init as db;
 use frona::db::repo::generic::SurrealRepo;
-use frona::db::repo::tool_executions::ToolExecutionRepository;
-use frona::inference::tool_execution::ToolExecution;
+use frona::db::repo::tool_calls::ToolCallRepository;
+use frona::inference::tool_call::ToolCall;
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
 
@@ -14,13 +14,13 @@ async fn test_db() -> Surreal<Db> {
     db
 }
 
-fn test_tool_execution(chat_id: &str, message_id: &str, turn: u32, name: &str) -> ToolExecution {
-    ToolExecution {
+fn test_tool_call(chat_id: &str, message_id: &str, turn: u32, name: &str) -> ToolCall {
+    ToolCall {
         id: uuid::Uuid::new_v4().to_string(),
         chat_id: chat_id.to_string(),
         message_id: message_id.to_string(),
         turn,
-        tool_call_id: format!("call-{}", uuid::Uuid::new_v4()),
+        provider_call_id: format!("call-{}", uuid::Uuid::new_v4()),
         name: name.to_string(),
         arguments: serde_json::json!({"query": "test"}),
         result: "tool result".to_string(),
@@ -37,9 +37,9 @@ fn test_tool_execution(chat_id: &str, message_id: &str, turn: u32, name: &str) -
 #[tokio::test]
 async fn create_and_find_by_id() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
-    let te = test_tool_execution("chat-1", "msg-1", 0, "search_web");
+    let te = test_tool_call("chat-1", "msg-1", 0, "search_web");
     let id = te.id.clone();
     repo.create(&te).await.unwrap();
 
@@ -55,11 +55,11 @@ async fn create_and_find_by_id() {
 #[tokio::test]
 async fn find_by_chat_id_returns_ordered() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
-    let te1 = test_tool_execution("chat-1", "msg-1", 0, "tool_a");
-    let te2 = test_tool_execution("chat-1", "msg-1", 1, "tool_b");
-    let te3 = test_tool_execution("chat-2", "msg-2", 0, "tool_c");
+    let te1 = test_tool_call("chat-1", "msg-1", 0, "tool_a");
+    let te2 = test_tool_call("chat-1", "msg-1", 1, "tool_b");
+    let te3 = test_tool_call("chat-2", "msg-2", 0, "tool_c");
 
     repo.create(&te1).await.unwrap();
     repo.create(&te2).await.unwrap();
@@ -78,10 +78,10 @@ async fn find_by_chat_id_returns_ordered() {
 #[tokio::test]
 async fn find_by_message_id() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
-    let te1 = test_tool_execution("chat-1", "msg-1", 0, "tool_a");
-    let te2 = test_tool_execution("chat-1", "msg-2", 0, "tool_b");
+    let te1 = test_tool_call("chat-1", "msg-1", 0, "tool_a");
+    let te2 = test_tool_call("chat-1", "msg-2", 0, "tool_b");
 
     repo.create(&te1).await.unwrap();
     repo.create(&te2).await.unwrap();
@@ -94,10 +94,10 @@ async fn find_by_message_id() {
 #[tokio::test]
 async fn find_pending_by_chat_id() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
     // Resolved tool execution
-    let mut te1 = test_tool_execution("chat-1", "msg-1", 0, "tool_resolved");
+    let mut te1 = test_tool_call("chat-1", "msg-1", 0, "tool_resolved");
     te1.tool_data = Some(MessageTool::VaultApproval {
         query: "test".into(),
         reason: "need creds".into(),
@@ -108,7 +108,7 @@ async fn find_pending_by_chat_id() {
     repo.create(&te1).await.unwrap();
 
     // Pending tool execution
-    let mut te2 = test_tool_execution("chat-1", "msg-1", 1, "tool_pending");
+    let mut te2 = test_tool_call("chat-1", "msg-1", 1, "tool_pending");
     te2.tool_data = Some(MessageTool::VaultApproval {
         query: "test2".into(),
         reason: "need more creds".into(),
@@ -126,9 +126,9 @@ async fn find_pending_by_chat_id() {
 #[tokio::test]
 async fn find_pending_returns_none_when_all_resolved() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
-    let mut te = test_tool_execution("chat-1", "msg-1", 0, "tool_done");
+    let mut te = test_tool_call("chat-1", "msg-1", 0, "tool_done");
     te.tool_data = Some(MessageTool::VaultApproval {
         query: "test".into(),
         reason: "reason".into(),
@@ -145,9 +145,9 @@ async fn find_pending_returns_none_when_all_resolved() {
 #[tokio::test]
 async fn arguments_json_round_trip() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
-    let mut te = test_tool_execution("chat-1", "msg-1", 0, "complex_tool");
+    let mut te = test_tool_call("chat-1", "msg-1", 0, "complex_tool");
     te.arguments = serde_json::json!({
         "url": "https://example.com",
         "headers": {"Authorization": "Bearer token"},
@@ -164,9 +164,9 @@ async fn arguments_json_round_trip() {
 #[tokio::test]
 async fn turn_text_round_trip() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
-    let mut te = test_tool_execution("chat-1", "msg-1", 0, "search_web");
+    let mut te = test_tool_call("chat-1", "msg-1", 0, "search_web");
     te.turn_text = Some("Script 3:".into());
     let id = te.id.clone();
     repo.create(&te).await.unwrap();
@@ -178,9 +178,9 @@ async fn turn_text_round_trip() {
 #[tokio::test]
 async fn turn_text_none_round_trip() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
-    let te = test_tool_execution("chat-1", "msg-1", 0, "search_web");
+    let te = test_tool_call("chat-1", "msg-1", 0, "search_web");
     let id = te.id.clone();
     repo.create(&te).await.unwrap();
 
@@ -191,14 +191,14 @@ async fn turn_text_none_round_trip() {
 #[tokio::test]
 async fn begin_creates_incomplete_record() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
-    let te = ToolExecution {
+    let te = ToolCall {
         id: uuid::Uuid::new_v4().to_string(),
         chat_id: "chat-1".to_string(),
         message_id: "msg-1".to_string(),
         turn: 0,
-        tool_call_id: "call-1".to_string(),
+        provider_call_id: "call-1".to_string(),
         name: "web_search".to_string(),
         arguments: serde_json::json!({"query": "rust"}),
         result: String::new(),
@@ -225,10 +225,10 @@ async fn begin_creates_incomplete_record() {
 #[tokio::test]
 async fn finish_updates_record() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
     // Begin: create incomplete record
-    let mut te = test_tool_execution("chat-1", "msg-1", 0, "web_search");
+    let mut te = test_tool_call("chat-1", "msg-1", 0, "web_search");
     te.result = String::new();
     te.success = false;
     te.duration_ms = 0;
@@ -253,15 +253,15 @@ async fn finish_updates_record() {
 #[tokio::test]
 async fn begin_without_finish_leaves_incomplete() {
     let db = test_db().await;
-    let repo: SurrealRepo<ToolExecution> = SurrealRepo::new(db);
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
 
     // Simulate crash: only begin, never finish
-    let te = ToolExecution {
+    let te = ToolCall {
         id: uuid::Uuid::new_v4().to_string(),
         chat_id: "chat-1".to_string(),
         message_id: "msg-1".to_string(),
         turn: 0,
-        tool_call_id: "call-crash".to_string(),
+        provider_call_id: "call-crash".to_string(),
         name: "checkout_order".to_string(),
         arguments: serde_json::json!({"order_id": "12345"}),
         result: String::new(),

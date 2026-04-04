@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { convertMessage, promoteTurnText, type AssistantContentPart } from "../use-chat-runtime";
-import type { MessageResponse, ToolExecution } from "../types";
+import type { MessageResponse, ToolCall } from "../types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -18,13 +18,13 @@ function makeAgentMessage(overrides: Partial<MessageResponse> = {}): MessageResp
   };
 }
 
-function makeToolExecution(overrides: Partial<ToolExecution> = {}): ToolExecution {
+function makeToolCall(overrides: Partial<ToolCall> = {}): ToolCall {
   return {
     id: "te-1",
     chat_id: "chat-1",
     message_id: "msg-1",
     turn: 1,
-    tool_call_id: "tc-1",
+    provider_call_id: "tc-1",
     name: "web_search",
     arguments: { query: "test" },
     result: "Found results",
@@ -149,8 +149,8 @@ describe("convertMessage: status mapping", () => {
 
   it("maps pending tool_data to requires-action", () => {
     const msg = makeAgentMessage({
-      tool_executions: [
-        makeToolExecution({
+      tool_calls: [
+        makeToolCall({
           tool_data: {
             type: "Question",
             data: { question: "?", options: ["A"], status: "pending", response: null },
@@ -165,8 +165,8 @@ describe("convertMessage: status mapping", () => {
 
   it("maps resolved tool_data to complete", () => {
     const msg = makeAgentMessage({
-      tool_executions: [
-        makeToolExecution({
+      tool_calls: [
+        makeToolCall({
           tool_data: {
             type: "Question",
             data: { question: "?", options: ["A"], status: "resolved", response: "A" },
@@ -187,9 +187,9 @@ describe("convertMessage: status mapping", () => {
 describe("convertMessage: tool executions", () => {
   it("converts regular tool executions to tool-call parts", () => {
     const msg = makeAgentMessage({
-      tool_executions: [
-        makeToolExecution({
-          tool_call_id: "tc-1",
+      tool_calls: [
+        makeToolCall({
+          provider_call_id: "tc-1",
           name: "web_search",
           arguments: { query: "test" },
           result: "Found it",
@@ -209,8 +209,8 @@ describe("convertMessage: tool executions", () => {
 
   it("converts tool_data executions using the tool_data type as toolName", () => {
     const msg = makeAgentMessage({
-      tool_executions: [
-        makeToolExecution({
+      tool_calls: [
+        makeToolCall({
           id: "te-q1",
           tool_data: {
             type: "Question",
@@ -229,8 +229,8 @@ describe("convertMessage: tool executions", () => {
 
   it("tool_data with pending status has no result", () => {
     const msg = makeAgentMessage({
-      tool_executions: [
-        makeToolExecution({
+      tool_calls: [
+        makeToolCall({
           tool_data: {
             type: "HumanInTheLoop",
             data: { reason: "Check this", debugger_url: "http://...", status: "pending", response: null },
@@ -246,8 +246,8 @@ describe("convertMessage: tool executions", () => {
 
   it("tool_data with denied status uses 'denied' as result", () => {
     const msg = makeAgentMessage({
-      tool_executions: [
-        makeToolExecution({
+      tool_calls: [
+        makeToolCall({
           tool_data: {
             type: "VaultApproval",
             data: { query: "creds", reason: "need auth", env_var_prefix: null, status: "denied", response: null },
@@ -263,8 +263,8 @@ describe("convertMessage: tool executions", () => {
 
   it("includes turn_text in tool-call args", () => {
     const msg = makeAgentMessage({
-      tool_executions: [
-        makeToolExecution({
+      tool_calls: [
+        makeToolCall({
           turn_text: "Before the tool",
         }),
       ],
@@ -440,8 +440,8 @@ describe("convertMessage: turnText promotion gated on status", () => {
     const msg = makeAgentMessage({
       content: "",
       status: "executing",
-      tool_executions: [
-        makeToolExecution({ turn_text: "I'll do that" }),
+      tool_calls: [
+        makeToolCall({ turn_text: "I'll do that" }),
       ],
     });
 
@@ -455,8 +455,8 @@ describe("convertMessage: turnText promotion gated on status", () => {
     const msg = makeAgentMessage({
       content: "",
       status: "completed",
-      tool_executions: [
-        makeToolExecution({ turn_text: "I'll do that" }),
+      tool_calls: [
+        makeToolCall({ turn_text: "I'll do that" }),
       ],
     });
 

@@ -103,8 +103,8 @@ pub async fn resume_agent_loop(
                     .complete_agent_message(message_id, text, attachments, reasoning)
                     .await
                 {
-                    if let Ok(tes) = state.chat_service.get_tool_executions_by_message(message_id).await {
-                        msg.tool_executions = tes.into_iter().map(Into::into).collect();
+                    if let Ok(tes) = state.chat_service.get_tool_calls_by_message(message_id).await {
+                        msg.tool_calls = tes.into_iter().map(Into::into).collect();
                     }
                     presign_response_by_user_id(&state.presign_service, &mut msg, user_id).await;
                     event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
@@ -120,10 +120,10 @@ pub async fn resume_agent_loop(
                 });
             }
             InferenceResponse::ExternalToolPending {
-                tool_executions, ..
+                tool_calls, ..
             } => {
-                for te in tool_executions {
-                    event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution: te });
+                for te in tool_calls {
+                    event_sender.send_kind(BroadcastEventKind::ToolCallCreated { tool_call: te });
                 }
             }
         },

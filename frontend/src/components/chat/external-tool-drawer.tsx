@@ -12,13 +12,13 @@ import {
   ChevronUpIcon,
   ChevronDownIcon,
 } from "@heroicons/react/24/outline";
-import type { ToolExecution } from "@/lib/types";
+import type { ToolCall } from "@/lib/types";
 import { usePendingTools } from "@/lib/pending-tools-context";
 import { api } from "@/lib/api-client";
 import { ChatContext } from "@/lib/chat-context";
 import { ToolContentDispatch } from "./tool-uis/tool-content";
 
-function toolIcon(te: ToolExecution) {
+function toolIcon(te: ToolCall) {
   switch (te.tool_data?.type) {
     case "Question":
       return <QuestionMarkCircleIcon className="h-5 w-5 text-accent" />;
@@ -31,7 +31,7 @@ function toolIcon(te: ToolExecution) {
   }
 }
 
-function toolTitle(te: ToolExecution): string {
+function toolTitle(te: ToolCall): string {
   switch (te.tool_data?.type) {
     case "Question":
       return "Question";
@@ -107,13 +107,13 @@ export function ExternalToolDrawer({ wizard }: { wizard: ToolWizardState }) {
       .map((te) => {
         const answer = finalAnswers.get(te.id);
         return {
-          tool_execution_id: te.id,
+          tool_call_id: te.id,
           response: answer?.response ?? "User declined to answer",
           action: answer?.action ?? "fail",
         };
       });
     if (resolutions.length > 0) {
-      api.post(`/api/chats/${chatId}/tool-executions/resolve`, { resolutions });
+      api.post(`/api/chats/${chatId}/tool-calls/resolve`, { resolutions });
     }
   }, [chatId, pendingTools, total, setSubmitted]);
 
@@ -138,9 +138,9 @@ export function ExternalToolDrawer({ wizard }: { wizard: ToolWizardState }) {
   const handleSkipAll = useCallback(async () => {
     if (!chatId || total === 0) return;
     setSubmitted(true);
-    api.post(`/api/chats/${chatId}/tool-executions/resolve`, {
+    api.post(`/api/chats/${chatId}/tool-calls/resolve`, {
       resolutions: pendingTools.map((te) => ({
-        tool_execution_id: te.id,
+        tool_call_id: te.id,
         response: "User declined to answer",
         action: "fail",
       })),

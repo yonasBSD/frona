@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::agent::prompt::PromptLoader;
 use crate::agent::task::models::TaskStatus;
-use crate::inference::tool_execution::MessageTool;
+use crate::inference::tool_call::MessageTool;
 use crate::storage::resolve_workspace_attachment;
 use crate::core::error::AppError;
 use frona_derive::agent_tool;

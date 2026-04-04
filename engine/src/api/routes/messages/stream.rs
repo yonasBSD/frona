@@ -39,8 +39,8 @@ async fn handle_inference_result(
                     .complete_agent_message(message_id, text, attachments, reasoning)
                     .await
                 {
-                    if let Ok(tes) = chat_service.get_tool_executions_by_message(message_id).await {
-                        msg.tool_executions = tes.into_iter().map(Into::into).collect();
+                    if let Ok(tes) = chat_service.get_tool_calls_by_message(message_id).await {
+                        msg.tool_calls = tes.into_iter().map(Into::into).collect();
                     }
                     presign_response(presign_svc, &mut msg, user_id, username).await;
                     event_sender.send_kind(BroadcastEventKind::InferenceDone { message: msg });
@@ -53,10 +53,10 @@ async fn handle_inference_result(
                 });
             }
             InferenceResponse::ExternalToolPending {
-                tool_executions, ..
+                tool_calls, ..
             } => {
-                for te in tool_executions {
-                    event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution: te });
+                for te in tool_calls {
+                    event_sender.send_kind(BroadcastEventKind::ToolCallCreated { tool_call: te });
                 }
             }
         },
@@ -91,7 +91,7 @@ pub(crate) async fn stream_message(
 
     // Check for pending tool execution instead of scanning messages
     let pending_tool = state.chat_service
-        .find_pending_tool_execution(&chat_id)
+        .find_pending_tool_call(&chat_id)
         .await
         .map_err(ApiError::from)?;
 
@@ -142,11 +142,11 @@ pub(crate) async fn stream_message(
         model_ref: ctx.model_group.main.clone(),
         user_id: auth.user_id.clone(),
     };
-    let tool_executions = state.chat_service
-        .get_tool_executions(&ctx.chat.id)
+    let tool_calls = state.chat_service
+        .get_tool_calls(&ctx.chat.id)
         .await
         .unwrap_or_default();
-    rig_history.extend(conv_builder.build(&context_messages, &tool_executions, &conv_ctx).await);
+    rig_history.extend(conv_builder.build(&context_messages, &tool_calls, &conv_ctx).await);
     ctx.rig_history = rig_history;
 
     let user_content = req.content;
@@ -171,7 +171,7 @@ pub(crate) async fn stream_message(
 
         let resolve_result = state
             .chat_service
-            .resolve_tool_execution(&pending_te.id, Some(user_content))
+            .resolve_tool_call(&pending_te.id, Some(user_content))
             .await
             .map_err(ApiError::from)?;
 
@@ -223,11 +223,11 @@ pub(crate) async fn stream_message(
         if !still_pending {
             tokio::spawn(async move {
                 let stored_messages = chat_service.get_stored_messages(&chat_id_clone).await;
-                let tool_executions = chat_service
-                    .get_tool_executions(&chat_id_clone)
+                let tool_calls = chat_service
+                    .get_tool_calls(&chat_id_clone)
                     .await
                     .unwrap_or_default();
-                let rig_history = pending_conv_builder.build(&stored_messages, &tool_executions, &pending_conv_ctx).await;
+                let rig_history = pending_conv_builder.build(&stored_messages, &tool_calls, &pending_conv_ctx).await;
 
                 let handle = spawn_inference(InferenceRequest {
                     registry, model_group, system_prompt,

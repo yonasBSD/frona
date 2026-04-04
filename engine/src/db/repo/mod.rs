@@ -13,6 +13,6 @@ pub mod oauth;
 pub mod spaces;
 pub mod tasks;
 pub mod tokens;
-pub mod tool_executions;
+pub mod tool_calls;
 pub mod users;
 pub mod vault;

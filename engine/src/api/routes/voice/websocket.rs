@@ -204,16 +204,16 @@ async fn handle_voice_turn(
 
         match outcome.response {
             InferenceResponse::ExternalToolPending {
-                ref tool_executions, ref turn_text, ..
-            } if tool_executions.iter().any(|te| te.name == "send_dtmf") => {
-                let tool_execution = tool_executions.iter().find(|te| te.name == "send_dtmf").unwrap();
-                tracing::debug!(chat_id = %chat_id, digits = %tool_execution.result, "Sending DTMF digits");
+                ref tool_calls, ref turn_text, ..
+            } if tool_calls.iter().any(|te| te.name == "send_dtmf") => {
+                let tool_call = tool_calls.iter().find(|te| te.name == "send_dtmf").unwrap();
+                tracing::debug!(chat_id = %chat_id, digits = %tool_call.result, "Sending DTMF digits");
 
                 // Tool executions already persisted by the tool loop.
                 // Send DTMF digits over WebSocket.
                 let dtmf_msg = serde_json::json!({
                     "type": "sendDigits",
-                    "digits": tool_execution.result
+                    "digits": tool_call.result
                 });
                 ws_send
                     .send(Message::Text(dtmf_msg.to_string().into()))
@@ -222,7 +222,7 @@ async fn handle_voice_turn(
 
                 // Resolve the external tool execution so the loop can continue
                 let _ = state.chat_service
-                    .resolve_tool_execution(&tool_execution.id, Some("DTMF sent".to_string()))
+                    .resolve_tool_call(&tool_call.id, Some("DTMF sent".to_string()))
                     .await;
 
                 // Complete the agent message for this turn
@@ -231,15 +231,15 @@ async fn handle_voice_turn(
                     .await;
             }
             InferenceResponse::ExternalToolPending {
-                ref tool_executions, ref turn_text, ..
-            } if tool_executions.iter().any(|te| te.name == "hangup_call") => {
-                let tool_execution = tool_executions.iter().find(|te| te.name == "hangup_call").unwrap();
+                ref tool_calls, ref turn_text, ..
+            } if tool_calls.iter().any(|te| te.name == "hangup_call") => {
+                let tool_call = tool_calls.iter().find(|te| te.name == "hangup_call").unwrap();
                 tracing::debug!(chat_id = %chat_id, "Hangup requested by agent");
 
                 // Tool executions already persisted by the tool loop.
                 // Resolve the external tool execution.
                 let _ = state.chat_service
-                    .resolve_tool_execution(&tool_execution.id, Some("Call ended".to_string()))
+                    .resolve_tool_call(&tool_call.id, Some("Call ended".to_string()))
                     .await;
 
                 // Complete the agent message

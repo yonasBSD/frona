@@ -13,8 +13,8 @@ pub const INFERENCE_INPUT_TOKENS_TOTAL: &str = "frona_inference_input_tokens_tot
 pub const INFERENCE_OUTPUT_TOKENS_TOTAL: &str = "frona_inference_output_tokens_total";
 pub const INFERENCE_CACHED_INPUT_TOKENS_TOTAL: &str = "frona_inference_cached_input_tokens_total";
 pub const INFERENCE_ACTIVE_REQUESTS: &str = "frona_inference_active_requests";
-pub const TOOL_EXECUTIONS_TOTAL: &str = "frona_tool_executions_total";
-pub const TOOL_EXECUTION_DURATION_SECONDS: &str = "frona_tool_execution_duration_seconds";
+pub const TOOL_CALLS_TOTAL: &str = "frona_tool_calls_total";
+pub const TOOL_CALL_DURATION_SECONDS: &str = "frona_tool_call_duration_seconds";
 
 static METRICS_HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
@@ -70,7 +70,7 @@ pub fn record_inference_request(
     }
 }
 
-pub fn record_tool_execution(
+pub fn record_tool_call(
     tool_name: &str,
     user_id: &str,
     agent_id: &str,
@@ -84,8 +84,8 @@ pub fn record_tool_execution(
         ("outcome", outcome.to_string()),
     ];
 
-    counter!(TOOL_EXECUTIONS_TOTAL, &labels).increment(1);
-    histogram!(TOOL_EXECUTION_DURATION_SECONDS, &labels).record(duration.as_secs_f64());
+    counter!(TOOL_CALLS_TOTAL, &labels).increment(1);
+    histogram!(TOOL_CALL_DURATION_SECONDS, &labels).record(duration.as_secs_f64());
 }
 
 pub fn set_active_inference_requests(count: usize) {

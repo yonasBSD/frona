@@ -32,8 +32,8 @@ use super::message::models::{Message, MessageRole, Reasoning};
 use super::message::repository::MessageRepository;
 use super::models::Chat;
 use super::repository::ChatRepository;
-use crate::db::repo::tool_executions::ToolExecutionRepository;
-use crate::inference::tool_execution::{MessageTool, ToolExecution, ToolExecutionResponse, ToolStatus};
+use crate::db::repo::tool_calls::ToolCallRepository;
+use crate::inference::tool_call::{MessageTool, ToolCall, ToolCallResponse, ToolStatus};
 pub enum ToolResolveResult {
     Changed(MessageResponse),
     AlreadyResolved(MessageResponse),
@@ -51,7 +51,7 @@ impl ToolResolveResult {
 pub struct ChatService {
     chat_repo: SurrealChatRepo,
     message_repo: SurrealMessageRepo,
-    tool_execution_repo: crate::db::repo::tool_executions::SurrealToolExecutionRepo,
+    tool_call_repo: crate::db::repo::tool_calls::SurrealToolCallRepo,
     agent_service: AgentService,
     provider_registry: ModelProviderRegistry,
     storage_service: StorageService,
@@ -65,7 +65,7 @@ impl ChatService {
     pub fn new(
         chat_repo: SurrealChatRepo,
         message_repo: SurrealMessageRepo,
-        tool_execution_repo: crate::db::repo::tool_executions::SurrealToolExecutionRepo,
+        tool_call_repo: crate::db::repo::tool_calls::SurrealToolCallRepo,
         agent_service: AgentService,
         provider_registry: ModelProviderRegistry,
         storage_service: StorageService,
@@ -76,7 +76,7 @@ impl ChatService {
         Self {
             chat_repo,
             message_repo,
-            tool_execution_repo,
+            tool_call_repo,
             agent_service,
             provider_registry,
             storage_service,
@@ -238,8 +238,8 @@ impl ChatService {
             model_ref: model_group.main.clone(),
             user_id: user_id.to_string(),
         };
-        let tool_executions = self.get_tool_executions(chat_id).await.unwrap_or_default();
-        let mut rig_history = conv_builder.build(&stored_messages, &tool_executions, &conv_ctx).await;
+        let tool_calls = self.get_tool_calls(chat_id).await.unwrap_or_default();
+        let mut rig_history = conv_builder.build(&stored_messages, &tool_calls, &conv_ctx).await;
 
         rig_history.push(RigMessage::user(&req.content));
         let response_text = text_inference(
@@ -271,11 +271,11 @@ impl ChatService {
         self.get_chat(user_id, chat_id).await?;
 
         let messages = self.message_repo.find_by_chat_id(chat_id).await?;
-        let tool_executions = self.get_tool_executions(chat_id).await.unwrap_or_default();
+        let tool_calls = self.get_tool_calls(chat_id).await.unwrap_or_default();
 
-        let mut te_map: std::collections::HashMap<String, Vec<ToolExecutionResponse>> =
+        let mut te_map: std::collections::HashMap<String, Vec<ToolCallResponse>> =
             std::collections::HashMap::new();
-        for te in tool_executions {
+        for te in tool_calls {
             te_map
                 .entry(te.message_id.clone())
                 .or_default()
@@ -288,7 +288,7 @@ impl ChatService {
                 let id = msg.id.clone();
                 let mut resp: MessageResponse = msg.into();
                 if let Some(tes) = te_map.remove(&id) {
-                    resp.tool_executions = tes;
+                    resp.tool_calls = tes;
                 }
                 resp
             })
@@ -317,15 +317,15 @@ impl ChatService {
         }
 
         let message_ids: Vec<String> = messages.iter().map(|m| m.id.clone()).collect();
-        let tool_executions = self
-            .tool_execution_repo
+        let tool_calls = self
+            .tool_call_repo
             .find_by_message_ids(&message_ids)
             .await
             .unwrap_or_default();
 
-        let mut te_map: std::collections::HashMap<String, Vec<ToolExecutionResponse>> =
+        let mut te_map: std::collections::HashMap<String, Vec<ToolCallResponse>> =
             std::collections::HashMap::new();
-        for te in tool_executions {
+        for te in tool_calls {
             te_map
                 .entry(te.message_id.clone())
                 .or_default()
@@ -338,7 +338,7 @@ impl ChatService {
                 let id = msg.id.clone();
                 let mut resp: MessageResponse = msg.into();
                 if let Some(tes) = te_map.remove(&id) {
-                    resp.tool_executions = tes;
+                    resp.tool_calls = tes;
                 }
                 resp
             })
@@ -447,7 +447,7 @@ impl ChatService {
         self.save_message(msg).await
     }
 
-    // ── Tool execution persistence ─────────────────────────────────────
+    // ── Tool call persistence ────────────────────────────────────────
 
     pub async fn create_executing_agent_message(
         &self,
@@ -496,7 +496,7 @@ impl ChatService {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn begin_tool_execution(
+    pub async fn begin_tool_call(
         &self,
         id: &str,
         chat_id: &str,
@@ -507,13 +507,13 @@ impl ChatService {
         arguments: &serde_json::Value,
         description: Option<String>,
         turn_text: Option<String>,
-    ) -> Result<ToolExecution, AppError> {
-        let te = ToolExecution {
+    ) -> Result<ToolCall, AppError> {
+        let te = ToolCall {
             id: id.to_string(),
             chat_id: chat_id.to_string(),
             message_id: message_id.to_string(),
             turn,
-            tool_call_id: tool_call_id.to_string(),
+            provider_call_id: tool_call_id.to_string(),
             name: tool_name.to_string(),
             arguments: arguments.clone(),
             result: String::new(),
@@ -525,13 +525,13 @@ impl ChatService {
             turn_text,
             created_at: chrono::Utc::now(),
         };
-        self.tool_execution_repo.create(&te).await?;
+        self.tool_call_repo.create(&te).await?;
         Ok(te)
     }
 
-    pub async fn finish_tool_execution(
+    pub async fn finish_tool_call(
         &self,
-        tool_execution_id: &str,
+        tool_call_id: &str,
         result: String,
         success: bool,
         duration_ms: u64,
@@ -539,32 +539,32 @@ impl ChatService {
         system_prompt: Option<String>,
     ) -> Result<(), AppError> {
         let mut te = self
-            .tool_execution_repo
-            .find_by_id(tool_execution_id)
+            .tool_call_repo
+            .find_by_id(tool_call_id)
             .await?
-            .ok_or_else(|| AppError::NotFound("Tool execution not found".into()))?;
+            .ok_or_else(|| AppError::NotFound("Tool call not found".into()))?;
         te.result = result;
         te.success = success;
         te.duration_ms = duration_ms;
         te.tool_data = tool_data;
         te.system_prompt = system_prompt;
-        self.tool_execution_repo.update(&te).await?;
+        self.tool_call_repo.update(&te).await?;
         Ok(())
     }
 
-    pub async fn resolve_tool_execution(
+    pub async fn resolve_tool_call(
         &self,
-        tool_execution_id: &str,
+        tool_call_id: &str,
         response: Option<String>,
     ) -> Result<ToolResolveResult, AppError> {
         let mut te = self
-            .tool_execution_repo
-            .find_by_id(tool_execution_id)
+            .tool_call_repo
+            .find_by_id(tool_call_id)
             .await?
-            .ok_or_else(|| AppError::NotFound("Tool execution not found".into()))?;
+            .ok_or_else(|| AppError::NotFound("Tool call not found".into()))?;
 
         let tool = te.tool_data.as_ref()
-            .ok_or_else(|| AppError::Validation("Tool execution has no resolvable tool".into()))?;
+            .ok_or_else(|| AppError::Validation("Tool call has no resolvable tool".into()))?;
 
         if let Some(current_status) = tool.tool_status() {
             match current_status {
@@ -582,19 +582,19 @@ impl ChatService {
                     }
                     return Err(AppError::Http {
                         status: 409,
-                        message: "Tool execution is already resolved with a different response".into(),
+                        message: "Tool call is already resolved with a different response".into(),
                     });
                 }
                 ToolStatus::Denied => {
                     return Err(AppError::Http {
                         status: 409,
-                        message: "Tool execution has already been denied".into(),
+                        message: "Tool call has already been denied".into(),
                     });
                 }
                 ToolStatus::Pending => {}
             }
         } else {
-            return Err(AppError::Validation("Tool execution has no resolvable tool".into()));
+            return Err(AppError::Validation("Tool call has no resolvable tool".into()));
         }
 
         let response_text = response
@@ -612,26 +612,26 @@ impl ChatService {
         }
 
         te.result = response_text;
-        self.tool_execution_repo.update(&te).await?;
+        self.tool_call_repo.update(&te).await?;
 
         let message = self.message_repo.find_by_id(&te.message_id).await?
             .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
         Ok(ToolResolveResult::Changed(message.into()))
     }
 
-    pub async fn deny_tool_execution(
+    pub async fn deny_tool_call(
         &self,
-        tool_execution_id: &str,
+        tool_call_id: &str,
         response: Option<String>,
     ) -> Result<ToolResolveResult, AppError> {
         let mut te = self
-            .tool_execution_repo
-            .find_by_id(tool_execution_id)
+            .tool_call_repo
+            .find_by_id(tool_call_id)
             .await?
-            .ok_or_else(|| AppError::NotFound("Tool execution not found".into()))?;
+            .ok_or_else(|| AppError::NotFound("Tool call not found".into()))?;
 
         let tool = te.tool_data.as_ref()
-            .ok_or_else(|| AppError::Validation("Tool execution has no deniable tool".into()))?;
+            .ok_or_else(|| AppError::Validation("Tool call has no deniable tool".into()))?;
 
         if let Some(current_status) = tool.tool_status() {
             match current_status {
@@ -643,13 +643,13 @@ impl ChatService {
                 ToolStatus::Resolved => {
                     return Err(AppError::Http {
                         status: 409,
-                        message: "Tool execution has already been resolved".into(),
+                        message: "Tool call has already been resolved".into(),
                     });
                 }
                 ToolStatus::Pending => {}
             }
         } else {
-            return Err(AppError::Validation("Tool execution has no deniable tool".into()));
+            return Err(AppError::Validation("Tool call has no deniable tool".into()));
         }
 
         let response_text = response
@@ -667,46 +667,46 @@ impl ChatService {
         }
 
         te.result = response_text;
-        self.tool_execution_repo.update(&te).await?;
+        self.tool_call_repo.update(&te).await?;
 
         let message = self.message_repo.find_by_id(&te.message_id).await?
             .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
         Ok(ToolResolveResult::Changed(message.into()))
     }
 
-    pub async fn find_pending_tool_execution(
+    pub async fn find_pending_tool_call(
         &self,
         chat_id: &str,
-    ) -> Result<Option<ToolExecution>, AppError> {
-        self.tool_execution_repo.find_pending_by_chat_id(chat_id).await
+    ) -> Result<Option<ToolCall>, AppError> {
+        self.tool_call_repo.find_pending_by_chat_id(chat_id).await
     }
 
-    pub async fn get_tool_execution(
+    pub async fn get_tool_call(
         &self,
         id: &str,
-    ) -> Result<Option<ToolExecution>, AppError> {
-        self.tool_execution_repo.find_by_id(id).await
+    ) -> Result<Option<ToolCall>, AppError> {
+        self.tool_call_repo.find_by_id(id).await
     }
 
-    pub async fn get_tool_executions(
+    pub async fn get_tool_calls(
         &self,
         chat_id: &str,
-    ) -> Result<Vec<ToolExecution>, AppError> {
-        self.tool_execution_repo.find_by_chat_id(chat_id).await
+    ) -> Result<Vec<ToolCall>, AppError> {
+        self.tool_call_repo.find_by_chat_id(chat_id).await
     }
 
-    pub async fn get_tool_executions_by_message(
+    pub async fn get_tool_calls_by_message(
         &self,
         message_id: &str,
-    ) -> Result<Vec<ToolExecution>, AppError> {
-        self.tool_execution_repo.find_by_message_id(message_id).await
+    ) -> Result<Vec<ToolCall>, AppError> {
+        self.tool_call_repo.find_by_message_id(message_id).await
     }
 
     pub async fn has_pending_tools_for_message(
         &self,
         message_id: &str,
     ) -> Result<bool, AppError> {
-        let tes = self.get_tool_executions_by_message(message_id).await?;
+        let tes = self.get_tool_calls_by_message(message_id).await?;
         Ok(tes.iter().any(|te| {
             te.tool_data
                 .as_ref()

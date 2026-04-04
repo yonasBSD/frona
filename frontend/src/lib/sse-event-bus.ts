@@ -1,15 +1,15 @@
 import { ensureAccessToken, API_URL } from "./api-client";
-import type { MessageResponse, Notification, ToolExecution } from "./types";
+import type { MessageResponse, Notification, ToolCall } from "./types";
 
 // --- Chat-scoped events ---
 
 export type ChatSSEEvent =
   | { type: "token"; content: string }
   | { type: "reasoning"; content: string }
-  | { type: "tool_execution"; id: string; tool_call_id: string; name: string; arguments: unknown; description?: string }
+  | { type: "tool_call"; id: string; provider_call_id: string; name: string; arguments: unknown; description?: string }
   | { type: "tool_result"; name: string; success: boolean; summary?: string }
-  | { type: "tool_message"; tool_execution?: ToolExecution }
-  | { type: "tool_resolved"; message?: MessageResponse; tool_execution?: ToolExecution }
+  | { type: "tool_message"; tool_call?: ToolCall }
+  | { type: "tool_resolved"; message?: MessageResponse; tool_call?: ToolCall }
   | { type: "chat_message"; message: MessageResponse }
   | { type: "retry"; retryAfterSecs: number; reason: string }
   | { type: "inference_done"; message: MessageResponse }
@@ -263,11 +263,11 @@ export class SSEEventBus {
       case "reasoning":
         this.dispatchChat(chatId, { type: "reasoning", content: parsed.content as string });
         break;
-      case "tool_execution":
+      case "tool_call":
         this.dispatchChat(chatId, {
-          type: "tool_execution",
+          type: "tool_call",
           id: parsed.id as string,
-          tool_call_id: parsed.tool_call_id as string,
+          provider_call_id: parsed.provider_call_id as string,
           name: parsed.name as string,
           arguments: parsed.arguments,
           description: parsed.description as string | undefined,
@@ -284,14 +284,14 @@ export class SSEEventBus {
       case "tool_message":
         this.dispatchChat(chatId, {
           type: "tool_message",
-          tool_execution: parsed.tool_execution as ToolExecution | undefined,
+          tool_call: parsed.tool_call as ToolCall | undefined,
         });
         break;
       case "tool_resolved":
         this.dispatchChat(chatId, {
           type: "tool_resolved",
           message: parsed.message as MessageResponse | undefined,
-          tool_execution: parsed.tool_execution as ToolExecution | undefined,
+          tool_call: parsed.tool_call as ToolCall | undefined,
         });
         break;
       case "chat_message":

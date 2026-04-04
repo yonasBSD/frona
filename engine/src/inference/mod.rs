@@ -6,7 +6,7 @@ pub mod provider;
 pub mod registry;
 pub mod request;
 pub mod retry;
-pub mod tool_execution;
+pub mod tool_call;
 pub mod tool_loop;
 
 pub use error::InferenceError;
@@ -106,11 +106,11 @@ pub async fn inference(request: InferenceRequest) -> Result<InferenceResponse, A
             tool_loop::ToolLoopOutcome::Cancelled(text) => InferenceResponse::Cancelled(text),
             tool_loop::ToolLoopOutcome::ExternalToolPending {
                 turn_text,
-                tool_executions,
+                tool_calls,
                 system_prompt,
             } => InferenceResponse::ExternalToolPending {
                 turn_text,
-                tool_executions,
+                tool_calls,
                 system_prompt,
             },
         })

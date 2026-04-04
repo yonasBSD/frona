@@ -185,7 +185,7 @@ pub enum ToolResolutionAction {
 
 #[derive(Debug, Deserialize)]
 pub struct ToolResolution {
-    pub tool_execution_id: String,
+    pub tool_call_id: String,
     pub response: Option<String>,
     #[serde(default)]
     pub action: ToolResolutionAction,
@@ -215,7 +215,7 @@ pub struct MessageResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_executions: Vec<crate::inference::tool_execution::ToolExecutionResponse>,
+    pub tool_calls: Vec<crate::inference::tool_call::ToolCallResponse>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -232,7 +232,7 @@ impl From<Message> for MessageResponse {
             contact_id: msg.contact_id,
             status: msg.status,
             reasoning: msg.reasoning.map(|r| r.content),
-            tool_executions: vec![],
+            tool_calls: vec![],
             created_at: msg.created_at,
         }
     }

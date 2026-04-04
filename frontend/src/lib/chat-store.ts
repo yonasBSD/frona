@@ -1,11 +1,11 @@
 import type { ChatSSEEvent } from "./sse-event-bus";
-import type { MessageResponse, Attachment, ToolExecution } from "./types";
+import type { MessageResponse, Attachment, ToolCall } from "./types";
 import { api } from "./api-client";
 
 interface ToolCallPart {
   type: "tool-call";
   id: string;
-  toolCallId: string;
+  providerCallId: string;
   toolName: string;
   args: Record<string, unknown>;
   argsText: string;
@@ -24,7 +24,7 @@ export interface StoreSnapshot {
   isRunning: boolean;
   loaded: boolean;
   retryInfo: RetryInfo | null;
-  pendingTools: ToolExecution[];
+  pendingTools: ToolCall[];
 }
 
 /**
@@ -39,8 +39,8 @@ export class ChatStore {
   streamingReasoning = "";
   streamingToolCalls = new Map<string, ToolCallPart>();
   streamingToolResults = new Map<string, { result: string; isError: boolean }>();
-  /** External tools waiting for user resolution (keyed by tool_call_id). */
-  pendingExternalTools = new Map<string, ToolExecution>();
+  /** External tools waiting for user resolution (keyed by tool call id). */
+  pendingExternalTools = new Map<string, ToolCall>();
   isRunning = false;
   retryInfo: RetryInfo | null = null;
   loaded = false;
@@ -84,7 +84,7 @@ export class ChatStore {
     this.notify();
   }
 
-  getPendingExternalTools(): ToolExecution[] {
+  getPendingExternalTools(): ToolCall[] {
     return [...this.pendingExternalTools.values()].filter(
       (te) => te.tool_data?.data.status === "pending",
     );
@@ -125,11 +125,11 @@ export class ChatStore {
     this.notify();
   }
 
-  /** Scan loaded messages for pending external tool executions and populate the map. */
+  /** Scan loaded messages for pending external tool calls and populate the map. */
   private hydrateExternalTools() {
     for (const msg of this.messages) {
-      if (!msg.tool_executions) continue;
-      for (const te of msg.tool_executions) {
+      if (!msg.tool_calls) continue;
+      for (const te of msg.tool_calls) {
         if (te.tool_data && te.tool_data.data.status === "pending") {
           this.pendingExternalTools.set(te.id, te);
         }
@@ -149,7 +149,7 @@ export class ChatStore {
         this.streamingReasoning += event.content;
         break;
 
-      case "tool_execution": {
+      case "tool_call": {
         this.isRunning = true;
         const args = tryParseJson(event.arguments);
         if (event.description) args.description = event.description;
@@ -164,7 +164,7 @@ export class ChatStore {
         this.streamingToolCalls.set(event.id, {
           type: "tool-call",
           id: event.id,
-          toolCallId: event.tool_call_id,
+          providerCallId: event.provider_call_id,
           toolName: event.name,
           args,
           argsText: typeof event.arguments === "string"
@@ -189,27 +189,27 @@ export class ChatStore {
       }
 
       case "tool_message": {
-        if (event.tool_execution) {
-          this.pendingExternalTools.set(event.tool_execution.id, event.tool_execution);
+        if (event.tool_call) {
+          this.pendingExternalTools.set(event.tool_call.id, event.tool_call);
         }
         break;
       }
 
       case "tool_resolved": {
-        if (event.tool_execution && this.pendingExternalTools.has(event.tool_execution.id)) {
-          this.pendingExternalTools.set(event.tool_execution.id, event.tool_execution);
+        if (event.tool_call && this.pendingExternalTools.has(event.tool_call.id)) {
+          this.pendingExternalTools.set(event.tool_call.id, event.tool_call);
         } else if (event.message) {
           const msg = event.message;
           const idx = this.messages.findIndex((m) => m.id === msg.id);
           if (idx >= 0) {
-            // Preserve tool_executions — backend MessageResponse always has them empty
-            if ((!msg.tool_executions || msg.tool_executions.length === 0) && this.messages[idx].tool_executions?.length) {
-              msg.tool_executions = this.messages[idx].tool_executions;
+            // Preserve tool_calls — backend MessageResponse always has them empty
+            if ((!msg.tool_calls || msg.tool_calls.length === 0) && this.messages[idx].tool_calls?.length) {
+              msg.tool_calls = this.messages[idx].tool_calls;
             }
             this.messages[idx] = msg;
           }
-        } else if (event.tool_execution) {
-          this.updateToolExecution(event.tool_execution);
+        } else if (event.tool_call) {
+          this.updateToolCall(event.tool_call);
         }
         break;
       }
@@ -217,12 +217,12 @@ export class ChatStore {
       case "inference_done": {
         const msg = event.message;
 
-        // If backend sent tool_executions, use them as-is (source of truth).
+        // If backend sent tool_calls, use them as-is (source of truth).
         // Otherwise fall back to streaming state (interactive chats where complete_agent_message doesn't populate them).
-        if (!msg.tool_executions?.length) {
-          const streamingTools = this.buildToolExecutions();
+        if (!msg.tool_calls?.length) {
+          const streamingTools = this.buildToolCalls();
           if (streamingTools.length > 0) {
-            msg.tool_executions = streamingTools;
+            msg.tool_calls = streamingTools;
           }
         }
 
@@ -290,7 +290,7 @@ export class ChatStore {
       ? this.streamingText.slice(this.lastTextSnapshot)
       : this.streamingText;
 
-    const streamingTools = this.buildToolExecutions();
+    const streamingTools = this.buildToolCalls();
 
     // If the last message is already executing (e.g. page refreshed mid-inference),
     // merge new streaming state into it instead of appending a separate message.
@@ -304,7 +304,7 @@ export class ChatStore {
         updated.reasoning = [last.reasoning, this.streamingReasoning].filter(Boolean).join("");
       }
       if (streamingTools.length > 0) {
-        updated.tool_executions = [...(last.tool_executions ?? []), ...streamingTools];
+        updated.tool_calls = [...(last.tool_calls ?? []), ...streamingTools];
       }
       return [...merged.slice(0, -1), updated];
     }
@@ -315,7 +315,7 @@ export class ChatStore {
       role: "agent",
       content: displayText,
       reasoning: this.streamingReasoning || undefined,
-      tool_executions: streamingTools.length > 0 ? streamingTools : undefined,
+      tool_calls: streamingTools.length > 0 ? streamingTools : undefined,
       status: "executing",
       created_at: new Date().toISOString(),
     };
@@ -323,8 +323,8 @@ export class ChatStore {
     return [...merged, syntheticMessage];
   }
 
-  private buildToolExecutions(): ToolExecution[] {
-    const result: ToolExecution[] = [];
+  private buildToolCalls(): ToolCall[] {
+    const result: ToolCall[] = [];
     for (const tc of this.streamingToolCalls.values()) {
       const pending = this.pendingExternalTools.get(tc.id);
       if (pending) {
@@ -336,7 +336,7 @@ export class ChatStore {
           chat_id: "",
           message_id: "",
           turn: 0,
-          tool_call_id: tc.toolCallId,
+          provider_call_id: tc.providerCallId,
           name: tc.toolName,
           arguments: tc.args as Record<string, unknown>,
           result: res?.result ?? "",
@@ -367,23 +367,23 @@ export class ChatStore {
     // Fall through to message-based resolution
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const msg = this.messages[i];
-      if (!msg.tool_executions) continue;
-      const teIdx = msg.tool_executions.findIndex(
-        (t) => t.id === toolCallId || t.tool_call_id === toolCallId,
+      if (!msg.tool_calls) continue;
+      const teIdx = msg.tool_calls.findIndex(
+        (t) => t.id === toolCallId || t.provider_call_id === toolCallId,
       );
       if (teIdx < 0) continue;
-      const te = msg.tool_executions[teIdx];
+      const te = msg.tool_calls[teIdx];
       const updatedTe = te.tool_data
         ? { ...te, result, tool_data: { ...te.tool_data, data: { ...te.tool_data.data, status: "resolved", response: result } } as typeof te.tool_data }
         : { ...te, result };
-      const updatedExecutions = [...msg.tool_executions];
-      updatedExecutions[teIdx] = updatedTe;
-      const allResolved = updatedExecutions.every(
+      const updatedCalls = [...msg.tool_calls];
+      updatedCalls[teIdx] = updatedTe;
+      const allResolved = updatedCalls.every(
         (t) => !t.tool_data || t.tool_data.data.status !== "pending",
       );
       this.messages[i] = {
         ...msg,
-        tool_executions: updatedExecutions,
+        tool_calls: updatedCalls,
         status: allResolved && msg.status === "executing" ? "completed" : msg.status,
       };
       this.notify();
@@ -391,20 +391,20 @@ export class ChatStore {
     }
   }
 
-  private updateToolExecution(te: ToolExecution) {
+  private updateToolCall(te: ToolCall) {
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const msg = this.messages[i];
-      if (!msg.tool_executions) continue;
-      const teIdx = msg.tool_executions.findIndex((t) => t.id === te.id);
+      if (!msg.tool_calls) continue;
+      const teIdx = msg.tool_calls.findIndex((t) => t.id === te.id);
       if (teIdx >= 0) {
-        const updatedExecutions = [...msg.tool_executions];
-        updatedExecutions[teIdx] = te;
-        const allResolved = updatedExecutions.every(
+        const updatedCalls = [...msg.tool_calls];
+        updatedCalls[teIdx] = te;
+        const allResolved = updatedCalls.every(
           (t) => !t.tool_data || t.tool_data.data.status !== "pending",
         );
         this.messages[i] = {
           ...msg,
-          tool_executions: updatedExecutions,
+          tool_calls: updatedCalls,
           status: allResolved && msg.status === "executing" ? "completed" : msg.status,
         };
         break;

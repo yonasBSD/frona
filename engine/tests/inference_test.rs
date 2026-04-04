@@ -117,9 +117,9 @@ async fn test_tool_loop_single_tool_call() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let frames = drain_sse_frames(&mut sse_rx).await;
-    let saw_tool_execution = frames.iter().any(|f| f.event == "tool_execution" && f.data["name"] == "search");
+    let saw_tool_call = frames.iter().any(|f| f.event == "tool_call" && f.data["name"] == "search");
     let saw_tool_result = frames.iter().any(|f| f.event == "tool_result" && f.data["name"] == "search" && f.data["success"] == true);
-    assert!(saw_tool_execution, "Should emit tool_execution event");
+    assert!(saw_tool_call, "Should emit tool_call event");
     assert!(saw_tool_result, "Should emit tool_result event");
 }
 
@@ -215,9 +215,9 @@ async fn test_tool_loop_external_tool_returns_pending() {
     .unwrap();
 
     match outcome {
-        ToolLoopOutcome::ExternalToolPending { tool_executions, .. } => {
-            assert_eq!(tool_executions.len(), 1);
-            assert_eq!(tool_executions[0].name, "ext_tool");
+        ToolLoopOutcome::ExternalToolPending { tool_calls, .. } => {
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0].name, "ext_tool");
         }
         other => panic!("Expected ExternalToolPending, got {other:?}"),
     }
@@ -263,11 +263,11 @@ async fn test_tool_loop_mixed_internal_external() {
 
     match outcome {
         ToolLoopOutcome::ExternalToolPending {
-            tool_executions,
+            tool_calls,
             ..
         } => {
-            assert_eq!(tool_executions.len(), 1);
-            assert_eq!(tool_executions[0].name, "external");
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0].name, "external");
         }
         other => panic!("Expected ExternalToolPending, got {other:?}"),
     }
@@ -311,11 +311,11 @@ async fn test_tool_loop_multiple_external_tools_in_same_turn() {
     .unwrap();
 
     match outcome {
-        ToolLoopOutcome::ExternalToolPending { tool_executions, .. } => {
-            assert_eq!(tool_executions.len(), 3);
-            assert_eq!(tool_executions[0].name, "ext1");
-            assert_eq!(tool_executions[1].name, "ext2");
-            assert_eq!(tool_executions[2].name, "ext3");
+        ToolLoopOutcome::ExternalToolPending { tool_calls, .. } => {
+            assert_eq!(tool_calls.len(), 3);
+            assert_eq!(tool_calls[0].name, "ext1");
+            assert_eq!(tool_calls[1].name, "ext2");
+            assert_eq!(tool_calls[2].name, "ext3");
         }
         other => panic!("Expected ExternalToolPending with 3 tools, got {other:?}"),
     }
@@ -362,10 +362,10 @@ async fn test_tool_loop_mixed_internal_and_multiple_external() {
     .unwrap();
 
     match outcome {
-        ToolLoopOutcome::ExternalToolPending { tool_executions, .. } => {
-            assert_eq!(tool_executions.len(), 2);
-            assert_eq!(tool_executions[0].name, "ext1");
-            assert_eq!(tool_executions[1].name, "ext2");
+        ToolLoopOutcome::ExternalToolPending { tool_calls, .. } => {
+            assert_eq!(tool_calls.len(), 2);
+            assert_eq!(tool_calls[0].name, "ext1");
+            assert_eq!(tool_calls[1].name, "ext2");
         }
         other => panic!("Expected ExternalToolPending with 2 external tools, got {other:?}"),
     }
@@ -506,7 +506,7 @@ async fn test_tool_loop_rate_limit_exhausted() {
 }
 
 #[tokio::test]
-async fn test_tool_loop_tool_execution_failure() {
+async fn test_tool_loop_tool_call_failure() {
     init_metrics();
 
     let provider = Arc::new(MockModelProvider::new(vec![

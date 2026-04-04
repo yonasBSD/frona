@@ -101,7 +101,7 @@ async fn approve_service(
 
     let pending_te = state
         .chat_service
-        .find_pending_tool_execution(&req.chat_id)
+        .find_pending_tool_call(&req.chat_id)
         .await
         .map_err(ApiError::from)?;
 
@@ -112,7 +112,7 @@ async fn approve_service(
     })?;
 
     let manifest_value = match &pending_te.tool_data {
-        Some(crate::inference::tool_execution::MessageTool::ServiceApproval {
+        Some(crate::inference::tool_call::MessageTool::ServiceApproval {
             manifest,
             ..
         }) => manifest.clone(),
@@ -168,7 +168,7 @@ async fn approve_service(
 
         if let Ok(result) = state_clone
             .chat_service
-            .resolve_tool_execution(&te_id, Some(result_text))
+            .resolve_tool_call(&te_id, Some(result_text))
             .await
         {
             state_clone.broadcast_service.send(crate::chat::broadcast::BroadcastEvent {
@@ -220,7 +220,7 @@ async fn deny_service(
 
     let pending_te = state
         .chat_service
-        .find_pending_tool_execution(&req.chat_id)
+        .find_pending_tool_call(&req.chat_id)
         .await
         .map_err(ApiError::from)?;
 
@@ -228,7 +228,7 @@ async fn deny_service(
         let message_id = te.message_id.clone();
         let denied = state
             .chat_service
-            .deny_tool_execution(
+            .deny_tool_call(
                 &te.id,
                 Some("User denied the service deployment.".to_string()),
             )

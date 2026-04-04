@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::chat::broadcast::EventSender;
 use crate::chat::message::models::Reasoning;
 
-use super::tool_execution::MessageTool;
+use super::tool_call::MessageTool;
 use crate::core::error::AppError;
 use crate::core::metrics::{self, InferenceMetricsContext};
 use crate::tool::registry::AgentToolRegistry;
@@ -32,7 +32,7 @@ pub enum InferenceEventKind {
     Reasoning(String),
     ToolCall {
         id: String,
-        tool_call_id: String,
+        provider_call_id: String,
         name: String,
         arguments: serde_json::Value,
         description: Option<String>,
@@ -55,7 +55,7 @@ pub enum InferenceEventKind {
 
 #[derive(Debug, Clone)]
 pub struct ToolCallResult {
-    pub tool_call_id: String,
+    pub provider_call_id: String,
     pub tool_name: String,
     pub arguments: serde_json::Value,
     pub result: String,
@@ -77,7 +77,7 @@ pub enum ToolLoopOutcome {
     Cancelled(String),
     ExternalToolPending {
         turn_text: String,
-        tool_executions: Vec<crate::inference::tool_execution::ToolExecutionResponse>,
+        tool_calls: Vec<crate::inference::tool_call::ToolCallResponse>,
         system_prompt: Option<String>,
     },
 }
@@ -178,8 +178,8 @@ fn build_tool_result_message(
     }
 }
 
-struct ToolExecutionResult {
-    external_tools: Vec<(crate::inference::tool_execution::ToolExecutionResponse, ToolCallResult)>,
+struct ToolCallExecutionResult {
+    external_tools: Vec<(crate::inference::tool_call::ToolCallResponse, ToolCallResult)>,
     internal_tool_results: Vec<ToolCallResult>,
     accumulated_system_prompts: Vec<String>,
 }
@@ -197,8 +197,8 @@ async fn execute_tool_calls(
     message_id: &str,
     turn: u32,
     turn_text: Option<&str>,
-) -> Result<ToolExecutionResult, AppError> {
-    let mut result = ToolExecutionResult {
+) -> Result<ToolCallExecutionResult, AppError> {
+    let mut result = ToolCallExecutionResult {
         external_tools: Vec::new(),
         internal_tool_results: Vec::new(),
         accumulated_system_prompts: Vec::new(),
@@ -223,7 +223,7 @@ async fn execute_tool_calls(
         event_tx.send(InferenceEvent {
             kind: InferenceEventKind::ToolCall {
                 id: te_id.clone(),
-                tool_call_id: tool_call.id.clone(),
+                provider_call_id: tool_call.id.clone(),
                 name: tool_name.clone(),
                 arguments: arguments.clone(),
                 description: description.clone(),
@@ -240,7 +240,7 @@ async fn execute_tool_calls(
             None
         };
         let mut te_record = chat_service
-            .begin_tool_execution(
+            .begin_tool_call(
                 &te_id,
                 &ctx.chat.id,
                 message_id,
@@ -259,7 +259,7 @@ async fn execute_tool_calls(
                 let text = output.text_content().to_string();
                 tracing::debug!(tool = %tool_name, result = %text, "Tool executed");
                 let duration = start.elapsed();
-                metrics::record_tool_execution(
+                metrics::record_tool_call(
                     tool_name,
                     &metrics_ctx.user_id,
                     &metrics_ctx.agent_id,
@@ -271,7 +271,7 @@ async fn execute_tool_calls(
             Err(e) => {
                 tracing::warn!(tool = %tool_name, error = %e, "Tool execution failed");
                 let duration = start.elapsed();
-                metrics::record_tool_execution(
+                metrics::record_tool_call(
                     tool_name,
                     &metrics_ctx.user_id,
                     &metrics_ctx.agent_id,
@@ -296,7 +296,7 @@ async fn execute_tool_calls(
 
         // Persist result AFTER execution
         chat_service
-            .finish_tool_execution(
+            .finish_tool_call(
                 &te_record.id,
                 text.clone(),
                 success,
@@ -313,10 +313,10 @@ async fn execute_tool_calls(
         te_record.tool_data = td.clone();
         te_record.system_prompt = sp.clone();
 
-        let te_response: crate::inference::tool_execution::ToolExecutionResponse = te_record.into();
+        let te_response: crate::inference::tool_call::ToolCallResponse = te_record.into();
 
         let tool_call_result = ToolCallResult {
-            tool_call_id: tool_call.id.clone(),
+            provider_call_id: tool_call.id.clone(),
             tool_name: tool_name.clone(),
             arguments: te_response.arguments.clone(),
             result: text.clone(),
@@ -476,7 +476,7 @@ pub async fn run_tool_loop(
         if !exec_result.external_tools.is_empty() {
             let system_prompt_injection = exec_result.external_tools.last()
                 .and_then(|(_, tcr)| tcr.system_prompt.clone());
-            let tool_executions = exec_result.external_tools.into_iter()
+            let tool_calls = exec_result.external_tools.into_iter()
                 .map(|(te, _)| te)
                 .collect();
 
@@ -485,7 +485,7 @@ pub async fn run_tool_loop(
                 });
             return Ok(ToolLoopOutcome::ExternalToolPending {
                 turn_text,
-                tool_executions,
+                tool_calls,
                 system_prompt: system_prompt_injection,
             });
         }

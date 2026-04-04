@@ -156,12 +156,12 @@ export type MessageEvent =
 
 export type MessageStatus = "executing" | "completed" | "failed";
 
-export interface ToolExecution {
+export interface ToolCall {
   id: string;
   chat_id: string;
   message_id: string;
   turn: number;
-  tool_call_id: string;
+  provider_call_id: string;
   name: string;
   arguments: Record<string, unknown>;
   result: string;
@@ -185,7 +185,7 @@ export interface MessageResponse {
   contact_id?: string;
   status?: MessageStatus;
   reasoning?: string;
-  tool_executions?: ToolExecution[];
+  tool_calls?: ToolCall[];
   created_at: string;
   /** Set by mergeConsecutiveMessages — this message continues the previous agent message. */
   _continuation?: boolean;
@@ -270,15 +270,6 @@ export function agentDisplayName(
   if (!agentId) return "Assistant";
   const name = DEFAULT_AGENT_NAMES[agentId] ?? agentId.replace(/-/g, " ");
   return titleCase(name);
-}
-
-// Tool call types
-export interface ToolCallStatus {
-  id: number;
-  name: string;
-  description: string | null;
-  summary: string | null;
-  status: "running" | "success" | "error" | "fading";
 }
 
 // Credential types

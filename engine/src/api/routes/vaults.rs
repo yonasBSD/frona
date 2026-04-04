@@ -157,14 +157,14 @@ async fn approve_request(
         .await?;
 
     let pending_te = state.chat_service
-        .find_pending_tool_execution(&req.chat_id)
+        .find_pending_tool_call(&req.chat_id)
         .await
         .map_err(ApiError::from)?;
 
     let (original_query, original_reason) = pending_te.as_ref()
         .and_then(|te| te.tool_data.as_ref())
         .map(|td| match td {
-            crate::inference::tool_execution::MessageTool::VaultApproval { query, reason, .. } => {
+            crate::inference::tool_call::MessageTool::VaultApproval { query, reason, .. } => {
                 (query.clone(), reason.clone())
             }
             _ => (String::new(), String::new()),
@@ -230,7 +230,7 @@ async fn approve_request(
         let message_id = te.message_id.clone();
         let resolved = state
             .chat_service
-            .resolve_tool_execution(&te.id, Some(result_text.clone()))
+            .resolve_tool_call(&te.id, Some(result_text.clone()))
             .await
             .map_err(ApiError::from)?
             .into_message();
@@ -268,7 +268,7 @@ async fn deny_request(
         .map_err(ApiError::from)?;
 
     let pending_te = state.chat_service
-        .find_pending_tool_execution(&req.chat_id)
+        .find_pending_tool_call(&req.chat_id)
         .await
         .map_err(ApiError::from)?;
 
@@ -276,7 +276,7 @@ async fn deny_request(
         let message_id = te.message_id.clone();
         let denied = state
             .chat_service
-            .deny_tool_execution(
+            .deny_tool_call(
                 &te.id,
                 Some("User denied the credential request.".to_string()),
             )

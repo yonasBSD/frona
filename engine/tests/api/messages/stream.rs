@@ -94,7 +94,7 @@ async fn event_stream_receives_chat_message_broadcast() {
         contact_id: None,
         status: None,
         reasoning: None,
-        tool_executions: vec![],
+        tool_calls: vec![],
         created_at: chrono::Utc::now(),
     };
     broadcast.broadcast_chat_message(&user_id, "chat-1", msg);
@@ -111,7 +111,7 @@ async fn event_stream_receives_chat_message_broadcast() {
         contact_id: None,
         status: None,
         reasoning: None,
-        tool_executions: vec![],
+        tool_calls: vec![],
         created_at: chrono::Utc::now(),
     };
     broadcast.broadcast_chat_message("other-user-id", "chat-2", other_msg);

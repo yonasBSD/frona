@@ -83,13 +83,13 @@ impl MessageTool {
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]
-#[entity(table = "tool_execution")]
-pub struct ToolExecution {
+#[entity(table = "tool_call")]
+pub struct ToolCall {
     pub id: String,
     pub chat_id: String,
     pub message_id: String,
     pub turn: u32,
-    pub tool_call_id: String,
+    pub provider_call_id: String,
     pub name: String,
     pub arguments: serde_json::Value,
     pub result: String,
@@ -107,12 +107,12 @@ pub struct ToolExecution {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolExecutionResponse {
+pub struct ToolCallResponse {
     pub id: String,
     pub chat_id: String,
     pub message_id: String,
     pub turn: u32,
-    pub tool_call_id: String,
+    pub provider_call_id: String,
     pub name: String,
     pub arguments: serde_json::Value,
     pub result: String,
@@ -129,14 +129,14 @@ pub struct ToolExecutionResponse {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<ToolExecution> for ToolExecutionResponse {
-    fn from(te: ToolExecution) -> Self {
+impl From<ToolCall> for ToolCallResponse {
+    fn from(te: ToolCall) -> Self {
         Self {
             id: te.id,
             chat_id: te.chat_id,
             message_id: te.message_id,
             turn: te.turn,
-            tool_call_id: te.tool_call_id,
+            provider_call_id: te.provider_call_id,
             name: te.name,
             arguments: te.arguments,
             result: te.result,

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ChatStore } from "../chat-store";
 import { convertMessage } from "../use-chat-runtime";
-import type { MessageResponse, ToolExecution } from "../types";
+import type { MessageResponse, ToolCall } from "../types";
 
 /**
  * These tests verify the critical invariant:
@@ -14,13 +14,13 @@ import type { MessageResponse, ToolExecution } from "../types";
  * the stream live or loaded the conversation from history.
  */
 
-function makeToolExecution(overrides: Partial<ToolExecution> = {}): ToolExecution {
+function makeToolCall(overrides: Partial<ToolCall> = {}): ToolCall {
   return {
     id: "te-1",
     chat_id: "chat-1",
     message_id: "msg-1",
     turn: 1,
-    tool_call_id: "tc-1",
+    provider_call_id: "tc-1",
     name: "web_search",
     arguments: { query: "test" },
     result: "Found results",
@@ -104,9 +104,9 @@ describe("SSE-vs-Loaded parity: simple text", () => {
 
 describe("SSE-vs-Loaded parity: text with tool calls", () => {
   it("produces identical output for a message with tool executions", () => {
-    const toolExecution = makeToolExecution({
+    const toolExecution = makeToolCall({
       id: "tc-1",
-      tool_call_id: "tc-1",
+      provider_call_id: "tc-1",
       name: "web_search",
       arguments: { query: "cats" },
       result: "10 results found",
@@ -121,7 +121,7 @@ describe("SSE-vs-Loaded parity: text with tool calls", () => {
       content: "",
       agent_id: "system",
       status: "completed",
-      tool_executions: [toolExecution],
+      tool_calls: [toolExecution],
       created_at: "2026-01-01T00:00:01Z",
     };
 
@@ -129,9 +129,9 @@ describe("SSE-vs-Loaded parity: text with tool calls", () => {
     const sseStore = new ChatStore();
     sseStore.handleEvent({ type: "token", content: "Let me search for cats." });
     sseStore.handleEvent({
-      type: "tool_execution",
+      type: "tool_call",
       id: "te-1",
-      tool_call_id: "tc-1",
+      provider_call_id: "tc-1",
       name: "web_search",
       arguments: '{"query":"cats"}',
       description: "Searching for cats",
@@ -165,17 +165,17 @@ describe("SSE-vs-Loaded parity: text with tool calls", () => {
 
 describe("SSE-vs-Loaded parity: multiple tool calls", () => {
   it("produces identical output for sequential tool calls", () => {
-    const te1 = makeToolExecution({
+    const te1 = makeToolCall({
       id: "tc-1",
-      tool_call_id: "tc-1",
+      provider_call_id: "tc-1",
       name: "web_search",
       arguments: { query: "topic" },
       result: "Found info",
       description: "Searching",
     });
-    const te2 = makeToolExecution({
+    const te2 = makeToolCall({
       id: "tc-2",
-      tool_call_id: "tc-2",
+      provider_call_id: "tc-2",
       name: "cli",
       arguments: { command: "echo done" },
       result: "done\n",
@@ -189,15 +189,15 @@ describe("SSE-vs-Loaded parity: multiple tool calls", () => {
       content: "Here is what I found.",
       agent_id: "system",
       status: "completed",
-      tool_executions: [te1, te2],
+      tool_calls: [te1, te2],
       created_at: "2026-01-01T00:00:01Z",
     };
 
     // --- SSE path ---
     const sseStore = new ChatStore();
-    sseStore.handleEvent({ type: "tool_execution", id: "te-1", tool_call_id: "tc-1", name: "web_search", arguments: '{"query":"topic"}', description: "Searching" });
+    sseStore.handleEvent({ type: "tool_call", id: "te-1", provider_call_id: "tc-1", name: "web_search", arguments: '{"query":"topic"}', description: "Searching" });
     sseStore.handleEvent({ type: "tool_result", name: "web_search", success: true, summary: "Found info" });
-    sseStore.handleEvent({ type: "tool_execution", id: "te-2", tool_call_id: "tc-2", name: "cli", arguments: '{"command":"echo done"}', description: "Running command" });
+    sseStore.handleEvent({ type: "tool_call", id: "te-2", provider_call_id: "tc-2", name: "cli", arguments: '{"command":"echo done"}', description: "Running command" });
     sseStore.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "done\n" });
     sseStore.handleEvent({ type: "token", content: "Here is what I found." });
     sseStore.handleEvent({ type: "inference_done", message: agentMsg });
@@ -231,9 +231,9 @@ describe("SSE-vs-Loaded parity: external tool (Question)", () => {
       },
     };
 
-    const externalTe = makeToolExecution({
+    const externalTe = makeToolCall({
       id: "te-ext",
-      tool_call_id: "tc-ext",
+      provider_call_id: "tc-ext",
       name: "ask_user_question",
       message_id: "msg-ext",
       tool_data: toolData,
@@ -247,7 +247,7 @@ describe("SSE-vs-Loaded parity: external tool (Question)", () => {
       content: "Let me ask you something.",
       agent_id: "system",
       status: "executing",
-      tool_executions: [externalTe],
+      tool_calls: [externalTe],
       created_at: "2026-01-01T00:00:01Z",
     };
 
@@ -255,13 +255,13 @@ describe("SSE-vs-Loaded parity: external tool (Question)", () => {
     const sseStore = new ChatStore();
     sseStore.handleEvent({ type: "token", content: "Let me ask you something." });
     sseStore.handleEvent({
-      type: "tool_execution",
+      type: "tool_call",
       id: "te-ext",
-      tool_call_id: "tc-ext",
+      provider_call_id: "tc-ext",
       name: "ask_user_question",
       arguments: '{"question":"Which option?"}',
     });
-    sseStore.handleEvent({ type: "tool_message", tool_execution: externalTe });
+    sseStore.handleEvent({ type: "tool_message", tool_call: externalTe });
 
     const sseMessages = sseStore.getDisplayMessages();
 
@@ -273,8 +273,8 @@ describe("SSE-vs-Loaded parity: external tool (Question)", () => {
     const loadedMessages = loadedStore.getDisplayMessages();
 
     // Both should have the same tool_data on the external tool execution
-    const sseTool = sseMessages[0]?.tool_executions?.find((t) => t.id === "te-ext");
-    const loadedTool = loadedMessages[0]?.tool_executions?.find((t) => t.id === "te-ext");
+    const sseTool = sseMessages[0]?.tool_calls?.find((t) => t.id === "te-ext");
+    const loadedTool = loadedMessages[0]?.tool_calls?.find((t) => t.id === "te-ext");
     expect(sseTool?.tool_data).toEqual(loadedTool?.tool_data);
 
     // Status should match
@@ -298,9 +298,9 @@ describe("SSE-vs-Loaded parity: resolved external tool", () => {
       },
     };
 
-    const resolvedTe = makeToolExecution({
+    const resolvedTe = makeToolCall({
       id: "te-q1",
-      tool_call_id: "tc-q1",
+      provider_call_id: "tc-q1",
       name: "ask_user_question",
       tool_data: resolvedToolData,
       result: "A",
@@ -313,7 +313,7 @@ describe("SSE-vs-Loaded parity: resolved external tool", () => {
       content: "",
       agent_id: "system",
       status: "completed",
-      tool_executions: [resolvedTe],
+      tool_calls: [resolvedTe],
       created_at: "2026-01-01T00:00:01Z",
     };
 
@@ -327,10 +327,10 @@ describe("SSE-vs-Loaded parity: resolved external tool", () => {
       content: "",
       agent_id: "system",
       status: "executing",
-      tool_executions: [
-        makeToolExecution({
+      tool_calls: [
+        makeToolCall({
           id: "te-q1",
-          tool_call_id: "tc-q1",
+          provider_call_id: "tc-q1",
           tool_data: {
             type: "Question",
             data: { question: "Pick one", options: ["A", "B"], status: "pending", response: null },
@@ -393,8 +393,8 @@ describe("SSE-vs-Loaded parity: multi-turn conversation", () => {
         content: "Second answer",
         agent_id: "system",
         status: "completed",
-        tool_executions: [
-          makeToolExecution({ id: "tc-1", tool_call_id: "tc-1", name: "cli", result: "output" }),
+        tool_calls: [
+          makeToolCall({ id: "tc-1", provider_call_id: "tc-1", name: "cli", result: "output" }),
         ],
         created_at: "2026-01-01T00:00:03Z",
       },
@@ -406,7 +406,7 @@ describe("SSE-vs-Loaded parity: multi-turn conversation", () => {
     sseStore.handleEvent({ type: "token", content: "First answer" });
     sseStore.handleEvent({ type: "inference_done", message: messages[1] });
     sseStore.handleEvent({ type: "chat_message", message: messages[2] });
-    sseStore.handleEvent({ type: "tool_execution", id: "te-1", tool_call_id: "tc-1", name: "cli", arguments: "{}" });
+    sseStore.handleEvent({ type: "tool_call", id: "te-1", provider_call_id: "tc-1", name: "cli", arguments: "{}" });
     sseStore.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "output" });
     sseStore.handleEvent({ type: "token", content: "Second answer" });
     sseStore.handleEvent({ type: "inference_done", message: messages[3] });
@@ -493,10 +493,10 @@ describe("SSE-vs-Loaded parity: reasoning + text + tools", () => {
       agent_id: "system",
       reasoning: "Let me think step by step.",
       status: "completed",
-      tool_executions: [
-        makeToolExecution({
+      tool_calls: [
+        makeToolCall({
           id: "tc-1",
-          tool_call_id: "tc-1",
+          provider_call_id: "tc-1",
           name: "web_search",
           result: "Results",
         }),
@@ -507,7 +507,7 @@ describe("SSE-vs-Loaded parity: reasoning + text + tools", () => {
     // --- SSE path ---
     const sseStore = new ChatStore();
     sseStore.handleEvent({ type: "reasoning", content: "Let me think step by step." });
-    sseStore.handleEvent({ type: "tool_execution", id: "te-1", tool_call_id: "tc-1", name: "web_search", arguments: '{"query":"test"}' });
+    sseStore.handleEvent({ type: "tool_call", id: "te-1", provider_call_id: "tc-1", name: "web_search", arguments: '{"query":"test"}' });
     sseStore.handleEvent({ type: "tool_result", name: "web_search", success: true, summary: "Results" });
     sseStore.handleEvent({ type: "token", content: "Here's what I found." });
     sseStore.handleEvent({ type: "inference_done", message: agentMsg });

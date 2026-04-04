@@ -9,7 +9,7 @@ use crate::agent::execution;
 use crate::agent::task::models::{Task, TaskKind, TaskStatus};
 use crate::chat::broadcast::BroadcastEventKind;
 use crate::chat::message::models::{MessageEvent, MessageRole};
-use crate::inference::tool_execution::MessageTool;
+use crate::inference::tool_call::MessageTool;
 use crate::chat::models::CreateChatRequest;
 use crate::core::error::AppError;
 use crate::core::state::AppState;
@@ -211,11 +211,11 @@ impl TaskExecutor {
                             .complete_agent_message(&agent_msg_id, text.clone(), attachments.clone(), reasoning)
                             .await
                         {
-                            // Populate tool_executions so the SSE has complete_task/TaskCompletion data
+                            // Populate tool_calls so the SSE has complete_task/TaskCompletion data
                             if let Ok(tes) = self.app_state.chat_service
-                                .get_tool_executions_by_message(&agent_msg_id).await
+                                .get_tool_calls_by_message(&agent_msg_id).await
                             {
-                                msg.tool_executions = tes.into_iter().map(Into::into).collect();
+                                msg.tool_calls = tes.into_iter().map(Into::into).collect();
                             }
                             crate::credential::presign::presign_response_by_user_id(
                                 &self.app_state.presign_service, &mut msg, &task.user_id,
@@ -237,9 +237,9 @@ impl TaskExecutor {
                         }
                         continue;
                     }
-                    InferenceResponse::ExternalToolPending { tool_executions, .. } => {
-                        for te in tool_executions {
-                            event_sender.send_kind(BroadcastEventKind::ToolExecution { tool_execution: te });
+                    InferenceResponse::ExternalToolPending { tool_calls, .. } => {
+                        for te in tool_calls {
+                            event_sender.send_kind(BroadcastEventKind::ToolCallCreated { tool_call: te });
                         }
                         self.wait_for_resolution(&task.id, &cancel_token).await?;
                         continue;
@@ -296,9 +296,9 @@ impl TaskExecutor {
 
         // Extract deliverables from the complete_task tool execution's TaskCompletion tool_data
         let deliverables = {
-            let tool_executions = self.app_state.chat_service
-                .get_tool_executions(chat_id).await.unwrap_or_default();
-            tool_executions.into_iter().rev().find_map(|te| {
+            let tool_calls = self.app_state.chat_service
+                .get_tool_calls(chat_id).await.unwrap_or_default();
+            tool_calls.into_iter().rev().find_map(|te| {
                 match te.tool_data {
                     Some(MessageTool::TaskCompletion { deliverables, .. }) if !deliverables.is_empty() => {
                         Some(deliverables)

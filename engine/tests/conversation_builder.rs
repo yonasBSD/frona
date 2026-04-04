@@ -7,7 +7,7 @@ use frona::inference::conversation::{
     ConversationBuilder, ConversationContext, DefaultConversationBuilder,
 };
 use frona::inference::provider::ModelRef;
-use frona::inference::tool_execution::ToolExecution;
+use frona::inference::tool_call::ToolCall;
 use frona::storage::StorageService;
 use rig::completion::message::UserContent;
 use rig::completion::{AssistantContent, Message as RigMessage};
@@ -61,13 +61,13 @@ fn agent_message(chat_id: &str, content: &str, status: Option<MessageStatus>) ->
     msg
 }
 
-fn tool_execution(chat_id: &str, message_id: &str, turn: u32, name: &str) -> ToolExecution {
-    ToolExecution {
+fn tool_call(chat_id: &str, message_id: &str, turn: u32, name: &str) -> ToolCall {
+    ToolCall {
         id: uuid::Uuid::new_v4().to_string(),
         chat_id: chat_id.to_string(),
         message_id: message_id.to_string(),
         turn,
-        tool_call_id: format!("call-{}", uuid::Uuid::new_v4()),
+        provider_call_id: format!("call-{}", uuid::Uuid::new_v4()),
         name: name.to_string(),
         arguments: serde_json::json!({"query": "test"}),
         result: "tool output".to_string(),
@@ -82,7 +82,7 @@ fn tool_execution(chat_id: &str, message_id: &str, turn: u32, name: &str) -> Too
 }
 
 #[tokio::test]
-async fn agent_with_tool_executions_single_turn() {
+async fn agent_with_tool_calls_single_turn() {
     let db = test_db().await;
     let builder = test_builder(&db);
     let ctx = test_ctx();
@@ -92,11 +92,11 @@ async fn agent_with_tool_executions_single_turn() {
 
     let messages = vec![user_message("chat-1", "Search for Rust"), agent_msg];
 
-    let te1 = tool_execution("chat-1", &agent_msg_id, 0, "search_web");
-    let te2 = tool_execution("chat-1", &agent_msg_id, 0, "browse_page");
-    let tool_executions = vec![te1, te2];
+    let te1 = tool_call("chat-1", &agent_msg_id, 0, "search_web");
+    let te2 = tool_call("chat-1", &agent_msg_id, 0, "browse_page");
+    let tool_calls = vec![te1, te2];
 
-    let result = builder.build(&messages, &tool_executions, &ctx).await;
+    let result = builder.build(&messages, &tool_calls, &ctx).await;
 
     // user msg, assistant(tool_calls x2), user(tool_results x2), assistant(final text)
     assert_eq!(result.len(), 4);
@@ -131,7 +131,7 @@ async fn agent_with_tool_executions_single_turn() {
 }
 
 #[tokio::test]
-async fn agent_with_tool_executions_multi_turn() {
+async fn agent_with_tool_calls_multi_turn() {
     let db = test_db().await;
     let builder = test_builder(&db);
     let ctx = test_ctx();
@@ -141,11 +141,11 @@ async fn agent_with_tool_executions_multi_turn() {
 
     let messages = vec![user_message("chat-1", "Help me"), agent_msg];
 
-    let te_turn0 = tool_execution("chat-1", &agent_msg_id, 0, "search");
-    let te_turn1 = tool_execution("chat-1", &agent_msg_id, 1, "browse");
-    let tool_executions = vec![te_turn0, te_turn1];
+    let te_turn0 = tool_call("chat-1", &agent_msg_id, 0, "search");
+    let te_turn1 = tool_call("chat-1", &agent_msg_id, 1, "browse");
+    let tool_calls = vec![te_turn0, te_turn1];
 
-    let result = builder.build(&messages, &tool_executions, &ctx).await;
+    let result = builder.build(&messages, &tool_calls, &ctx).await;
 
     // user, assistant(tc t0), user(tr t0), assistant(tc t1), user(tr t1), assistant(final)
     assert_eq!(result.len(), 6);
@@ -162,10 +162,10 @@ async fn agent_executing_status_no_final_text() {
 
     let messages = vec![user_message("chat-1", "Do something"), agent_msg];
 
-    let te = tool_execution("chat-1", &agent_msg_id, 0, "web_search");
-    let tool_executions = vec![te];
+    let te = tool_call("chat-1", &agent_msg_id, 0, "web_search");
+    let tool_calls = vec![te];
 
-    let result = builder.build(&messages, &tool_executions, &ctx).await;
+    let result = builder.build(&messages, &tool_calls, &ctx).await;
 
     // user, assistant(tool_call), user(tool_result) — no final text
     assert_eq!(result.len(), 3);
@@ -175,7 +175,7 @@ async fn agent_executing_status_no_final_text() {
 }
 
 #[tokio::test]
-async fn agent_without_tool_executions_unchanged() {
+async fn agent_without_tool_calls_unchanged() {
     let db = test_db().await;
     let builder = test_builder(&db);
     let ctx = test_ctx();
@@ -184,9 +184,9 @@ async fn agent_without_tool_executions_unchanged() {
         user_message("chat-1", "Hello"),
         agent_message("chat-1", "Hi there!", None),
     ];
-    let tool_executions = vec![];
+    let tool_calls = vec![];
 
-    let result = builder.build(&messages, &tool_executions, &ctx).await;
+    let result = builder.build(&messages, &tool_calls, &ctx).await;
 
     assert_eq!(result.len(), 2);
     assert!(matches!(&result[0], RigMessage::User { .. }));
@@ -210,11 +210,11 @@ async fn turn_text_appears_in_reconstructed_history() {
 
     let messages = vec![user_message("chat-1", "Search for Rust"), agent_msg];
 
-    let mut te = tool_execution("chat-1", &agent_msg_id, 0, "search_web");
+    let mut te = tool_call("chat-1", &agent_msg_id, 0, "search_web");
     te.turn_text = Some("Here's what I found:".into());
-    let tool_executions = vec![te];
+    let tool_calls = vec![te];
 
-    let result = builder.build(&messages, &tool_executions, &ctx).await;
+    let result = builder.build(&messages, &tool_calls, &ctx).await;
 
     // user, assistant(turn_text + tool_call), user(tool_result), assistant(final text)
     assert_eq!(result.len(), 4);
@@ -241,11 +241,11 @@ async fn turn_text_empty_string_omitted() {
 
     let messages = vec![user_message("chat-1", "Do it"), agent_msg];
 
-    let mut te = tool_execution("chat-1", &agent_msg_id, 0, "search_web");
+    let mut te = tool_call("chat-1", &agent_msg_id, 0, "search_web");
     te.turn_text = Some(String::new());
-    let tool_executions = vec![te];
+    let tool_calls = vec![te];
 
-    let result = builder.build(&messages, &tool_executions, &ctx).await;
+    let result = builder.build(&messages, &tool_calls, &ctx).await;
 
     // Assistant message should only have the tool call, no empty text
     if let RigMessage::Assistant { content, .. } = &result[1] {

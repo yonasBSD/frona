@@ -132,21 +132,21 @@ async fn cancel_generation_other_user_returns_error() {
 }
 
 // ---------------------------------------------------------------------------
-// Resolve tool execution — auth checks
+// Resolve tool call — auth checks
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn resolve_tool_execution_without_auth_returns_401() {
+async fn resolve_tool_call_without_auth_returns_401() {
     let (state, _tmp) = test_app_state().await;
     let app = build_app(state);
     let resp = app
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/chats/fake-id/tool-executions/resolve")
+                .uri("/api/chats/fake-id/tool-calls/resolve")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    serde_json::json!({"resolutions": [{"tool_execution_id": "te-1", "response": "yes"}]}).to_string(),
+                    serde_json::json!({"resolutions": [{"tool_call_id": "te-1", "response": "yes"}]}).to_string(),
                 ))
                 .unwrap(),
         )
@@ -156,7 +156,7 @@ async fn resolve_tool_execution_without_auth_returns_401() {
 }
 
 #[tokio::test]
-async fn resolve_tool_execution_other_user_returns_error() {
+async fn resolve_tool_call_other_user_returns_error() {
     let (state, _tmp) = test_app_state().await;
     let (token_a, _) =
         register_user(&state, "resolve-own", "resolveown@example.com", "password123").await;
@@ -170,9 +170,9 @@ async fn resolve_tool_execution_other_user_returns_error() {
     let app = build_app(state);
     let resp = app
         .oneshot(auth_post_json(
-            &format!("/api/chats/{chat_id}/tool-executions/resolve"),
+            &format!("/api/chats/{chat_id}/tool-calls/resolve"),
             &token_b,
-            serde_json::json!({"resolutions": [{"tool_execution_id": "fake-te", "response": "yes"}]}),
+            serde_json::json!({"resolutions": [{"tool_call_id": "fake-te", "response": "yes"}]}),
         ))
         .await
         .unwrap();

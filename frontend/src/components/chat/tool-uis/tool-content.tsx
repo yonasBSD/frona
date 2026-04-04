@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api-client";
-import type { ToolExecution } from "@/lib/types";
+import type { ToolCall } from "@/lib/types";
 import { ApprovalButtons } from "./approval-parts";
 
 function Label({ children }: { children: React.ReactNode }) {
@@ -10,7 +10,7 @@ function Label({ children }: { children: React.ReactNode }) {
 }
 
 export interface ToolContentProps {
-  te: ToolExecution;
+  te: ToolCall;
   chatId: string;
   onSuccess: (response: string, callback?: () => Promise<void>) => void;
   onFailure: (response: string, callback?: () => Promise<void>) => void;

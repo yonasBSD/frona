@@ -13,7 +13,7 @@ use crate::tool::registry::AgentToolRegistry;
 
 use super::config::ModelGroup;
 use super::registry::ModelProviderRegistry;
-use super::tool_execution::MessageTool;
+use super::tool_call::MessageTool;
 
 use crate::chat::message::models::Reasoning;
 
@@ -79,7 +79,7 @@ pub enum InferenceResponse {
     Cancelled(String),
     ExternalToolPending {
         turn_text: String,
-        tool_executions: Vec<crate::inference::tool_execution::ToolExecutionResponse>,
+        tool_calls: Vec<crate::inference::tool_call::ToolCallResponse>,
         system_prompt: Option<String>,
     },
 }

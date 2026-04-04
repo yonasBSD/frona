@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::response::sse::Event;
 use tokio::sync::{RwLock, mpsc};
 
-use crate::inference::tool_execution::ToolExecutionResponse;
+use crate::inference::tool_call::ToolCallResponse;
 use crate::inference::tool_loop::InferenceEventKind;
 use crate::notification::models::Notification;
 
@@ -23,8 +23,8 @@ pub enum BroadcastEventKind {
     InferenceError { error: String },
     ToolMessage { message: MessageResponse },
     ToolResolved { message: MessageResponse },
-    ToolExecution { tool_execution: ToolExecutionResponse },
-    ToolExecutionResolved { tool_execution: ToolExecutionResponse },
+    ToolCallCreated { tool_call: ToolCallResponse },
+    ToolCallResolved { tool_call: ToolCallResponse },
     Title { title: String },
 
     // Notifications (user-level, not chat-scoped)
@@ -138,12 +138,12 @@ fn map_event_to_sse(event: &BroadcastEvent) -> Option<Event> {
                     "token",
                     serde_json::json!({ "chat_id": chat_id, "content": text }),
                 )),
-                InferenceEventKind::ToolCall { id, tool_call_id, name, arguments, description } => Some(sse_event(
-                    "tool_execution",
+                InferenceEventKind::ToolCall { id, provider_call_id, name, arguments, description } => Some(sse_event(
+                    "tool_call",
                     serde_json::json!({
                         "chat_id": chat_id,
                         "id": id,
-                        "tool_call_id": tool_call_id,
+                        "provider_call_id": provider_call_id,
                         "name": name,
                         "arguments": arguments,
                         "description": description,
@@ -219,18 +219,18 @@ fn map_event_to_sse(event: &BroadcastEvent) -> Option<Event> {
                 serde_json::json!({ "chat_id": chat_id, "message": message }),
             ))
         }
-        BroadcastEventKind::ToolExecution { tool_execution } => {
+        BroadcastEventKind::ToolCallCreated { tool_call } => {
             let chat_id = event.chat_id.as_deref().unwrap_or("");
             Some(sse_event(
                 "tool_message",
-                serde_json::json!({ "chat_id": chat_id, "tool_execution": tool_execution }),
+                serde_json::json!({ "chat_id": chat_id, "tool_call": tool_call }),
             ))
         }
-        BroadcastEventKind::ToolExecutionResolved { tool_execution } => {
+        BroadcastEventKind::ToolCallResolved { tool_call } => {
             let chat_id = event.chat_id.as_deref().unwrap_or("");
             Some(sse_event(
                 "tool_resolved",
-                serde_json::json!({ "chat_id": chat_id, "tool_execution": tool_execution }),
+                serde_json::json!({ "chat_id": chat_id, "tool_call": tool_call }),
             ))
         }
         BroadcastEventKind::Title { title } => {

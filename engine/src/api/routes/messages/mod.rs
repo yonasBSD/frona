@@ -27,8 +27,8 @@ pub fn router() -> Router<AppState> {
             post(stream::stream_message),
         )
         .route(
-            "/api/chats/{chat_id}/tool-executions/resolve",
-            post(resolve_tool_executions),
+            "/api/chats/{chat_id}/tool-calls/resolve",
+            post(resolve_tool_calls),
         )
         .route(
             "/api/chats/{chat_id}/cancel",
@@ -83,7 +83,7 @@ async fn cancel_generation(
     Ok(Json(serde_json::json!({ "cancelled": cancelled })))
 }
 
-async fn resolve_tool_executions(
+async fn resolve_tool_calls(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
@@ -103,11 +103,11 @@ async fn resolve_tool_executions(
     for resolution in &req.resolutions {
         let te = state
             .chat_service
-            .get_tool_execution(&resolution.tool_execution_id)
+            .get_tool_call(&resolution.tool_call_id)
             .await
             .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::from(crate::core::error::AppError::NotFound(
-                format!("Tool execution not found: {}", resolution.tool_execution_id),
+                format!("Tool call not found: {}", resolution.tool_call_id),
             )))?;
 
         if message_id.is_none() {
@@ -117,12 +117,12 @@ async fn resolve_tool_executions(
         use crate::chat::message::models::ToolResolutionAction;
         let result = if resolution.action == ToolResolutionAction::Fail {
             state.chat_service
-                .deny_tool_execution(&resolution.tool_execution_id, resolution.response.clone())
+                .deny_tool_call(&resolution.tool_call_id, resolution.response.clone())
                 .await
                 .map_err(ApiError::from)?
         } else {
             state.chat_service
-                .resolve_tool_execution(&resolution.tool_execution_id, resolution.response.clone())
+                .resolve_tool_call(&resolution.tool_call_id, resolution.response.clone())
                 .await
                 .map_err(ApiError::from)?
         };
