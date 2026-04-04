@@ -177,6 +177,9 @@ impl Default for DatabaseConfig {
 pub struct BrowserConfig {
     #[schemars(description = "WebSocket URL for browserless (e.g. ws://browserless:3333).")]
     pub ws_url: String,
+    #[schemars(description = "Authentication token for the browserless HTTP API.")]
+    #[serde(default)]
+    pub api_token: Option<String>,
     #[schemars(description = "Path to store browser profiles.")]
     pub profiles_path: String,
     #[schemars(description = "Browser connection timeout in milliseconds.")]
@@ -187,6 +190,7 @@ impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
             ws_url: String::new(),
+            api_token: None,
             profiles_path: "/profiles".into(),
             connection_timeout_ms: 30000,
         }
@@ -207,6 +211,13 @@ impl BrowserConfig {
         self.ws_url
             .replace("ws://", "http://")
             .replace("wss://", "https://")
+    }
+
+    /// Browserless v2 requires a `token` query param on management endpoints
+    /// (`/sessions`, `/kill`) even when no TOKEN env var is configured server-side.
+    /// Falls back to "frona" which satisfies the schema validation.
+    pub fn api_token(&self) -> &str {
+        self.api_token.as_deref().unwrap_or("frona")
     }
 
     pub fn debugger_url_for_credential(&self, credential_id: &str) -> String {

@@ -39,6 +39,7 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
         },
         browser: Some(frona::core::config::BrowserConfig {
             ws_url: "ws://localhost:0".to_string(),
+            api_token: None,
             profiles_path: format!("{base}/profiles"),
             connection_timeout_ms: 30000,
         }),

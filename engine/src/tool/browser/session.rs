@@ -99,7 +99,7 @@ impl BrowserSessionManager {
         let http_base = config.http_base_url();
         let client = Client::builder(TokioExecutor::new()).build_http::<Body>();
 
-        let sessions_url = format!("{http_base}/sessions");
+        let sessions_url = format!("{http_base}/sessions?token={}", config.api_token());
         let req = match hyper::Request::get(&sessions_url).body(Body::empty()) {
             Ok(r) => r,
             Err(e) => {
@@ -142,7 +142,7 @@ impl BrowserSessionManager {
         let client = Client::builder(TokioExecutor::new()).build_http::<Body>();
 
         for id in browser_ids {
-            let kill_url = format!("{http_base}/kill/{id}");
+            let kill_url = format!("{http_base}/kill/{id}?token={}", config.api_token());
             let req = match hyper::Request::get(&kill_url).body(Body::empty()) {
                 Ok(r) => r,
                 Err(e) => {
