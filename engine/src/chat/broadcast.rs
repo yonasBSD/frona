@@ -138,11 +138,12 @@ fn map_event_to_sse(event: &BroadcastEvent) -> Option<Event> {
                     "token",
                     serde_json::json!({ "chat_id": chat_id, "content": text }),
                 )),
-                InferenceEventKind::ToolCall { id, name, arguments, description } => Some(sse_event(
-                    "tool_call",
+                InferenceEventKind::ToolCall { id, tool_call_id, name, arguments, description } => Some(sse_event(
+                    "tool_execution",
                     serde_json::json!({
                         "chat_id": chat_id,
                         "id": id,
+                        "tool_call_id": tool_call_id,
                         "name": name,
                         "arguments": arguments,
                         "description": description,

@@ -89,12 +89,13 @@ describe("SSEEventBus: chat event routing", () => {
     c2.abort();
   });
 
-  it("routes tool_call events correctly", async () => {
+  it("routes tool_execution events correctly", async () => {
     const controller = new AbortController();
     const iter = bus.subscribe("chat-1", controller.signal)[Symbol.asyncIterator]();
 
-    bus.routeEvent("tool_call", "chat-1", {
-      id: "tc-1",
+    bus.routeEvent("tool_execution", "chat-1", {
+      id: "te-1",
+      tool_call_id: "tc-1",
       name: "web_search",
       arguments: { query: "test" },
       description: "Searching",
@@ -102,8 +103,9 @@ describe("SSEEventBus: chat event routing", () => {
 
     const r = await iter.next();
     expect(r.value).toEqual({
-      type: "tool_call",
-      id: "tc-1",
+      type: "tool_execution",
+      id: "te-1",
+      tool_call_id: "tc-1",
       name: "web_search",
       arguments: { query: "test" },
       description: "Searching",

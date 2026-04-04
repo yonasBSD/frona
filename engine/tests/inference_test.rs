@@ -117,9 +117,9 @@ async fn test_tool_loop_single_tool_call() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let frames = drain_sse_frames(&mut sse_rx).await;
-    let saw_tool_call = frames.iter().any(|f| f.event == "tool_call" && f.data["name"] == "search");
+    let saw_tool_execution = frames.iter().any(|f| f.event == "tool_execution" && f.data["name"] == "search");
     let saw_tool_result = frames.iter().any(|f| f.event == "tool_result" && f.data["name"] == "search" && f.data["success"] == true);
-    assert!(saw_tool_call, "Should emit tool_call event");
+    assert!(saw_tool_execution, "Should emit tool_execution event");
     assert!(saw_tool_result, "Should emit tool_result event");
 }
 

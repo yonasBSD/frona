@@ -360,6 +360,8 @@ where
     }
 
     if !accumulated_reasoning.is_empty() {
+        let thinking_chars = accumulated_reasoning.len();
+        tracing::debug!(thinking_chars, "Thinking tokens received");
         contents.push(AssistantContent::Reasoning(
             rig::completion::message::Reasoning::new(&accumulated_reasoning)
                 .optional_id(reasoning_id)

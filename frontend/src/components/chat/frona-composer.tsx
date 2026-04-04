@@ -130,7 +130,7 @@ export function FronaComposer({
   return (
     <div>
       <ComposerPrimitive.Root
-        className={currentPendingTool
+        className={currentPendingTool && !wizard?.submitted
           ? "bg-transparent p-4"
           : "rounded-2xl border border-border bg-surface-secondary p-4 focus-within:border-accent transition-colors"
         }

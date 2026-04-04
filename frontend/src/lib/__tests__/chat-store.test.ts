@@ -124,18 +124,19 @@ describe("ChatStore", () => {
     });
   });
 
-  describe("tool_call events", () => {
+  describe("tool_execution events", () => {
     it("creates a streaming tool call entry", () => {
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-1",
+        type: "tool_execution",
+        id: "te-1",
+        tool_call_id: "tc-1",
         name: "web_search",
         arguments: '{"query":"test"}',
         description: "Searching the web",
       });
 
       expect(store.streamingToolCalls.size).toBe(1);
-      const tc = store.streamingToolCalls.get("tc-1")!;
+      const tc = store.streamingToolCalls.get("te-1")!;
       expect(tc.toolName).toBe("web_search");
       expect(tc.args.query).toBe("test");
       expect(tc.args.description).toBe("Searching the web");
@@ -144,20 +145,22 @@ describe("ChatStore", () => {
     it("captures turn text from streaming text before the tool call", () => {
       store.handleEvent({ type: "token", content: "I'll search for that." });
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-1",
+        type: "tool_execution",
+        id: "te-1",
+        tool_call_id: "tc-1",
         name: "web_search",
         arguments: "{}",
       });
 
-      const tc = store.streamingToolCalls.get("tc-1")!;
+      const tc = store.streamingToolCalls.get("te-1")!;
       expect(tc.args.turnText).toBe("I'll search for that.");
     });
 
     it("shows tool executions in the synthetic message", () => {
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-1",
+        type: "tool_execution",
+        id: "te-1",
+        tool_call_id: "tc-1",
         name: "web_search",
         arguments: "{}",
       });
@@ -170,13 +173,14 @@ describe("ChatStore", () => {
 
     it("handles object arguments (not just string)", () => {
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-1",
+        type: "tool_execution",
+        id: "te-1",
+        tool_call_id: "tc-1",
         name: "cli",
         arguments: { command: "ls" },
       });
 
-      const tc = store.streamingToolCalls.get("tc-1")!;
+      const tc = store.streamingToolCalls.get("te-1")!;
       expect(tc.args.command).toBe("ls");
     });
   });
@@ -184,8 +188,9 @@ describe("ChatStore", () => {
   describe("tool_result events", () => {
     it("matches result to the first unresolved tool call by name", () => {
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-1",
+        type: "tool_execution",
+        id: "te-1",
+        tool_call_id: "tc-1",
         name: "web_search",
         arguments: "{}",
       });
@@ -197,15 +202,16 @@ describe("ChatStore", () => {
       });
 
       expect(store.streamingToolResults.size).toBe(1);
-      const result = store.streamingToolResults.get("tc-1")!;
+      const result = store.streamingToolResults.get("te-1")!;
       expect(result.result).toBe("3 results found");
       expect(result.isError).toBe(false);
     });
 
     it("marks failed results", () => {
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-1",
+        type: "tool_execution",
+        id: "te-1",
+        tool_call_id: "tc-1",
         name: "cli",
         arguments: "{}",
       });
@@ -216,14 +222,15 @@ describe("ChatStore", () => {
         summary: "Command failed",
       });
 
-      const result = store.streamingToolResults.get("tc-1")!;
+      const result = store.streamingToolResults.get("te-1")!;
       expect(result.isError).toBe(true);
     });
 
     it("uses 'Done' as default summary when none provided", () => {
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-1",
+        type: "tool_execution",
+        id: "te-1",
+        tool_call_id: "tc-1",
         name: "web_search",
         arguments: "{}",
       });
@@ -233,19 +240,19 @@ describe("ChatStore", () => {
         success: true,
       });
 
-      const result = store.streamingToolResults.get("tc-1")!;
+      const result = store.streamingToolResults.get("te-1")!;
       expect(result.result).toBe("Done");
     });
 
     it("matches multiple tool calls of the same name in order", () => {
-      store.handleEvent({ type: "tool_call", id: "tc-1", name: "cli", arguments: "{}" });
-      store.handleEvent({ type: "tool_call", id: "tc-2", name: "cli", arguments: "{}" });
+      store.handleEvent({ type: "tool_execution", id: "te-1", tool_call_id: "tc-1", name: "cli", arguments: "{}" });
+      store.handleEvent({ type: "tool_execution", id: "te-2", tool_call_id: "tc-2", name: "cli", arguments: "{}" });
 
       store.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "first" });
       store.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "second" });
 
-      expect(store.streamingToolResults.get("tc-1")!.result).toBe("first");
-      expect(store.streamingToolResults.get("tc-2")!.result).toBe("second");
+      expect(store.streamingToolResults.get("te-1")!.result).toBe("first");
+      expect(store.streamingToolResults.get("te-2")!.result).toBe("second");
     });
   });
 
@@ -253,8 +260,9 @@ describe("ChatStore", () => {
     it("finalizes the message and clears streaming state", () => {
       store.handleEvent({ type: "token", content: "Hello" });
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-1",
+        type: "tool_execution",
+        id: "te-1",
+        tool_call_id: "tc-1",
         name: "web_search",
         arguments: "{}",
       });
@@ -284,8 +292,9 @@ describe("ChatStore", () => {
 
     it("merges tool executions from streaming and final message (dedup by id)", () => {
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-1",
+        type: "tool_execution",
+        id: "te-1",
+        tool_call_id: "tc-1",
         name: "web_search",
         arguments: "{}",
       });
@@ -349,11 +358,12 @@ describe("ChatStore", () => {
   });
 
   describe("tool_message event (external tools)", () => {
-    it("finalizes as an executing message with the external tool execution", () => {
+    it("stores external tool in pendingExternalTools and includes it in display messages", () => {
       store.handleEvent({ type: "token", content: "Let me check" });
       store.handleEvent({
-        type: "tool_call",
-        id: "tc-ext",
+        type: "tool_execution",
+        id: "te-ext",
+        tool_call_id: "tc-ext",
         name: "ask_user_question",
         arguments: '{"question":"Continue?"}',
       });
@@ -371,16 +381,16 @@ describe("ChatStore", () => {
 
       store.handleEvent({ type: "tool_message", tool_execution: te });
 
-      // External tool message should be added to messages
-      const extMsg = store.messages.find((m) => m.id === "msg-ext");
-      expect(extMsg).toBeDefined();
-      expect(extMsg!.status).toBe("executing");
-      expect(extMsg!.tool_executions).toBeDefined();
-      expect(extMsg!.tool_executions!.some((t) => t.id === "te-ext")).toBe(true);
+      // External tool should be stored in pendingExternalTools by DB id
+      expect(store.getPendingExternalTools()).toHaveLength(1);
+      expect(store.getPendingExternalTools()[0].id).toBe("te-ext");
 
-      // Streaming state should be cleared
-      expect(store.isRunning).toBe(false);
-      expect(store.streamingText).toBe("");
+      // Display messages should include the external tool via buildToolExecutions
+      const display = store.getDisplayMessages();
+      expect(display.length).toBeGreaterThan(0);
+      const toolExecs = display[0].tool_executions;
+      expect(toolExecs).toBeDefined();
+      expect(toolExecs!.some((t) => t.id === "te-ext")).toBe(true);
     });
   });
 
@@ -469,7 +479,7 @@ describe("ChatStore", () => {
     it("resets all streaming state", () => {
       store.handleEvent({ type: "token", content: "text" });
       store.handleEvent({ type: "reasoning", content: "reason" });
-      store.handleEvent({ type: "tool_call", id: "tc-1", name: "test", arguments: "{}" });
+      store.handleEvent({ type: "tool_execution", id: "te-1", tool_call_id: "tc-1", name: "test", arguments: "{}" });
       store.handleEvent({ type: "retry", retryAfterSecs: 5, reason: "test" });
 
       store.clearStreaming();
@@ -516,7 +526,7 @@ describe("ChatStore", () => {
       );
       store.isRunning = true;
 
-      store.handleEvent({ type: "tool_call", id: "tc-new", name: "cli", arguments: "{}" });
+      store.handleEvent({ type: "tool_execution", id: "te-new", tool_call_id: "tc-new", name: "cli", arguments: "{}" });
 
       const msgs = store.getDisplayMessages();
       expect(msgs).toHaveLength(1);
@@ -554,15 +564,16 @@ describe("ChatStore", () => {
 // ---------------------------------------------------------------------------
 
 describe("mergeConsecutiveMessages", () => {
-  it("merges consecutive agent messages from the same agent", () => {
+  it("marks consecutive agent messages from the same agent as continuations", () => {
     const msgs: MessageResponse[] = [
       makeAgentMessage({ id: "1", agent_id: "a1", content: "First" }),
       makeAgentMessage({ id: "2", agent_id: "a1", content: "Second" }),
     ];
 
     const result = mergeConsecutiveMessages(msgs);
-    expect(result).toHaveLength(1);
-    expect(result[0].content).toBe("First\n\nSecond");
+    expect(result).toHaveLength(2);
+    expect((result[0] as any)._continuation).toBeUndefined();
+    expect((result[1] as any)._continuation).toBe(true);
   });
 
   it("does not merge messages from different agents", () => {
@@ -595,7 +606,7 @@ describe("mergeConsecutiveMessages", () => {
     expect(result).toHaveLength(2);
   });
 
-  it("merges system event messages into preceding agent messages", () => {
+  it("marks system event messages after agent messages as continuations", () => {
     const msgs: MessageResponse[] = [
       makeAgentMessage({ id: "1", agent_id: "a1", content: "Agent says" }),
       {
@@ -609,12 +620,11 @@ describe("mergeConsecutiveMessages", () => {
     ];
 
     const result = mergeConsecutiveMessages(msgs);
-    expect(result).toHaveLength(1);
-    expect(result[0].content).toContain("Agent says");
-    expect(result[0].content).toContain("Task completed");
+    expect(result).toHaveLength(2);
+    expect((result[1] as any)._continuation).toBe(true);
   });
 
-  it("merges tool executions from consecutive messages", () => {
+  it("marks consecutive messages with tool executions as continuations", () => {
     const msgs: MessageResponse[] = [
       makeAgentMessage({
         id: "1",
@@ -631,28 +641,31 @@ describe("mergeConsecutiveMessages", () => {
     ];
 
     const result = mergeConsecutiveMessages(msgs);
-    expect(result).toHaveLength(1);
-    expect(result[0].tool_executions).toHaveLength(2);
+    expect(result).toHaveLength(2);
+    expect((result[1] as any)._continuation).toBe(true);
   });
 
-  it("uses the last message's status", () => {
+  it("preserves individual message status on continuations", () => {
     const msgs: MessageResponse[] = [
       makeAgentMessage({ id: "1", agent_id: "a1", content: "A", status: "completed" }),
       makeAgentMessage({ id: "2", agent_id: "a1", content: "B", status: "failed" }),
     ];
 
     const result = mergeConsecutiveMessages(msgs);
-    expect(result[0].status).toBe("failed");
+    expect(result).toHaveLength(2);
+    expect(result[0].status).toBe("completed");
+    expect(result[1].status).toBe("failed");
   });
 
-  it("merges reasoning from consecutive messages", () => {
+  it("marks consecutive messages with reasoning as continuations", () => {
     const msgs: MessageResponse[] = [
       makeAgentMessage({ id: "1", agent_id: "a1", content: "", reasoning: "First thought" }),
       makeAgentMessage({ id: "2", agent_id: "a1", content: "", reasoning: "Second thought" }),
     ];
 
     const result = mergeConsecutiveMessages(msgs);
-    expect(result[0].reasoning).toBe("First thought\n\nSecond thought");
+    expect(result).toHaveLength(2);
+    expect((result[1] as any)._continuation).toBe(true);
   });
 });
 
@@ -676,8 +689,9 @@ describe("ChatStore: full streaming sequence", () => {
 
     // Tool call
     store.handleEvent({
-      type: "tool_call",
-      id: "tc-1",
+      type: "tool_execution",
+      id: "te-1",
+      tool_call_id: "tc-1",
       name: "web_search",
       arguments: '{"query":"cats"}',
       description: "Searching for cats",
@@ -731,9 +745,9 @@ describe("ChatStore: full streaming sequence", () => {
   it("handles multiple tool calls in sequence", () => {
     const store = new ChatStore();
 
-    store.handleEvent({ type: "tool_call", id: "tc-1", name: "web_search", arguments: "{}" });
+    store.handleEvent({ type: "tool_execution", id: "te-1", tool_call_id: "tc-1", name: "web_search", arguments: "{}" });
     store.handleEvent({ type: "tool_result", name: "web_search", success: true, summary: "Done" });
-    store.handleEvent({ type: "tool_call", id: "tc-2", name: "cli", arguments: "{}" });
+    store.handleEvent({ type: "tool_execution", id: "te-2", tool_call_id: "tc-2", name: "cli", arguments: "{}" });
     store.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "OK" });
     store.handleEvent({ type: "token", content: "All done." });
 

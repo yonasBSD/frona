@@ -498,6 +498,7 @@ impl ChatService {
     #[allow(clippy::too_many_arguments)]
     pub async fn begin_tool_execution(
         &self,
+        id: &str,
         chat_id: &str,
         message_id: &str,
         turn: u32,
@@ -508,7 +509,7 @@ impl ChatService {
         turn_text: Option<String>,
     ) -> Result<ToolExecution, AppError> {
         let te = ToolExecution {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: id.to_string(),
             chat_id: chat_id.to_string(),
             message_id: message_id.to_string(),
             turn,

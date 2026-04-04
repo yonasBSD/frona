@@ -32,6 +32,7 @@ pub enum InferenceEventKind {
     Reasoning(String),
     ToolCall {
         id: String,
+        tool_call_id: String,
         name: String,
         arguments: serde_json::Value,
         description: Option<String>,
@@ -123,28 +124,14 @@ async fn check_cancellation(
 
 async fn process_model_response(
     contents: &[AssistantContent],
-    event_tx: &EventSender,
     chat_history: &mut Vec<RigMessage>,
 ) -> bool {
     let mut has_tool_calls = false;
     let mut assistant_content_items: Vec<AssistantContent> = Vec::new();
 
     for content in contents {
-        if let AssistantContent::ToolCall(tool_call) = content {
+        if let AssistantContent::ToolCall(_) = content {
             has_tool_calls = true;
-            let mut args = tool_call.function.arguments.clone();
-            let description = args
-                .as_object_mut()
-                .and_then(|obj| obj.remove("description"))
-                .and_then(|v| v.as_str().map(String::from));
-            event_tx.send(InferenceEvent {
-                    kind: InferenceEventKind::ToolCall {
-                        id: tool_call.id.clone(),
-                        name: tool_call.function.name.clone(),
-                        arguments: args,
-                        description,
-                    },
-                });
         }
         assistant_content_items.push(content.clone());
     }
@@ -231,6 +218,18 @@ async fn execute_tool_calls(
             .and_then(|obj| obj.remove("description"))
             .and_then(|v| v.as_str().map(String::from));
 
+        let te_id = uuid::Uuid::new_v4().to_string();
+
+        event_tx.send(InferenceEvent {
+            kind: InferenceEventKind::ToolCall {
+                id: te_id.clone(),
+                tool_call_id: tool_call.id.clone(),
+                name: tool_name.clone(),
+                arguments: arguments.clone(),
+                description: description.clone(),
+            },
+        });
+
         tracing::debug!(tool = %tool_name, args = %arguments, "Executing tool");
 
         // Persist record BEFORE execution (crash resilience)
@@ -242,13 +241,14 @@ async fn execute_tool_calls(
         };
         let mut te_record = chat_service
             .begin_tool_execution(
+                &te_id,
                 &ctx.chat.id,
                 message_id,
                 turn,
                 &tool_call.id,
                 tool_name,
                 &arguments,
-                description,
+                description.clone(),
                 current_turn_text,
             )
             .await?;
@@ -429,7 +429,7 @@ pub async fn run_tool_loop(
         last_reasoning = extract_reasoning(&contents);
 
         let has_tool_calls =
-            process_model_response(&contents, &event_tx, &mut chat_history).await;
+            process_model_response(&contents, &mut chat_history).await;
 
         if !has_tool_calls {
             final_text = turn_text;

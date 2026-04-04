@@ -129,8 +129,9 @@ describe("SSE-vs-Loaded parity: text with tool calls", () => {
     const sseStore = new ChatStore();
     sseStore.handleEvent({ type: "token", content: "Let me search for cats." });
     sseStore.handleEvent({
-      type: "tool_call",
-      id: "tc-1",
+      type: "tool_execution",
+      id: "te-1",
+      tool_call_id: "tc-1",
       name: "web_search",
       arguments: '{"query":"cats"}',
       description: "Searching for cats",
@@ -194,9 +195,9 @@ describe("SSE-vs-Loaded parity: multiple tool calls", () => {
 
     // --- SSE path ---
     const sseStore = new ChatStore();
-    sseStore.handleEvent({ type: "tool_call", id: "tc-1", name: "web_search", arguments: '{"query":"topic"}', description: "Searching" });
+    sseStore.handleEvent({ type: "tool_execution", id: "te-1", tool_call_id: "tc-1", name: "web_search", arguments: '{"query":"topic"}', description: "Searching" });
     sseStore.handleEvent({ type: "tool_result", name: "web_search", success: true, summary: "Found info" });
-    sseStore.handleEvent({ type: "tool_call", id: "tc-2", name: "cli", arguments: '{"command":"echo done"}', description: "Running command" });
+    sseStore.handleEvent({ type: "tool_execution", id: "te-2", tool_call_id: "tc-2", name: "cli", arguments: '{"command":"echo done"}', description: "Running command" });
     sseStore.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "done\n" });
     sseStore.handleEvent({ type: "token", content: "Here is what I found." });
     sseStore.handleEvent({ type: "inference_done", message: agentMsg });
@@ -254,8 +255,9 @@ describe("SSE-vs-Loaded parity: external tool (Question)", () => {
     const sseStore = new ChatStore();
     sseStore.handleEvent({ type: "token", content: "Let me ask you something." });
     sseStore.handleEvent({
-      type: "tool_call",
-      id: "tc-ext",
+      type: "tool_execution",
+      id: "te-ext",
+      tool_call_id: "tc-ext",
       name: "ask_user_question",
       arguments: '{"question":"Which option?"}',
     });
@@ -404,7 +406,7 @@ describe("SSE-vs-Loaded parity: multi-turn conversation", () => {
     sseStore.handleEvent({ type: "token", content: "First answer" });
     sseStore.handleEvent({ type: "inference_done", message: messages[1] });
     sseStore.handleEvent({ type: "chat_message", message: messages[2] });
-    sseStore.handleEvent({ type: "tool_call", id: "tc-1", name: "cli", arguments: "{}" });
+    sseStore.handleEvent({ type: "tool_execution", id: "te-1", tool_call_id: "tc-1", name: "cli", arguments: "{}" });
     sseStore.handleEvent({ type: "tool_result", name: "cli", success: true, summary: "output" });
     sseStore.handleEvent({ type: "token", content: "Second answer" });
     sseStore.handleEvent({ type: "inference_done", message: messages[3] });
@@ -465,11 +467,11 @@ describe("SSE-vs-Loaded parity: consecutive agent messages merged", () => {
 
     const loadedDisplay = loadedStore.getDisplayMessages();
 
-    // Both should merge the two agent messages
-    expect(sseDisplay).toHaveLength(1);
-    expect(loadedDisplay).toHaveLength(1);
-    expect(sseDisplay[0].content).toBe("Part one\n\nPart two");
-    expect(loadedDisplay[0].content).toBe("Part one\n\nPart two");
+    // Both should mark the second message as a continuation
+    expect(sseDisplay).toHaveLength(2);
+    expect(loadedDisplay).toHaveLength(2);
+    expect((sseDisplay[1] as any)._continuation).toBe(true);
+    expect((loadedDisplay[1] as any)._continuation).toBe(true);
 
     const sseConverted = normalize(convertMessage(sseDisplay[0]));
     const loadedConverted = normalize(convertMessage(loadedDisplay[0]));
@@ -505,7 +507,7 @@ describe("SSE-vs-Loaded parity: reasoning + text + tools", () => {
     // --- SSE path ---
     const sseStore = new ChatStore();
     sseStore.handleEvent({ type: "reasoning", content: "Let me think step by step." });
-    sseStore.handleEvent({ type: "tool_call", id: "tc-1", name: "web_search", arguments: '{"query":"test"}' });
+    sseStore.handleEvent({ type: "tool_execution", id: "te-1", tool_call_id: "tc-1", name: "web_search", arguments: '{"query":"test"}' });
     sseStore.handleEvent({ type: "tool_result", name: "web_search", success: true, summary: "Results" });
     sseStore.handleEvent({ type: "token", content: "Here's what I found." });
     sseStore.handleEvent({ type: "inference_done", message: agentMsg });

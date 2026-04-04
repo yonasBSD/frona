@@ -36,13 +36,13 @@ export function AssistantThread() {
 
       const isNearBottom = scrollHeight - scrollTop - clientHeight < 80;
 
-      if (delta < -10 && !isNearBottom) {
+      if (delta < -10 && !isNearBottom && wizard.submitted) {
         setCollapsed(true);
       } else if (isNearBottom) {
         setCollapsed(false);
       }
     },
-    [setCollapsed],
+    [setCollapsed, wizard.submitted],
   );
 
   const safeWizard = useMemo(

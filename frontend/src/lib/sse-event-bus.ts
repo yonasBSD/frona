@@ -6,7 +6,7 @@ import type { MessageResponse, Notification, ToolExecution } from "./types";
 export type ChatSSEEvent =
   | { type: "token"; content: string }
   | { type: "reasoning"; content: string }
-  | { type: "tool_call"; id: string; name: string; arguments: unknown; description?: string }
+  | { type: "tool_execution"; id: string; tool_call_id: string; name: string; arguments: unknown; description?: string }
   | { type: "tool_result"; name: string; success: boolean; summary?: string }
   | { type: "tool_message"; tool_execution?: ToolExecution }
   | { type: "tool_resolved"; message?: MessageResponse; tool_execution?: ToolExecution }
@@ -263,10 +263,11 @@ export class SSEEventBus {
       case "reasoning":
         this.dispatchChat(chatId, { type: "reasoning", content: parsed.content as string });
         break;
-      case "tool_call":
+      case "tool_execution":
         this.dispatchChat(chatId, {
-          type: "tool_call",
+          type: "tool_execution",
           id: parsed.id as string,
+          tool_call_id: parsed.tool_call_id as string,
           name: parsed.name as string,
           arguments: parsed.arguments,
           description: parsed.description as string | undefined,

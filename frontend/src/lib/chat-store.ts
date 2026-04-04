@@ -4,6 +4,7 @@ import { api } from "./api-client";
 
 interface ToolCallPart {
   type: "tool-call";
+  id: string;
   toolCallId: string;
   toolName: string;
   args: Record<string, unknown>;
@@ -130,7 +131,7 @@ export class ChatStore {
       if (!msg.tool_executions) continue;
       for (const te of msg.tool_executions) {
         if (te.tool_data && te.tool_data.data.status === "pending") {
-          this.pendingExternalTools.set(te.tool_call_id, te);
+          this.pendingExternalTools.set(te.id, te);
         }
       }
     }
@@ -148,7 +149,7 @@ export class ChatStore {
         this.streamingReasoning += event.content;
         break;
 
-      case "tool_call": {
+      case "tool_execution": {
         this.isRunning = true;
         const args = tryParseJson(event.arguments);
         if (event.description) args.description = event.description;
@@ -162,7 +163,8 @@ export class ChatStore {
 
         this.streamingToolCalls.set(event.id, {
           type: "tool-call",
-          toolCallId: event.id,
+          id: event.id,
+          toolCallId: event.tool_call_id,
           toolName: event.name,
           args,
           argsText: typeof event.arguments === "string"
@@ -188,14 +190,14 @@ export class ChatStore {
 
       case "tool_message": {
         if (event.tool_execution) {
-          this.pendingExternalTools.set(event.tool_execution.tool_call_id, event.tool_execution);
+          this.pendingExternalTools.set(event.tool_execution.id, event.tool_execution);
         }
         break;
       }
 
       case "tool_resolved": {
-        if (event.tool_execution && this.pendingExternalTools.has(event.tool_execution.tool_call_id)) {
-          this.pendingExternalTools.set(event.tool_execution.tool_call_id, event.tool_execution);
+        if (event.tool_execution && this.pendingExternalTools.has(event.tool_execution.id)) {
+          this.pendingExternalTools.set(event.tool_execution.id, event.tool_execution);
         } else if (event.message) {
           const msg = event.message;
           const idx = this.messages.findIndex((m) => m.id === msg.id);
@@ -324,13 +326,13 @@ export class ChatStore {
   private buildToolExecutions(): ToolExecution[] {
     const result: ToolExecution[] = [];
     for (const tc of this.streamingToolCalls.values()) {
-      const pending = this.pendingExternalTools.get(tc.toolCallId);
+      const pending = this.pendingExternalTools.get(tc.id);
       if (pending) {
         result.push(pending);
       } else {
-        const res = this.streamingToolResults.get(tc.toolCallId);
+        const res = this.streamingToolResults.get(tc.id);
         result.push({
-          id: tc.toolCallId,
+          id: tc.id,
           chat_id: "",
           message_id: "",
           turn: 0,
