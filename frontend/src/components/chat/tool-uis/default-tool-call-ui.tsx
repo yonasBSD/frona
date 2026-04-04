@@ -8,8 +8,10 @@ import {
   type ToolCallMessagePartComponent,
 } from "@assistant-ui/react";
 import { AnimatePresence, motion } from "motion/react";
+import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { useToolTimeline } from "./tool-timeline-context";
+import { InlineCode } from "./inline-code";
 
 const ANIMATION_DURATION = 200;
 
@@ -155,9 +157,17 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
       {turnText && (
         <div className={cn("relative pb-2 flex items-start", isFirst && hiddenCount === 0 && "mt-3")}>
           <div className="absolute left-[11px] top-0 bottom-0 w-px bg-border" />
-          <span className="inline-block rounded-r-full bg-surface-tertiary pl-4 pr-3 py-1.5 text-xs text-text-secondary leading-none" style={{ marginLeft: "11px" }}>
-            {turnText}
-          </span>
+          <div className="inline-block rounded-r-full bg-surface-tertiary pl-4 pr-3 py-1.5 text-xs text-text-secondary leading-none [&_p]:m-0" style={{ marginLeft: "11px" }}>
+            <ReactMarkdown components={{
+              pre: ({ children }) => <>{children}</>,
+              code: ({ className, children }) => {
+                const lang = className?.replace("language-", "");
+                const code = String(children).replace(/\n$/, "");
+                if (!className) return <code className="text-xs">{children}</code>;
+                return <InlineCode code={code} language={lang} />;
+              },
+            }}>{turnText}</ReactMarkdown>
+          </div>
         </div>
       )}
       <motion.div
