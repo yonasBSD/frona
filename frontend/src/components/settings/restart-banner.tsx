@@ -19,9 +19,23 @@ export function RestartBanner({ visible }: RestartBannerProps) {
     } catch {
       // Server may drop connection during restart
     }
-    setTimeout(() => {
-      window.location.reload();
-    }, 3000);
+    // Wait for server to come back, then reload
+    await new Promise((r) => setTimeout(r, 1000));
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch("/", { cache: "no-store" });
+        if (res.status < 500) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // Server still down
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    // Timed out — reload anyway as a last resort
+    window.location.reload();
   };
 
   return (
