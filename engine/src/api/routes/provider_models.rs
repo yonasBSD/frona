@@ -26,10 +26,6 @@ struct ModelInfo {
     max_tokens: Option<u64>,
 }
 
-// ---------------------------------------------------------------------------
-// Provider base URLs & endpoint config
-// ---------------------------------------------------------------------------
-
 fn default_base_url(provider: &str) -> Option<&'static str> {
     match provider {
         "openai" => Some("https://api.openai.com/v1"),
@@ -74,10 +70,6 @@ fn models_endpoint(provider: &str) -> Option<(&'static str, ResponseFormat)> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Extract models from provider response
-// ---------------------------------------------------------------------------
-
 fn extract_models(
     body: &serde_json::Value,
     format: ResponseFormat,
@@ -90,7 +82,6 @@ fn extract_models(
         ResponseFormat::Ollama => extract_ollama(body),
     };
 
-    // Enrich with hardcoded limits for models missing them
     for model in &mut models {
         if (model.context_window.is_none() || model.max_tokens.is_none())
             && let Some((ctx, max)) = hardcoded_limits(provider, &model.id)
@@ -203,10 +194,6 @@ fn extract_ollama(body: &serde_json::Value) -> Vec<ModelInfo> {
         .unwrap_or_default()
 }
 
-// ---------------------------------------------------------------------------
-// Hardcoded fallback limits: (context_window, max_output_tokens)
-// ---------------------------------------------------------------------------
-
 fn hardcoded_limits(provider: &str, model_id: &str) -> Option<(u64, u64)> {
     // Try exact match first, then prefix match.
     // Order matters: more specific prefixes must come before shorter ones
@@ -279,7 +266,6 @@ fn hardcoded_limits(provider: &str, model_id: &str) -> Option<(u64, u64)> {
         ("together", "Qwen/Qwen3", 1_000_000, 64_000),
     ];
 
-    // Exact match on provider + model prefix
     for &(p, prefix, ctx, max) in table {
         if p == provider && model_id.starts_with(prefix) {
             return Some((ctx, max));
@@ -287,10 +273,6 @@ fn hardcoded_limits(provider: &str, model_id: &str) -> Option<(u64, u64)> {
     }
     None
 }
-
-// ---------------------------------------------------------------------------
-// Route handler
-// ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
 struct ListModelsQuery {

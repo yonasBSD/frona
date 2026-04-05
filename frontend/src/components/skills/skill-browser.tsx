@@ -178,9 +178,7 @@ export const SkillBrowser = forwardRef<SkillBrowserHandle, SkillBrowserProps>(fu
       } else {
         setInstalled(sortSkills(await listInstalledSkills()));
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, [agentId]);
 
   useEffect(() => { reload(); }, [reload]);

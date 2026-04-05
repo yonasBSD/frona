@@ -130,10 +130,6 @@ async function testAllProviders(
   );
 }
 
-// ---------------------------------------------------------------------------
-// UI Components
-// ---------------------------------------------------------------------------
-
 export function TestStatusIcon({ status }: { status: TestStatus }) {
   if (status === "testing") {
     return (
@@ -219,10 +215,6 @@ function CollapsedProvider({ id, onEnable }: { id: string; onEnable: () => void 
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main Section
-// ---------------------------------------------------------------------------
-
 interface ProvidersSectionProps {
   providers: Record<string, ModelProviderConfig>;
   onChange: (providers: Record<string, ModelProviderConfig>) => void;
@@ -279,7 +271,6 @@ export function ProvidersSection({ providers, onChange, onReadyChange }: Provide
   const sortedConfigured = KNOWN_PROVIDERS.filter((id) => id in providers);
 
   const updateProvider = (id: string, updated: ModelProviderConfig) => {
-    // Reset test status when key or base_url changes
     setProviderStates((prev) =>
       prev.map((p) => (p.id === id ? { ...p, testStatus: "idle" as TestStatus } : p))
     );

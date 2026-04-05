@@ -92,7 +92,6 @@ export function NavigationPanel() {
     };
   }, []);
 
-  // Mobile: overlay drawer
   if (mobile) {
     return (
       <>
@@ -139,7 +138,6 @@ export function NavigationPanel() {
     );
   }
 
-  // Desktop: collapsible sidebar
   if (collapsed) {
     return (
       <div

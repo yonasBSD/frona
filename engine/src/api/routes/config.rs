@@ -39,12 +39,10 @@ async fn update_config(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let path = config_file_path();
 
-    // Read raw YAML from disk (preserving ${VAR} references)
     let raw_yaml = std::fs::read_to_string(&path).unwrap_or_default();
     let mut base: serde_json::Value = if raw_yaml.is_empty() {
         serde_json::json!({})
     } else {
-        // Parse YAML → serde_yaml::Value → serde_json::Value
         let yaml_val: serde_yaml::Value = serde_yaml::from_str(&raw_yaml)
             .map_err(|e| ApiError(crate::core::error::AppError::Internal(
                 format!("Failed to parse existing config.yaml: {e}"),
@@ -55,10 +53,8 @@ async fn update_config(
             )))?
     };
 
-    // Deep-merge patch into base
     deep_merge(&mut base, patch);
 
-    // Validate by deserializing through Config
     let _: Config = serde_json::from_value(base.clone())
         .map_err(|e| ApiError(crate::core::error::AppError::Validation(
             format!("Invalid config: {e}"),
@@ -67,10 +63,8 @@ async fn update_config(
     persist_config(&mut base, &path)
         .map_err(|e| ApiError(crate::core::error::AppError::Internal(e)))?;
 
-    // Mark setup as completed
     state.set_runtime_config("setup_completed", "true").await?;
 
-    // Return redacted config
     redact_config_for_api(&mut base);
 
     Ok(Json(serde_json::json!({

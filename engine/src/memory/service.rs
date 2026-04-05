@@ -608,7 +608,6 @@ impl MemoryService {
         // Prompt is ordered static → almost-static → dynamic to maximise
         // the cacheable prefix for LLM prompt caching.
 
-        // --- Instructions: base prompt + shared prompt files ---
         let mut result = base_prompt.to_string();
 
         const CORE_IDENTITY_KEYS: &[&str] = &["name", "creature", "vibe"];
@@ -631,7 +630,6 @@ impl MemoryService {
             }
         }
 
-        // --- Data: all XML-tagged blocks ---
         let skill_items: Vec<(String, String)> = skills
             .iter()
             .map(|s| (s.name.clone(), format!("{} (file: {}/SKILL.md)", s.description, s.path)))
@@ -659,7 +657,6 @@ impl MemoryService {
             &identity_pairs,
         );
 
-        // --- Dynamic: space context, user memory, agent memory ---
         if let Some(sid) = space_id
             && let Some(space_mem) = self
                 .get_memory(MemorySourceType::Space, sid)

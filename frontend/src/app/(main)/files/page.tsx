@@ -76,9 +76,7 @@ export default function FilesPage() {
         if (!createdFolders.has(folderPath)) {
           try {
             await createFolder(folderPath);
-          } catch {
-            // folder may already exist
-          }
+          } catch {}
           createdFolders.add(folderPath);
         }
       }
@@ -105,9 +103,7 @@ export default function FilesPage() {
       const relativePath = parentSub ? `${parentSub}/${filePath}` : filePath;
       try {
         await uploadWithPath(file, relativePath, createdFolders);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     await refreshCurrentFolder();
     e.target.value = "";
@@ -165,9 +161,7 @@ export default function FilesPage() {
       const relativePath = parentSub ? `${parentSub}/${path}` : path;
       try {
         await uploadWithPath(file, relativePath, createdFolders);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
 
     await refreshCurrentFolder();
@@ -326,9 +320,7 @@ export default function FilesPage() {
         const filePath = userSubpath(ev.id);
         try {
           await renameFile(filePath, ev.name);
-        } catch {
-          // ignore
-        }
+        } catch {}
       });
 
       fmApi.on("delete-files", async (ev) => {
@@ -338,9 +330,7 @@ export default function FilesPage() {
           const filePath = userSubpath(id);
           try {
             await deleteFile(user.username, filePath);
-          } catch {
-            // ignore
-          }
+          } catch {}
         }
       });
 
@@ -357,9 +347,7 @@ export default function FilesPage() {
         const dest = `user://${user.username}/${userSubpath(ev.target)}`;
         try {
           await copyFiles(sources, dest);
-        } catch {
-          // ignore
-        }
+        } catch {}
       });
 
       fmApi.on("move-files", async (ev) => {
@@ -373,9 +361,7 @@ export default function FilesPage() {
         const dest = `user://${user.username}/${userSubpath(ev.target)}`;
         try {
           await moveFiles(sources, dest);
-        } catch {
-          // ignore
-        }
+        } catch {}
       });
 
       fmApi.on("create-file", async (ev) => {
@@ -387,9 +373,7 @@ export default function FilesPage() {
             : `/${ev.file.name}`;
           try {
             await createFolder(path);
-          } catch {
-            // ignore
-          }
+          } catch {}
         } else {
           const file = ev.file.file
             ? (ev.file.file as File)
@@ -399,9 +383,7 @@ export default function FilesPage() {
             : ev.file.name;
           try {
             await uploadFile(file, relativePath);
-          } catch {
-            // ignore
-          }
+          } catch {}
         }
       });
 
@@ -422,9 +404,7 @@ export default function FilesPage() {
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(blobUrl);
-        } catch {
-          // ignore
-        }
+        } catch {}
       });
 
       fmApi.on("request-data", async (ev) => {

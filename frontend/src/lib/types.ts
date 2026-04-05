@@ -69,7 +69,6 @@ export interface UpdateAgentRequest {
   skills?: string[];
 }
 
-// Space types
 export interface SpaceResponse {
   id: string;
   name: string;
@@ -85,7 +84,6 @@ export interface CreateSpaceRequest {
   name: string;
 }
 
-// Chat types
 export interface ChatResponse {
   id: string;
   space_id: string | null;
@@ -102,7 +100,6 @@ export interface CreateChatRequest {
   title?: string;
 }
 
-// File attachment types
 export interface Attachment {
   filename: string;
   content_type: string;
@@ -112,7 +109,6 @@ export interface Attachment {
   url?: string;
 }
 
-// File manager types
 export interface FileEntry {
   id: string;
   size: number;
@@ -121,7 +117,6 @@ export interface FileEntry {
   parent: string;
 }
 
-// Contact types
 export interface Contact {
   id: string;
   user_id: string;
@@ -140,7 +135,6 @@ export function indexContactsById(contacts: Contact[]): Record<string, Contact> 
   return Object.fromEntries(contacts.map((c) => [c.id, c]));
 }
 
-// Message types
 export type MessageToolStatus = "pending" | "resolved" | "denied";
 
 export type MessageTool =
@@ -191,7 +185,6 @@ export interface MessageResponse {
   _continuation?: boolean;
 }
 
-// App types
 export type AppStatus = "starting" | "running" | "stopped" | "failed" | "serving" | "hibernated";
 
 export interface AppResponse {
@@ -210,7 +203,6 @@ export interface AppResponse {
   updated_at: string;
 }
 
-// Task types
 export type TaskKind =
   | { type: "Direct" }
   | { type: "Delegation"; source_agent_id: string; source_chat_id: string };
@@ -251,7 +243,6 @@ export interface TaskUpdateEvent {
   result_summary: string | null;
 }
 
-// Agent display name defaults
 const DEFAULT_AGENT_NAMES: Record<string, string> = {
   system: "Assistant",
   researcher: "Researcher",
@@ -272,7 +263,6 @@ export function agentDisplayName(
   return titleCase(name);
 }
 
-// Credential types
 export type CredentialData =
   | { type: "BrowserProfile" }
   | { type: "UsernamePassword"; data: { username: string } }
@@ -287,7 +277,6 @@ export interface CredentialResponse {
   updated_at: string;
 }
 
-// Notification types
 export type NotificationData =
   | { type: "App"; app_id: string; action: string }
   | { type: "Agent"; agent_id: string; chat_id: string }
@@ -307,7 +296,6 @@ export interface Notification {
   created_at: string;
 }
 
-// Navigation types
 export interface NavigationResponse {
   spaces: SpaceWithChats[];
   standalone_chats: ChatResponse[];

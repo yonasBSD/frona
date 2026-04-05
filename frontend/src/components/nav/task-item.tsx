@@ -46,9 +46,7 @@ export function TaskItem({ task }: TaskItemProps) {
   const handleCancel = async () => {
     try {
       await cancelTask(task.id);
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   const handleDeleteConfirm = async () => {

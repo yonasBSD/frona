@@ -103,8 +103,6 @@ function newFallback(): ModelGroupConfig {
   };
 }
 
-// --- Provider-specific parameters config dialog ---
-
 interface ModelParamsDialogProps {
   group: ModelGroupConfig;
   groupName: string;
@@ -256,8 +254,6 @@ function ModelParamsDialog({ group, groupName, onUpdate, onClose }: ModelParamsD
   );
 }
 
-// --- Provider-specific param fields ---
-
 function ProviderParams({ group, onUpdate }: { group: ModelGroupConfig; onUpdate: (u: Partial<ModelGroupConfig>) => void }) {
   switch (group.provider) {
     case "anthropic":
@@ -398,8 +394,6 @@ function GeminiParams({ group, onUpdate }: { group: ModelGroupConfig; onUpdate: 
     </div>
   );
 }
-
-// --- Main section ---
 
 export function ModelsSection({ models, enabledProviders, providerConfigs, onChange }: ModelsSectionProps) {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());

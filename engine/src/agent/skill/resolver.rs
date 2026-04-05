@@ -61,7 +61,6 @@ impl SkillResolver {
     pub fn list(&self, agent_id: &str, agent_skills: Option<&[String]>) -> Vec<Skill> {
         let mut seen = HashMap::new();
 
-        // Tier 1: Agent workspace FS (always included)
         let ws = self.storage.agent_workspace(agent_id);
         for name in ws.read_dir("skills") {
             if seen.contains_key(&name) {
@@ -91,7 +90,6 @@ impl SkillResolver {
             }
         }
 
-        // Tier 2: Installed skills (filtered when agent_skills is Some)
         if let Some(dir) = &self.installed_dir {
             for skill in self.scan_fs_skills(dir, SkillScope::Shared) {
                 if let Some(allowed) = agent_skills
@@ -100,7 +98,6 @@ impl SkillResolver {
             }
         }
 
-        // Tier 3: Built-in FS (filtered when agent_skills is Some)
         for skill in self.scan_fs_skills(&self.config_dir.join("skills"), SkillScope::Builtin) {
             if let Some(allowed) = agent_skills
                 && !allowed.contains(&skill.name) { continue; }

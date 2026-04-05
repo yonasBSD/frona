@@ -92,7 +92,6 @@ export function CredsSection({ agentId }: CredsSectionProps) {
       setGrants((prev) => prev.filter((g) => !selected.has(g.id)));
       setSelected(new Set());
     } catch {
-      // ignore
     } finally {
       setRevoking(false);
     }

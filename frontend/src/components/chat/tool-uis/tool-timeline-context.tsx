@@ -83,7 +83,6 @@ export function ToolTimelineProvider({
   });
   const [userToggled, setUserToggled] = useState(false);
 
-  // Window tools to last MAX_VISIBLE unless user explicitly expanded
   const visibleSet = useMemo(() => {
     if (userToggled) return null; // user toggled — show all
     if (stableToolCallIds.length <= MAX_VISIBLE) return null; // fits — show all
@@ -95,9 +94,6 @@ export function ToolTimelineProvider({
     return set;
   }, [stableToolCallIds, userToggled]);
 
-  // Expand while inference is running, collapse after it finishes.
-  // Uses createdAt instead of a wasRunning ref so the collapse survives
-  // the component remount caused by the streaming→real message ID swap.
   useEffect(() => {
     if (isRunning && message.isLast) {
       if (!userToggled && collapsed) {

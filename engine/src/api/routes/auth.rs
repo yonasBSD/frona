@@ -211,7 +211,6 @@ async fn logout(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<([(axum::http::HeaderName, axum::http::HeaderValue); 1], StatusCode), ApiError> {
-    // Find the token's pair_id and revoke the session
     if let Some(token) = state
         .token_service
         .repo()
@@ -221,7 +220,6 @@ async fn logout(
         if let Some(pair_id) = &token.refresh_pair_id {
             state.token_service.revoke_session(pair_id).await?;
         } else {
-            // Single token (PAT), just delete it
             state.token_service.repo().delete(&auth.token_id).await?;
         }
     }

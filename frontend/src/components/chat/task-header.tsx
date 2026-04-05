@@ -64,9 +64,7 @@ export function TaskHeader() {
     setMenuOpen(false);
     try {
       await cancelTask(activeTask.id);
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   const handleDelete = async () => {

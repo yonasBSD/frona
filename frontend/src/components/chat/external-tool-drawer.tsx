@@ -101,7 +101,6 @@ export function ExternalToolDrawer({ wizard }: { wizard: ToolWizardState }) {
       .filter((cb): cb is () => Promise<void> => !!cb);
     await Promise.all(callbacks.map((cb) => cb()));
 
-    // Batch resolve remaining tools (questions, human-in-the-loop)
     const resolutions = pendingTools
       .filter((te) => !finalAnswers.get(te.id)?.callback)
       .map((te) => {
@@ -124,7 +123,6 @@ export function ExternalToolDrawer({ wizard }: { wizard: ToolWizardState }) {
       nextAnswers.set(currentTool.id, { response, action, callback });
       setAnswers(nextAnswers);
 
-      // If all tools now have answers, auto-submit
       const allNowAnswered = pendingTools.every((te) => nextAnswers.has(te.id));
       if (allNowAnswered) {
         submitAll(nextAnswers);

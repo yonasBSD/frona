@@ -37,9 +37,7 @@ export function AboutSection() {
         if (res.ok) {
           setInfo(await res.json());
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     fetchInfo();
   }, []);

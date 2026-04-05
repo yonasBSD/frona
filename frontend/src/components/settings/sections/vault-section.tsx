@@ -187,7 +187,6 @@ function LocalVaultPanel({ expanded, onToggle }: { expanded: boolean; onToggle: 
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
 
-  // Close context menu on outside click
   useEffect(() => {
     if (!contextMenuId) return;
     const handleClick = (e: MouseEvent) => {
@@ -199,7 +198,6 @@ function LocalVaultPanel({ expanded, onToggle }: { expanded: boolean; onToggle: 
     return () => document.removeEventListener("mousedown", handleClick);
   }, [contextMenuId]);
 
-  // Close add menu on outside click
   useEffect(() => {
     if (!addMenu) return;
     const handleClick = (e: MouseEvent) => {
@@ -236,9 +234,7 @@ function LocalVaultPanel({ expanded, onToggle }: { expanded: boolean; onToggle: 
       try {
         await api.delete(`/api/vaults/local/items/${id}`);
         setItems((prev) => prev.filter((i) => i.id !== id));
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     if (selectedId === id) setSelectedId(null);
     setContextMenuId(null);
@@ -274,7 +270,6 @@ function LocalVaultPanel({ expanded, onToggle }: { expanded: boolean; onToggle: 
       await fetchItems();
       setSelectedId(null);
     } catch {
-      // ignore
     } finally {
       setSubmitting(false);
     }

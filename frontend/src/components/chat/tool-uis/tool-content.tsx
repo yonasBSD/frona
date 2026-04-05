@@ -16,10 +16,6 @@ export interface ToolContentProps {
   onFailure: (response: string, callback?: () => Promise<void>) => void;
 }
 
-// ---------------------------------------------------------------------------
-// Question
-// ---------------------------------------------------------------------------
-
 export function QuestionContent({ te, onSuccess, selectedAnswer }: ToolContentProps & { selectedAnswer?: string }) {
   const data = te.tool_data?.data as Record<string, unknown> | undefined;
   if (!data) return null;
@@ -49,10 +45,6 @@ export function QuestionContent({ te, onSuccess, selectedAnswer }: ToolContentPr
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// HumanInTheLoop
-// ---------------------------------------------------------------------------
 
 export function HumanInTheLoopContent({ te, onSuccess }: ToolContentProps) {
   const data = te.tool_data?.data as Record<string, unknown> | undefined;
@@ -84,10 +76,6 @@ export function HumanInTheLoopContent({ te, onSuccess }: ToolContentProps) {
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// VaultApproval
-// ---------------------------------------------------------------------------
 
 interface VaultItem {
   id: string;
@@ -238,10 +226,6 @@ export function VaultApprovalContent({ te, chatId, onSuccess, onFailure }: ToolC
   );
 }
 
-// ---------------------------------------------------------------------------
-// ServiceApproval
-// ---------------------------------------------------------------------------
-
 export function ServiceApprovalContent({ te, chatId, onSuccess, onFailure }: ToolContentProps) {
   const data = te.tool_data?.data as Record<string, unknown> | undefined;
   if (!data) return null;
@@ -277,10 +261,6 @@ export function ServiceApprovalContent({ te, chatId, onSuccess, onFailure }: Too
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Dispatcher — renders the right content based on tool type
-// ---------------------------------------------------------------------------
 
 export function ToolContentDispatch(props: ToolContentProps & { selectedAnswer?: string }) {
   switch (props.te.tool_data?.type) {

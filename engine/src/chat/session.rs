@@ -175,7 +175,6 @@ impl ChatSessionContext {
             .find_by_id(&chat.agent_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
-        // Collect resolved file paths from all chat attachments for sandbox access
         let mut file_paths = Vec::new();
         for msg in &stored_messages {
             for att in &msg.attachments {

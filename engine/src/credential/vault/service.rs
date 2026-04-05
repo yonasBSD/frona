@@ -51,8 +51,6 @@ impl VaultService {
         }
     }
 
-    // --- Connection CRUD ---
-
     pub async fn create_connection(
         &self,
         user_id: &str,
@@ -151,8 +149,6 @@ impl VaultService {
         provider.search(query, max_results).await
     }
 
-    // --- Grants ---
-
     pub async fn find_matching_grant(
         &self,
         user_id: &str,
@@ -217,8 +213,6 @@ impl VaultService {
         };
         self.grant_repo.create(&grant).await
     }
-
-    // --- Access logging ---
 
     #[allow(clippy::too_many_arguments)]
     pub async fn log_access(
@@ -312,8 +306,6 @@ impl VaultService {
         self.grant_repo.delete(grant_id).await
     }
 
-    // --- Secret fetching ---
-
     pub async fn get_secret(
         &self,
         user_id: &str,
@@ -323,8 +315,6 @@ impl VaultService {
         let provider = self.get_provider(user_id, connection_id).await?;
         provider.get_secret(item_id).await
     }
-
-    // --- Search across all connections ---
 
     pub async fn search_all(
         &self,
@@ -358,8 +348,6 @@ impl VaultService {
         all_results.truncate(max_results);
         Ok(all_results)
     }
-
-    // --- Startup sync ---
 
     pub async fn sync_config_connections(&self) -> Result<(), AppError> {
         let system_user = "system";
@@ -506,8 +494,6 @@ impl VaultService {
 
         entries
     }
-
-    // --- Credential CRUD (merged from CredentialService) ---
 
     pub async fn create_credential(
         &self,
@@ -663,8 +649,6 @@ impl VaultService {
 
         self.credential_repo.delete(credential_id).await
     }
-
-    // --- Internal helpers ---
 
     async fn get_provider(
         &self,

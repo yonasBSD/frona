@@ -323,8 +323,6 @@ impl Default for RetryConfig {
     }
 }
 
-// --- Common fields shared across all model group variants ---
-
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 pub struct CommonModelFields {
     #[schemars(description = "Model ID (without provider prefix).")]
@@ -345,8 +343,6 @@ pub struct CommonModelFields {
     #[schemars(description = "Retry configuration for this model group.")]
     pub retry: RetryConfig,
 }
-
-// --- Provider-specific param types ---
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 pub struct AnthropicThinking {
@@ -389,8 +385,6 @@ pub struct GeminiThinkingConfig {
     #[serde(default)]
     pub include_thoughts: Option<bool>,
 }
-
-// --- The tagged enum ---
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "provider")]
@@ -587,7 +581,6 @@ impl ModelGroupConfig {
             map.remove(*key);
         }
 
-        // Remove null values
         map.retain(|_, v| !v.is_null());
 
         if map.is_empty() { None } else { Some(serde_json::Value::Object(map)) }
@@ -878,7 +871,6 @@ const DEFAULT_ENCRYPTION_SECRET: &str = "dev-secret-change-in-production";
 
 /// Redact sensitive fields for API responses: replaces with `{"is_set": true/false}`.
 pub fn redact_config_for_api(value: &mut serde_json::Value) {
-    // Check if encryption secret is the default before redaction replaces it
     let has_default_secret = value
         .pointer("/auth/encryption_secret")
         .and_then(|v| v.as_str())
@@ -895,7 +887,6 @@ pub fn redact_config_for_api(value: &mut serde_json::Value) {
         }
     }
 
-    // Override: treat the default encryption secret as unset
     if has_default_secret
         && let Some(auth) = value.get_mut("auth").and_then(|a| a.as_object_mut())
     {
@@ -1046,7 +1037,6 @@ pub fn deep_merge(base: &mut serde_json::Value, patch: serde_json::Value) {
                 } else if value.is_object()
                     && value.as_object().is_some_and(|o| o.contains_key("is_set") && o.len() == 1)
                 {
-                    // Skip redaction markers
                 } else if let Some(existing) = base_map.get_mut(&key) {
                     if existing.is_object() && value.is_object() {
                         deep_merge(existing, value);

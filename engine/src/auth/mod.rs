@@ -215,7 +215,6 @@ impl AuthService {
         user.updated_at = chrono::Utc::now();
         user_service.update(&user).await?;
 
-        // Rename files directory
         let old_files_dir = std::path::Path::new(&config.storage.files_path).join(&old_username);
         let new_files_dir = std::path::Path::new(&config.storage.files_path).join(&req.username);
         if old_files_dir.exists() {
@@ -224,7 +223,6 @@ impl AuthService {
                 .map_err(|e| AppError::Internal(format!("Failed to rename files directory: {e}")))?;
         }
 
-        // Rename browser profiles directory
         if let Some(browser) = &config.browser {
             let old_profiles_dir = std::path::Path::new(&browser.profiles_path).join(&old_username);
             let new_profiles_dir = std::path::Path::new(&browser.profiles_path).join(&req.username);
@@ -235,13 +233,11 @@ impl AuthService {
             }
         }
 
-        // Revoke all active tokens (force re-login)
         let tokens = token_svc.repo().find_by_user_id(user_id).await?;
         for token in &tokens {
             let _ = token_svc.repo().delete(&token.id).await;
         }
 
-        // Create new session pair
         let (access_jwt, refresh_jwt) =
             token_svc.create_session_pair(keypair_svc, &user).await?;
 

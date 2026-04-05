@@ -38,7 +38,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: "Ollama",
 };
 
-// Cache fetched models per provider across renders
 const modelsCache: Record<string, ModelInfo[]> = {};
 
 export function ModelSelector({
@@ -91,7 +90,6 @@ export function ModelSelector({
     }
   }, [provider, fetchModels]);
 
-  // Notify parent of model info when model changes
   useEffect(() => {
     if (onModelInfo && model && availableModels.length > 0) {
       const info = availableModels.find(
@@ -101,7 +99,6 @@ export function ModelSelector({
     }
   }, [model, availableModels, onModelInfo]);
 
-  // Provider: use display labels as combobox values, map back to IDs
   const providerLabelById = new Map(enabledProviders.map((p) => [p, PROVIDER_LABELS[p] ?? p]));
   const providerIdByLabel = new Map(enabledProviders.map((p) => [PROVIDER_LABELS[p] ?? p, p]));
   const providerItems = enabledProviders.map((p) => {
@@ -110,14 +107,12 @@ export function ModelSelector({
   });
   const providerDisplay = providerLabelById.get(provider) ?? provider;
 
-  // Model: use display names as combobox values, map back to IDs
   const modelNameById = new Map(availableModels.map((m) => [m.id, m.name ?? m.id]));
   const modelIdByName = new Map(availableModels.map((m) => [m.name ?? m.id, m.id]));
   const modelItems = availableModels.map((m) => {
     const display = m.name ?? m.id;
     return { value: display, label: display };
   });
-  // Resolve display name: exact match first, then prefix match (alias → versioned ID)
   const modelDisplay = modelNameById.get(model)
     ?? availableModels.find((m) => m.id.startsWith(model) || model.startsWith(m.id))?.name
     ?? model;

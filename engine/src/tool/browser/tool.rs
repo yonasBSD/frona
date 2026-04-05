@@ -34,7 +34,6 @@ impl AgentTool for BrowserTool {
 
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![
-            // --- Navigation ---
             ToolDefinition {
                 group: "browser".to_string(),
                 id: "browser_navigate".to_string(),
@@ -82,7 +81,6 @@ impl AgentTool for BrowserTool {
                     "properties": {}
                 }),
             },
-            // --- Content extraction ---
             ToolDefinition {
                 group: "browser".to_string(),
                 id: "browser_extract".to_string(),
@@ -189,7 +187,6 @@ impl AgentTool for BrowserTool {
                     "required": ["code"]
                 }),
             },
-            // --- Interaction ---
             ToolDefinition {
                 group: "browser".to_string(),
                 id: "browser_click".to_string(),
@@ -331,7 +328,6 @@ impl AgentTool for BrowserTool {
                     "required": ["selector"]
                 }),
             },
-            // --- Tab management ---
             ToolDefinition {
                 group: "browser".to_string(),
                 id: "browser_new_tab".to_string(),

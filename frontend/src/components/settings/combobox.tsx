@@ -32,7 +32,6 @@ export function ComboboxInput({
   const [filteredItems, setFilteredItems] = useState(items);
   const [prevItemsLen, setPrevItemsLen] = useState(items.length);
 
-  // Sync filteredItems when items list changes
   if (items.length !== prevItemsLen) {
     setPrevItemsLen(items.length);
     setFilteredItems(items);

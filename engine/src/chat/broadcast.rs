@@ -15,10 +15,8 @@ use super::message::models::MessageResponse;
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum BroadcastEventKind {
-    // Inference streaming — wraps InferenceEventKind directly
     Inference(InferenceEventKind),
 
-    // Inference lifecycle (sent after saving messages)
     InferenceDone { message: MessageResponse },
     InferenceCancelled { reason: String },
     InferenceError { error: String },
@@ -28,10 +26,8 @@ pub enum BroadcastEventKind {
     ToolCallResolved { tool_call: ToolCallResponse },
     Title { title: String },
 
-    // Notifications (user-level, not chat-scoped)
     NewNotification { notification: Notification },
 
-    // Existing broadcast events
     ChatMessage { message: MessageResponse },
     TaskUpdate {
         task_id: String,

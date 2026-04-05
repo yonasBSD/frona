@@ -6,8 +6,6 @@ use surrealdb::types::SurrealValue;
 
 use crate::Entity;
 
-// --- Credential types (merged from credential/models.rs) ---
-
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[serde(tag = "type", content = "data")]
 #[surreal(crate = "surrealdb::types", tag = "type", content = "data")]
@@ -75,8 +73,6 @@ impl From<Credential> for CredentialResponse {
     }
 }
 
-// --- Local item request ---
-
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum CreateLocalItemRequest {
@@ -113,8 +109,6 @@ pub enum UpdateLocalItemRequest {
     },
 }
 
-// --- Vault access log ---
-
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]
 #[entity(table = "vault_access_log")]
@@ -130,8 +124,6 @@ pub struct VaultAccessLog {
     pub reason: String,
     pub created_at: DateTime<Utc>,
 }
-
-// --- Vault types ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
 #[serde(rename_all = "snake_case")]
@@ -264,8 +256,6 @@ pub struct VaultItem {
     pub name: String,
     pub username: Option<String>,
 }
-
-// --- Request/Response types ---
 
 #[derive(Debug, Deserialize)]
 pub struct CreateVaultConnectionRequest {

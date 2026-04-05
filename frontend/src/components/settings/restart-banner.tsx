@@ -16,10 +16,7 @@ export function RestartBanner({ visible }: RestartBannerProps) {
     setRestarting(true);
     try {
       await api.post("/api/system/restart", {});
-    } catch {
-      // Server may drop connection during restart
-    }
-    // Wait for server to come back, then reload
+    } catch {}
     await new Promise((r) => setTimeout(r, 1000));
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
@@ -29,12 +26,9 @@ export function RestartBanner({ visible }: RestartBannerProps) {
           window.location.reload();
           return;
         }
-      } catch {
-        // Server still down
-      }
+      } catch {}
       await new Promise((r) => setTimeout(r, 2000));
     }
-    // Timed out — reload anyway as a last resort
     window.location.reload();
   };
 

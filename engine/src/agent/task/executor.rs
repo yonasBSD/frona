@@ -176,7 +176,6 @@ impl TaskExecutor {
                 None
             };
 
-            // Create or find an Executing agent message for this turn
             let agent_msg_id = match self.app_state.chat_service
                 .find_executing_message_for_chat(&chat_id)
                 .await
@@ -267,7 +266,6 @@ impl TaskExecutor {
             }
         }
 
-        // Max outer turns reached — auto-complete
         tracing::warn!(
             task_id = %task.id,
             turns = MAX_TASK_RETRIES,
@@ -289,12 +287,9 @@ impl TaskExecutor {
         Ok(())
     }
 
-    // --- Lifecycle event scanning ---
-
     async fn find_lifecycle_event(&self, chat_id: &str) -> Option<LifecycleAction> {
         let messages = self.app_state.chat_service.get_stored_messages(chat_id).await;
 
-        // Extract deliverables from the complete_task tool execution's TaskCompletion tool_data
         let deliverables = {
             let tool_calls = self.app_state.chat_service
                 .get_tool_calls(chat_id).await.unwrap_or_default();
@@ -407,8 +402,6 @@ impl TaskExecutor {
         Ok(())
     }
 
-    // --- Resolution waiter ---
-
     async fn wait_for_resolution(
         &self,
         task_id: &str,
@@ -432,8 +425,6 @@ impl TaskExecutor {
 
         Ok(())
     }
-
-    // --- Helpers ---
 
     pub async fn ensure_task_chat(&self, task: &mut Task) -> Result<String, AppError> {
         if let Some(ref cid) = task.chat_id {
@@ -659,7 +650,6 @@ enum LifecycleAction {
 /// Check if a task executor is waiting for resolution on this chat's task.
 /// If so, notify it. Otherwise, fall back to `resume_agent_loop`.
 pub async fn resume_or_notify(state: &AppState, user_id: &str, chat_id: &str, message_id: &str) {
-    // Check if this chat belongs to a task with a waiting executor
     if let Ok(Some(chat)) = state.chat_service.find_chat(chat_id).await
         && let Some(ref task_id) = chat.task_id
     {
@@ -670,7 +660,6 @@ pub async fn resume_or_notify(state: &AppState, user_id: &str, chat_id: &str, me
         }
     }
 
-    // No waiting executor — use the interactive path
     if let Err(e) = crate::agent::execution::resume_agent_loop(state, user_id, chat_id, message_id).await {
         tracing::error!(error = %e, chat_id = %chat_id, "Failed to resume chat");
     }

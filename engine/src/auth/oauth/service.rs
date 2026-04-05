@@ -185,7 +185,6 @@ impl OAuthService {
             .and_then(|n| n.get(None))
             .map(|n| n.to_string());
 
-        // Email verification gate
         if !self.allow_unknown_email_verification
             && let Some(verified) = claims.email_verified()
             && !verified
@@ -196,7 +195,6 @@ impl OAuthService {
             });
         }
 
-        // Look up existing identity
         if let Some(identity) = self.repo.find_identity_by_sub(&external_sub).await? {
             let user = user_service
                 .find_by_id(&identity.user_id)
@@ -205,7 +203,6 @@ impl OAuthService {
             return Ok((user, false));
         }
 
-        // Try to match by email
         if self.signups_match_email
             && let Some(ref email) = external_email
             && let Some(existing_user) = user_service.find_by_email(email).await?
@@ -224,7 +221,6 @@ impl OAuthService {
             return Ok((existing_user, false));
         }
 
-        // Create new user
         let now = Utc::now();
         let base_username = if let Some(ref email) = external_email {
             AuthService::derive_username_from_email(email)

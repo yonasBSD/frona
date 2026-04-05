@@ -151,8 +151,6 @@ impl ConversationBuilder for TaskConversationBuilder {
     }
 }
 
-// --- ToolCall → RigMessage conversion ---
-
 fn group_tool_calls_by_message(
     tool_calls: &[ToolCall],
 ) -> HashMap<String, Vec<&ToolCall>> {
@@ -160,7 +158,6 @@ fn group_tool_calls_by_message(
     for te in tool_calls {
         map.entry(te.message_id.clone()).or_default().push(te);
     }
-    // Each group is already ordered by created_at ASC from the DB query
     map
 }
 
@@ -175,21 +172,17 @@ fn convert_agent_with_tool_calls(
 ) {
     let is_self = msg.agent_id.as_deref() == Some(agent_id);
     if !is_self {
-        // Other agent's message — treat as user message
         result.push(RigMessage::user(&msg.content));
         return;
     }
 
-    // Group tool calls by turn
     let mut turns: std::collections::BTreeMap<u32, Vec<&ToolCall>> =
         std::collections::BTreeMap::new();
     for te in tool_calls {
         turns.entry(te.turn).or_default().push(te);
     }
 
-    // Emit tool call/result pairs for each turn
     for tes in turns.values() {
-        // Assistant message with turn text (if any) + tool calls
         let mut assistant_items: Vec<AssistantContent> = Vec::new();
         if let Some(text) = tes.iter().find_map(|te| te.turn_text.as_deref())
             && !text.is_empty()
@@ -203,7 +196,6 @@ fn convert_agent_with_tool_calls(
             result.push(RigMessage::Assistant { id: None, content });
         }
 
-        // User message with tool results
         let tool_results: Vec<UserContent> = tes
             .iter()
             .map(|te| {
@@ -219,7 +211,6 @@ fn convert_agent_with_tool_calls(
         }
     }
 
-    // Emit final text if the message is completed and has content
     let is_completed = msg.status.as_ref() == Some(&MessageStatus::Completed);
     if is_completed && !msg.content.is_empty() {
         let mut items: Vec<AssistantContent> = Vec::new();
@@ -237,8 +228,6 @@ fn convert_agent_with_tool_calls(
     }
 }
 
-// --- Pure functions (no service dependencies) ---
-
 pub fn format_files_block_simple(content: &str, attachments: &[Attachment]) -> String {
     if attachments.is_empty() {
         return content.to_string();
@@ -253,7 +242,6 @@ pub fn is_embeddable_image(attachment: &Attachment) -> bool {
 }
 
 pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage> {
-    // Skip placeholder messages that haven't been completed yet
     if msg.status.as_ref() == Some(&MessageStatus::Executing) {
         return None;
     }
@@ -279,8 +267,6 @@ pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage
         Some(RigMessage::user(&msg.content))
     }
 }
-
-// --- Service-dependent functions ---
 
 pub async fn resolve_attachment_path(
     attachment: &Attachment,
@@ -342,7 +328,6 @@ pub async fn build_user_message(
         }
     }
 
-    // Build text content with non-image file paths
     let text = if non_images.is_empty() {
         content.to_string()
     } else {
@@ -353,12 +338,10 @@ pub async fn build_user_message(
         format!("{content}\n<files>\n{}\n</files>", paths.join("\n"))
     };
 
-    // If no images to embed, return simple text message
     if images.is_empty() {
         return RigMessage::user(&text);
     }
 
-    // Build multi-content message with text + embedded images
     let mut contents: Vec<UserContent> = vec![UserContent::text(&text)];
 
     for (resolved_path, att) in &images {
