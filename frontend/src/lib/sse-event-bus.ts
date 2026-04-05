@@ -170,7 +170,14 @@ export class SSEEventBus {
         sub.notifyReconnect();
       }
     }
-    this.chatBuffers.clear();
+    // Only clear buffers for chats that have active subscribers (they were just
+    // notified above). Preserve buffers for chats with no subscriber yet — e.g.
+    // a just-created chat whose React effect hasn't fired.
+    for (const chatId of [...this.chatBuffers.keys()]) {
+      if (this.chatSubscribers.has(chatId)) {
+        this.chatBuffers.delete(chatId);
+      }
+    }
   }
 
   private async runLoop(signal: AbortSignal) {

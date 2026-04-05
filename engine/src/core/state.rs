@@ -130,7 +130,7 @@ impl AppState {
         metrics_handle: PrometheusHandle,
         resource_manager: Arc<SystemResourceManager>,
     ) -> Self {
-        let broadcast_service = BroadcastService::new();
+        let broadcast_service = BroadcastService::with_pending_events_secs(config.server.sse_pending_events_secs);
         let llm_config = load_models_config(models_config);
         let provider_registry = ModelProviderRegistry::from_config(llm_config, broadcast_service.clone(), &config.inference)
             .expect("Failed to initialize provider registry");

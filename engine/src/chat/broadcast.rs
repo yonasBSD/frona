@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::response::sse::Event;
 use tokio::sync::{RwLock, mpsc};
@@ -52,6 +53,9 @@ pub struct BroadcastEvent {
 
 type SseSender = mpsc::UnboundedSender<Result<Event, Infallible>>;
 type SessionRegistry = Arc<RwLock<HashMap<String, Vec<SseSender>>>>;
+/// TTL cache that buffers SSE events after all of a user's senders disconnect.
+/// When the user reconnects, buffered events are drained into the new sender.
+type PendingEventsCache = Arc<moka::sync::Cache<String, Arc<Mutex<Vec<Event>>>>>;
 
 /// Pre-serialized event ready for the dispatcher to route.
 struct DispatchEvent {
@@ -117,6 +121,7 @@ impl EventSender {
 pub struct BroadcastService {
     tx: mpsc::UnboundedSender<DispatchEvent>,
     sessions: SessionRegistry,
+    pending_events: PendingEventsCache,
 }
 
 impl Default for BroadcastService {
@@ -278,20 +283,31 @@ fn map_event_to_sse(event: &BroadcastEvent) -> Option<Event> {
 
 impl BroadcastService {
     pub fn new() -> Self {
+        Self::with_pending_events_secs(60)
+    }
+
+    pub fn with_pending_events_secs(secs: u64) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         let sessions: SessionRegistry = Arc::new(RwLock::new(HashMap::new()));
+        let pending_events: PendingEventsCache = Arc::new(
+            moka::sync::Cache::builder()
+                .time_to_live(Duration::from_secs(secs.max(1)))
+                .build(),
+        );
 
         let sessions_clone = sessions.clone();
+        let pending_events_clone = pending_events.clone();
         tokio::spawn(async move {
-            Self::run_dispatcher(rx, sessions_clone).await;
+            Self::run_dispatcher(rx, sessions_clone, pending_events_clone).await;
         });
 
-        Self { tx, sessions }
+        Self { tx, sessions, pending_events }
     }
 
     async fn run_dispatcher(
         mut rx: mpsc::UnboundedReceiver<DispatchEvent>,
         sessions: SessionRegistry,
+        pending_events: PendingEventsCache,
     ) {
         while let Some(event) = rx.recv().await {
             let registry = sessions.read().await;
@@ -322,6 +338,20 @@ impl BroadcastService {
                         }
                     }
                 }
+                // No live senders left — buffer into pending_events cache for reconnect
+                let has_live = {
+                    let reg = sessions.read().await;
+                    reg.get(&event.user_id).is_some_and(|s| !s.is_empty())
+                };
+                if !has_live {
+                    let buf = pending_events.get_with(event.user_id.clone(), || Arc::new(Mutex::new(Vec::new())));
+                    buf.lock().unwrap().push(event.sse);
+                }
+            } else {
+                // User has no session entry — might be pending_eventsing after disconnect
+                if let Some(buf) = pending_events.get(&event.user_id) {
+                    buf.lock().unwrap().push(event.sse);
+                }
             }
         }
     }
@@ -350,6 +380,12 @@ impl BroadcastService {
         user_id: &str,
         sender: SseSender,
     ) {
+        // Drain any events buffered during the disconnect window.
+        if let Some(buf) = self.pending_events.remove(user_id) {
+            for event in buf.lock().unwrap().drain(..) {
+                let _ = sender.send(Ok(event));
+            }
+        }
         let mut registry = self.sessions.write().await;
         registry.entry(user_id.to_string()).or_default().push(sender);
     }

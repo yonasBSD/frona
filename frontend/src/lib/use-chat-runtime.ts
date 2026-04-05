@@ -285,6 +285,10 @@ export function useChatRuntime({ chatId, agentId, onChatCreated }: ChatRuntimeOp
   }
   const store = storeRef.current;
 
+  // Eager SSE subscription controller — set in onNew so events are captured
+  // immediately, before the useEffect has a chance to fire.
+  const eagerSubRef = useRef<AbortController | null>(null);
+
   // Subscribe to store changes for re-rendering
   const subscribe = useCallback((cb: () => void) => store.subscribe(cb), [store]);
   const storeSnapshot = useSyncExternalStore(
@@ -302,9 +306,17 @@ export function useChatRuntime({ chatId, agentId, onChatCreated }: ChatRuntimeOp
     }
   }, [chatId, store]);
 
-  // Subscribe to SSE events for the chat
+  // Subscribe to SSE events for the chat.
+  // If an eager subscription was started in onNew, adopt it instead of creating a new one.
   useEffect(() => {
     if (!chatId) return;
+
+    // If onNew already started an eager subscription for this chat, adopt it.
+    if (eagerSubRef.current) {
+      const adopted = eagerSubRef.current;
+      eagerSubRef.current = null;
+      return () => adopted.abort();
+    }
 
     const controller = new AbortController();
     const events = sseBus.subscribe(chatId, controller.signal);
@@ -349,8 +361,19 @@ export function useChatRuntime({ chatId, agentId, onChatCreated }: ChatRuntimeOp
       const chat = await api.post<ChatResponse>("/api/chats", { agent_id: agentId });
       sendChatId = chat.id;
       currentChatIdRef.current = sendChatId;
-      // This triggers slot promotion → chatId prop change → SSE effect runs.
-      // sseBus buffers events until the subscriber is ready.
+
+      // Eagerly subscribe to SSE events NOW, before the React effect fires.
+      // This eliminates the race window where events could arrive unbuffered.
+      const eager = new AbortController();
+      eagerSubRef.current = eager;
+      const events = sseBus.subscribe(sendChatId, eager.signal);
+      (async () => {
+        for await (const event of events) {
+          store.handleEvent(event);
+        }
+      })();
+
+      // This triggers slot promotion → chatId prop change → SSE effect adopts the eager sub.
       onChatCreatedRef.current(chat);
     }
 
