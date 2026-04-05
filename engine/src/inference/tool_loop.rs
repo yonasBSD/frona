@@ -207,6 +207,10 @@ async fn execute_tool_calls(
     let mut turn_text_used = false;
 
     for content in contents {
+        if ctx.cancel_token.is_cancelled() {
+            break;
+        }
+
         let AssistantContent::ToolCall(tool_call) = content else {
             continue;
         };

@@ -47,7 +47,7 @@ async fn handle_inference_result(
                 }
             }
             InferenceResponse::Cancelled(text) => {
-                let _ = chat_service.complete_agent_message(message_id, text, vec![], None).await;
+                let _ = chat_service.cancel_agent_message(message_id, text).await;
                 event_sender.send_kind(BroadcastEventKind::InferenceCancelled {
                     reason: "User cancelled generation".to_string(),
                 });

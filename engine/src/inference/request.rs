@@ -27,6 +27,8 @@ pub struct InferenceContext {
     /// Resolved filesystem paths for files shared in this chat (from message attachments).
     pub file_paths: Vec<String>,
     pub shutdown_token: CancellationToken,
+    /// User-initiated cancellation token — tools should check/use this to abort early.
+    pub cancel_token: CancellationToken,
 }
 
 impl InferenceContext {
@@ -36,6 +38,7 @@ impl InferenceContext {
         chat: Chat,
         event_tx: EventSender,
         shutdown_token: CancellationToken,
+        cancel_token: CancellationToken,
     ) -> Self {
         Self {
             user,
@@ -46,6 +49,7 @@ impl InferenceContext {
             vault_env_vars: Arc::new(RwLock::new(Vec::new())),
             file_paths: Vec::new(),
             shutdown_token,
+            cancel_token,
         }
     }
 

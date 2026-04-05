@@ -397,6 +397,7 @@ mod tests {
             },
             event_sender,
             tokio_util::sync::CancellationToken::new(),
+            tokio_util::sync::CancellationToken::new(),
         )
     }
 

@@ -181,13 +181,15 @@ impl AgentTool for CliTool {
                 timeout,
                 None,
                 None,
-                None,
+                Some(ctx.cancel_token.clone()),
             )
             .await?;
 
         let mut result = String::new();
 
-        if output.resource_killed {
+        if output.cancelled {
+            result.push_str("Process cancelled by user.\n");
+        } else if output.resource_killed {
             result.push_str("Process killed: resource limit exceeded.\n");
         } else if output.timed_out {
             result.push_str(&format!(
@@ -415,6 +417,7 @@ mod tests {
                 updated_at: chrono::Utc::now(),
             },
             event_sender,
+            tokio_util::sync::CancellationToken::new(),
             tokio_util::sync::CancellationToken::new(),
         )
     }

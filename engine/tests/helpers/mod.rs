@@ -333,6 +333,7 @@ pub fn mock_context() -> InferenceContext {
         },
         event_sender,
         tokio_util::sync::CancellationToken::new(),
+        tokio_util::sync::CancellationToken::new(),
     )
 }
 

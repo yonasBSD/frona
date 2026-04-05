@@ -483,6 +483,24 @@ impl ChatService {
         Ok(updated.into())
     }
 
+    pub async fn cancel_agent_message(
+        &self,
+        message_id: &str,
+        content: String,
+    ) -> Result<MessageResponse, AppError> {
+        let mut message = self
+            .message_repo
+            .find_by_id(message_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
+
+        message.content = content;
+        message.status = Some(MessageStatus::Cancelled);
+
+        let updated = self.message_repo.update(&message).await?;
+        Ok(updated.into())
+    }
+
     pub async fn fail_agent_message(&self, message_id: &str) -> Result<(), AppError> {
         let mut message = self
             .message_repo

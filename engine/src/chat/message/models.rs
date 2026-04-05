@@ -21,6 +21,7 @@ pub enum MessageStatus {
     Executing,
     Completed,
     Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SurrealValue)]

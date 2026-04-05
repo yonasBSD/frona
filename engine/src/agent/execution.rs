@@ -113,7 +113,7 @@ pub async fn resume_agent_loop(
             InferenceResponse::Cancelled(text) => {
                 let _ = state
                     .chat_service
-                    .complete_agent_message(message_id, text, vec![], None)
+                    .cancel_agent_message(message_id, text)
                     .await;
                 event_sender.send_kind(BroadcastEventKind::InferenceCancelled {
                     reason: "Cancelled".to_string(),
