@@ -4,7 +4,7 @@
     </a>
 </p>
 
-Frona is a self-hosted AI agent platform. You create autonomous agents, give them tools, and talk to them through a chat interface. Agents act on their own. They browse the web, run code, develop applications, search the internet, make phone calls, delegate work to each other, and remember context across conversations. You give them a task and they figure out how to get it done.
+Frona is a personal AI assistant. You create autonomous agents that browse the web, run code, build applications, make phone calls, delegate work to each other, and remember context across conversations, all within sandboxed environments with controlled access to your files, network, and credentials. You give them a task and they figure out how to get it done.
 
 You deploy Frona on your own infrastructure and keep full control of your data. The platform is built from the ground up with security in mind, and the engine is written in Rust. So it's fast, lightweight, and runs everything in a single process.
 
@@ -12,40 +12,101 @@ You deploy Frona on your own infrastructure and keep full control of your data. 
 
 AI agents are powerful. They can execute code, browse websites, and access your data. No platform can make LLMs perfectly safe. They will make mistakes. The goal is to isolate those mistakes and reduce the blast radius when they happen.
 
-- **Sandboxed execution:** when agents run shell commands, they execute inside a sandbox that restricts filesystem access to the agent's workspace directory, controls network access per agent, and enforces execution timeouts
+- **Sandboxed execution:** when agents run shell commands, they execute inside a sandbox that restricts filesystem access to the agent's workspace directory, controls network access per agent, and enforces execution timeouts. An agent can't read files outside its workspace or make network calls you didn't allow
 - **Agent isolation:** each agent gets its own set of tools, its own workspace directory, and its own credentials. Create narrow, purpose-built agents instead of one agent that can do everything
 - **Isolated browser sessions:** each user gets separate browser profiles. Different credentials get separate browser states. One user's cookies and sessions are never visible to another
-- **Kill switch:** gives you control to stop all running agent operations instantly
+- **Credential vault:** agents request credentials when they need them, and you approve or deny in real time. Supports 1Password, Bitwarden, HashiCorp Vault, KeePass, and Keeper. Secrets are never stored in agent memory or sent to LLM providers
 - **Self-hosted by design:** your data lives on your servers. You choose which LLM provider to use, and traffic goes directly from your instance to that provider
 
 ## Features
 
-- **Autonomous agents with tools:** agents decide which tools to use and execute multi-step tasks on their own. Agents can also build their own tools.
-- **Browser automation:** headless Chrome via Browserless for navigating websites, filling forms, and extracting data
+- **Autonomous agents with tools:** agents decide which tools to use and execute multi-step tasks on their own. Agents can also build their own tools
+- **Browser automation:** headless Chrome via Browserless for navigating websites, filling forms, and extracting data. Persistent browser profiles keep sessions across conversations
 - **Web search:** built-in search via SearXNG, Tavily, or Brave Search
-- **Code execution:** sandboxed shell commands with filesystem and network restrictions per agent
-- **Voice calls:** outbound phone calls via Twilio (optional)
-- **Persistent memory:** agents remember facts across conversations with automatic compaction
-- **Agent-to-agent delegation:** agents hand off tasks to specialized agents
+- **Code execution:** sandboxed shell commands with filesystem, network, and resource restrictions per agent
+- **App deployment:** agents build and deploy web applications and services on your behalf, with an approval workflow before anything goes live
+- **Skills:** instruction packages that teach agents new capabilities. Install shared skills or create agent-specific ones
+- **Scheduling:** recurring tasks via cron expressions and agent-managed heartbeat checklists
+- **Voice calls:** outbound phone calls via Twilio with speech recognition and DTMF navigation (optional)
+- **Persistent memory:** agents remember facts across conversations with automatic compaction and deduplication. User-scoped facts are shared across agents, agent-scoped facts are private
+- **Agent-to-agent delegation:** agents hand off tasks to specialized agents and get results back
+- **Spaces:** group conversations that share context. The platform summarizes linked conversations and feeds the context into new chats
 - **Real-time streaming:** token-by-token response streaming over Server-Sent Events
+- **SSO:** OpenID Connect support for single sign-on with Google, Keycloak, and other OIDC providers
 - **Single-container deployment:** the entire backend (API server, embedded database, scheduler, tool execution) runs in one rootless Docker container
 
 ## Core Concepts
 
-- **Agents** are the main building blocks. Each agent has a name, a system prompt that defines its behavior, a model group that determines which LLM it uses, and a list of tools it can access.
+- **Agents** are the main building blocks. Each agent has a name, a system prompt that defines its behavior, a model group that determines which LLM it uses, and a list of tools it can access. Frona ships with built-in agents (Assistant, Researcher, Developer, Receptionist) and you can create your own.
 - **Memory** lets agents remember things across conversations. There are user-scoped facts (shared across all agents) and agent-scoped facts (private to one agent). The platform automatically compacts and deduplicates memories over time.
 - **Tools** are capabilities you give to agents. Browser automation, web search, file operations, shell commands, voice calls, task scheduling, and more. Tools run server-side and return results to the agent.
 - **Tasks** represent units of work. They can be direct (run immediately), delegated (from one agent to another), or scheduled (recurring via cron expressions).
 - **Chat** is how you interact with agents. Each conversation belongs to one agent, but multiple agents can contribute to it through delegation. Messages stream in real-time over Server-Sent Events.
 - **Spaces** are groups of chats that share the same context. When you link conversations to a space, the platform summarizes those conversations and feeds the context back into new chats.
+- **Skills** are instruction packages you install on agents. They can be built-in, shared across all agents, or scoped to a single agent.
 
 ## Quickstart
 
-See the [docker-compose example](examples/docker-compose) to get started, take a look at [screenshots](https://docs.frona.ai/platform/screenshots/) to see the platform in action, or check out the [documentation](https://docs.frona.ai) for more details.
+You'll need [Docker](https://docs.docker.com/get-docker/) with Compose v2.
+
+```yaml
+# docker-compose.yml
+services:
+  frona:
+    image: ghcr.io/fronalabs/frona:latest
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - FRONA_BROWSER_WS_URL=ws://browserless:3333
+      - FRONA_SEARCH_SEARXNG_BASE_URL=http://searxng:8080
+    depends_on:
+      - browserless
+      - searxng
+    restart: unless-stopped
+
+  browserless:
+    image: ghcr.io/browserless/chromium:latest
+    environment:
+      - MAX_CONCURRENT_SESSIONS=10
+      - PREBOOT_CHROME=true
+    volumes:
+      - ./data/browser_profiles:/profiles
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080
+      - SEARXNG_SECRET=change-me-to-something-random
+    configs:
+      - source: searxng-settings
+        target: /etc/searxng/settings.yml
+    restart: unless-stopped
+
+configs:
+  searxng-settings:
+    content: |
+      use_default_settings: true
+      search:
+        formats:
+          - html
+          - json
+```
+
+```bash
+docker compose up -d
+open http://localhost:3001
+```
+
+The setup wizard will guide you through creating your account and configuring your LLM provider.
+
+See the [docker-compose example](examples/docker-compose) for a full deployment with environment configuration, the [documentation](https://docs.frona.ai) for detailed guides, or [screenshots](https://docs.frona.ai/platform/screenshots/) to see the platform in action.
 
 ## Model Providers
 
-Frona connects to any of the following LLM providers. Set the corresponding API key in your env and the provider is auto-discovered.
+Frona connects to any of the following LLM providers. Set the corresponding API key in your env and the provider is auto-discovered. Configure model groups (primary, coding, reasoning) to route different tasks to different models.
 
 | Provider | Environment Variable |
 |---|---|
@@ -98,7 +159,18 @@ External services plug in for specific capabilities:
 - **SearXNG:** web search
 - **Twilio:** voice calls (optional)
 
-Everything runs in Docker containers. A typical deployment is a single `docker-compose.yml` that brings up the engine, frontend, and supporting services.
+Everything runs in Docker containers. A typical deployment is a single `docker-compose.yml` that brings up the engine, frontend, and supporting services. See the [Kubernetes example](examples/kubernetes) for cluster deployments.
+
+## Documentation
+
+- [Overview](https://docs.frona.ai/platform/overview) — what Frona is and how it works
+- [Quickstart](https://docs.frona.ai/platform/quickstart) — get running with Docker in minutes
+- [Agents](https://docs.frona.ai/platform/agents/overview) — agent types, configuration, and delegation
+- [Tools](https://docs.frona.ai/platform/tools/overview) — browser, search, CLI, voice, and more
+- [Sandbox](https://docs.frona.ai/platform/security/sandbox) — filesystem, network, and resource controls
+- [Credentials](https://docs.frona.ai/platform/credentials/overview) — vault integration and approval workflows
+- [Deployment](https://docs.frona.ai/platform/deployment/docker-compose) — Docker Compose and Kubernetes guides
+- [Configuration](https://docs.frona.ai/platform/deployment/config-file) — full config file and environment variable reference
 
 ## Development
 
