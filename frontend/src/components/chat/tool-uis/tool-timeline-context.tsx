@@ -189,7 +189,7 @@ export function ToolTimelineProvider({
             <ChevronRightIcon className="h-3 w-3" />
           </motion.button>
         )}
-        {!collapsed && !isRunning && totalTools > 0 && (
+        {!collapsed && (!isRunning || !message.isLast) && totalTools > 0 && (
           <motion.button
             key="collapse"
             initial={{ opacity: 0, y: -4 }}

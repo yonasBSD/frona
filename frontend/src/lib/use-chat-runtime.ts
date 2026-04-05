@@ -218,7 +218,7 @@ export function convertMessage(msg: MessageResponse) {
         if (!te.tool_data) {
           content.push({
             type: "tool-call",
-            toolCallId: te.provider_call_id,
+            toolCallId: te.id,
             toolName: te.name,
             args: {
               description: te.description ?? te.name,
