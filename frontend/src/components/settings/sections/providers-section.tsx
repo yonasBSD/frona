@@ -112,7 +112,7 @@ async function testAllProviders(
   states: ProviderState[],
   onUpdate: (id: string, status: TestStatus) => void
 ): Promise<void> {
-  const toTest = states.filter((p) => p.enabled && hasKey(p) && p.testStatus !== "success");
+  const toTest = states.filter((p) => p.enabled && hasKey(p) && p.testStatus === "idle");
   await Promise.all(
     toTest.map(async (p) => {
       onUpdate(p.id, "testing");
@@ -245,7 +245,7 @@ export function ProvidersSection({ providers, onChange, onReadyChange }: Provide
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     const needsTest = providerStates.some(
-      (p) => p.enabled && hasKey(p) && (p.testStatus === "idle" || p.testStatus === "error")
+      (p) => p.enabled && hasKey(p) && p.testStatus === "idle"
     );
     if (!needsTest || testingRef.current) return;
 
