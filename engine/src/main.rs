@@ -38,6 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(EnvFilter::new(&log_filter))
         .init();
 
+    info!("Frona v{}", env!("CARGO_PKG_VERSION"));
+
     let loaded = Config::load();
     let config = loaded.config;
 
@@ -217,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
-    info!("Frona v{} starting on {addr}", env!("CARGO_PKG_VERSION"));
+    info!("Starting on {addr}");
 
     let shutdown_token = state.shutdown_token.clone();
     let shutdown_signal = async move {
