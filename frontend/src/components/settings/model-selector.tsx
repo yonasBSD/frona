@@ -140,7 +140,6 @@ export function ModelSelector({
             const newProvider = providerIdByLabel.get(newDisplay) ?? newDisplay;
             if (newProvider !== provider) {
               onProviderChange(newProvider);
-              onModelChange("");
               if (newProvider) fetchModels(newProvider);
             }
           }}
@@ -151,6 +150,7 @@ export function ModelSelector({
           items={modelItems}
           placeholder={loading ? "Fetching models..." : "Select model"}
           allowFreeText
+          disabled={!provider}
           onChange={(newDisplay) => {
             const modelId = modelIdByName.get(newDisplay) ?? newDisplay;
             onModelChange(modelId);

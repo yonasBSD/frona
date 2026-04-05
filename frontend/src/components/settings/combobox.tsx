@@ -16,6 +16,7 @@ interface ComboboxInputProps {
   onBlur?: () => void;
   placeholder?: string;
   allowFreeText?: boolean;
+  disabled?: boolean;
 }
 
 export function ComboboxInput({
@@ -26,6 +27,7 @@ export function ComboboxInput({
   placeholder,
   allowFreeText = true,
   onBlur,
+  disabled = false,
 }: ComboboxInputProps) {
   const [filteredItems, setFilteredItems] = useState(items);
   const [prevItemsLen, setPrevItemsLen] = useState(items.length);
@@ -104,7 +106,8 @@ export function ComboboxInput({
               onBlur,
             })}
             placeholder={placeholder}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 pr-8 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+            disabled={disabled}
+            className={`w-full rounded-lg border border-border bg-surface px-3 py-2 pr-8 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
           />
           <button
             type="button"
