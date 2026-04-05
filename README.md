@@ -163,14 +163,14 @@ Everything runs in Docker containers. A typical deployment is a single `docker-c
 
 ## Documentation
 
-- [Overview](https://docs.frona.ai/platform/overview) — what Frona is and how it works
-- [Quickstart](https://docs.frona.ai/platform/quickstart) — get running with Docker in minutes
-- [Agents](https://docs.frona.ai/platform/agents/overview) — agent types, configuration, and delegation
-- [Tools](https://docs.frona.ai/platform/tools/overview) — browser, search, CLI, voice, and more
-- [Sandbox](https://docs.frona.ai/platform/security/sandbox) — filesystem, network, and resource controls
-- [Credentials](https://docs.frona.ai/platform/credentials/overview) — vault integration and approval workflows
-- [Deployment](https://docs.frona.ai/platform/deployment/docker-compose) — Docker Compose and Kubernetes guides
-- [Configuration](https://docs.frona.ai/platform/deployment/config-file) — full config file and environment variable reference
+- [Overview](https://docs.frona.ai/platform/overview.html) — what Frona is and how it works
+- [Quickstart](https://docs.frona.ai/platform/quickstart.html) — get running with Docker in minutes
+- [Agents](https://docs.frona.ai/platform/agents/overview.html) — agent types, configuration, and delegation
+- [Tools](https://docs.frona.ai/platform/tools/overview.html) — browser, search, CLI, voice, and more
+- [Sandbox](https://docs.frona.ai/platform/security/sandbox.html) — filesystem, network, and resource controls
+- [Credentials](https://docs.frona.ai/platform/credentials/overview.html) — vault integration and approval workflows
+- [Deployment](https://docs.frona.ai/platform/deployment/docker-compose.html) — Docker Compose and Kubernetes guides
+- [Configuration](https://docs.frona.ai/platform/deployment/config-file.html) — full config file and environment variable reference
 
 ## Development
 
