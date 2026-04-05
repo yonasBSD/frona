@@ -8,6 +8,10 @@ services:
     environment:
       - FRONA_BROWSER_WS_URL=ws://browserless:3333
       - FRONA_SEARCH_SEARXNG_BASE_URL=http://searxng:8080
+    # Only needed if you plan to restrict agent network destinations.
+    # See https://docs.frona.ai/platform/security/sandbox.html
+    security_opt:
+      - seccomp:unconfined
     depends_on:
       - browserless
       - searxng
