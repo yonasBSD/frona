@@ -8,6 +8,7 @@ pub const PROC_READ_PATHS: &[&str] = &[
     "/proc/self",
     "/proc/cpuinfo", "/proc/meminfo",
     "/proc/filesystems",
+    "/proc/version", "/proc/version_signature",
     // Node.js reads cgroup memory limits
     "/sys/fs/cgroup",
 ];

@@ -319,9 +319,10 @@ mod tests {
             .join("prompts");
         let prompts = PromptLoader::new(shared_prompts);
         let configs = load_cli_tool_configs(&prompts);
-        assert_eq!(configs.len(), 2);
+        assert_eq!(configs.len(), 3);
         assert!(configs.iter().any(|c| c.name == "shell"));
         assert!(configs.iter().any(|c| c.name == "python"));
+        assert!(configs.iter().any(|c| c.name == "node"));
     }
 
     fn mock_skill_service() -> SkillService {

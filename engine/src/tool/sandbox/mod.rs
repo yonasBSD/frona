@@ -133,6 +133,7 @@ impl Sandbox {
             })?;
         }
         self.setup_venv();
+        self.setup_node_env();
         Ok(())
     }
 
@@ -163,6 +164,40 @@ impl Sandbox {
         }
     }
 
+    fn setup_node_env(&self) {
+        let node_prefix = self.path.join(".node");
+        if node_prefix.exists() {
+            return;
+        }
+
+        if let Err(e) = std::fs::create_dir_all(&node_prefix) {
+            tracing::warn!(error = %e, "Failed to create .node prefix directory");
+            return;
+        }
+
+        if !self.path.join("package.json").exists() {
+            let result = std::process::Command::new("npm")
+                .args(["init", "-y"])
+                .current_dir(&self.path)
+                .output();
+
+            match result {
+                Ok(output) if output.status.success() => {
+                    tracing::info!(path = %self.path.display(), "Initialized npm workspace");
+                }
+                Ok(output) => {
+                    tracing::warn!(
+                        stderr = String::from_utf8_lossy(&output.stderr).as_ref(),
+                        "Failed to run npm init"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "npm not available, skipping Node.js env setup");
+                }
+            }
+        }
+    }
+
     fn base_config(&self) -> Result<SandboxConfig, AppError> {
         self.setup()?;
 
@@ -177,6 +212,21 @@ impl Sandbox {
             env_vars.push((
                 "VIRTUAL_ENV".to_string(),
                 canonical_path.join(".venv").to_string_lossy().into_owned(),
+            ));
+        }
+
+        let node_bin = canonical_path.join(".node").join("bin");
+        if canonical_path.join(".node").exists() {
+            if node_bin.exists() {
+                additional_path_dirs.push(node_bin.to_string_lossy().into_owned());
+            }
+            env_vars.push((
+                "NPM_CONFIG_PREFIX".to_string(),
+                canonical_path.join(".node").to_string_lossy().into_owned(),
+            ));
+            env_vars.push((
+                "NODE_PATH".to_string(),
+                canonical_path.join("node_modules").to_string_lossy().into_owned(),
             ));
         }
 
