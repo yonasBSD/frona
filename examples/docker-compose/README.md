@@ -35,7 +35,7 @@ open http://localhost:3001
 
 - **`.env`** — API keys and secrets (required)
 - **`config.yaml`** — Frona settings: model groups, providers, server options (optional — defaults work out of the box)
-- **`searxng/settings.yml`** — SearXNG search engine configuration
+- **SearXNG** — Search engine settings are defined inline in `docker-compose.yml` via Docker Compose configs
 
 ## Data
 

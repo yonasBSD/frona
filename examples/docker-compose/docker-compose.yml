@@ -26,6 +26,17 @@ services:
     image: searxng/searxng:latest
     environment:
       - SEARXNG_BASE_URL=http://searxng:8080
-    volumes:
-      - ./searxng:/etc/searxng
+      - SEARXNG_SECRET=change-me-to-something-random
+    configs:
+      - source: searxng-settings
+        target: /etc/searxng/settings.yml
     restart: unless-stopped
+
+configs:
+  searxng-settings:
+    content: |
+      use_default_settings: true
+      search:
+        formats:
+          - html
+          - json
