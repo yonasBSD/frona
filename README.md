@@ -106,7 +106,7 @@ open http://localhost:3001
 
 The setup wizard will guide you through creating your account and configuring your LLM provider.
 
-See the [docker-compose example](examples/docker-compose) for a full deployment with environment configuration, the [documentation](https://docs.frona.ai) for detailed guides, or [screenshots](https://docs.frona.ai/platform/screenshots/) to see the platform in action.
+See the [docker-compose example](examples/docker-compose) for a full deployment with environment configuration, the [documentation](https://docs.frona.ai) for detailed guides, or [screenshots](https://docs.frona.ai/platform/screenshots.html) to see the platform in action.
 
 ## Model Providers
 
@@ -181,20 +181,11 @@ Everything runs in Docker containers. A typical deployment is a single `docker-c
 All commands use [mise](https://mise.jdx.dev/) as the task runner:
 
 ```bash
-mise run dev              # Run backend + frontend in parallel
-mise run dev:backend      # Rust server with cargo-watch hot-reload (port 3001)
-mise run dev:frontend     # Next.js dev server (port 3000)
-mise run build            # Full production build
-mise run check            # cargo check --workspace
-mise run lint             # clippy + next lint
-mise run test             # cargo test --workspace
+mise run docker:dev       # Run full dev stack in Docker with hot-reload
+mise run docker:prod      # Run production stack in Docker
 ```
 
-Start external services (Browserless, SearXNG) for local development:
-
-```bash
-docker compose up -d
-```
+See [mise.toml](mise.toml) for all available targets.
 
 ## License
 
