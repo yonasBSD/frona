@@ -33,7 +33,7 @@ AI agents are powerful. They can execute code, browse websites, and access your 
 - **Spaces:** group conversations that share context. The platform summarizes linked conversations and feeds the context into new chats
 - **Real-time streaming:** token-by-token response streaming over Server-Sent Events
 - **SSO:** OpenID Connect support for single sign-on with Google, Keycloak, and other OIDC providers
-- **Single-container deployment:** the entire backend (API server, embedded database, scheduler, tool execution) runs in one rootless Docker container
+- **Single-container deployment:** the entire backend (API server, embedded database, scheduler, tool execution) runs in one rootless OCI container (compatible with Docker, Podman, and other OCI runtimes)
 
 ## Core Concepts
 
@@ -47,7 +47,7 @@ AI agents are powerful. They can execute code, browse websites, and access your 
 
 ## Quickstart
 
-You'll need [Docker](https://docs.docker.com/get-docker/) with Compose v2.
+You'll need an OCI runtime with Compose v2 support, such as [Docker](https://docs.docker.com/get-docker/) or [Podman](https://podman.io/).
 
 ```yaml
 # docker-compose.yml
@@ -100,7 +100,7 @@ configs:
 ```
 
 ```bash
-docker compose up -d
+docker compose up -d   # or: podman compose up -d
 open http://localhost:3001
 ```
 
@@ -163,7 +163,7 @@ External services plug in for specific capabilities:
 - **SearXNG:** web search
 - **Twilio:** voice calls (optional)
 
-Everything runs in Docker containers. A typical deployment is a single `docker-compose.yml` that brings up the engine, frontend, and supporting services. See the [Kubernetes example](examples/kubernetes) for cluster deployments.
+Everything runs in OCI containers and works with any OCI-compatible runtime (Docker, Podman, etc.). A typical deployment is a single `docker-compose.yml` that brings up the engine, frontend, and supporting services. See the [Kubernetes example](examples/kubernetes) for cluster deployments.
 
 ## Documentation
 
