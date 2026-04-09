@@ -35,6 +35,22 @@ pub fn router() -> Router<AppState> {
         .route("/api/agents/{id}/tools", get(agent_tools))
 }
 
+/// Returns the effective provider id for a CLI tool: its `provider` override if set,
+/// otherwise falls back to the tool's own name (one-provider-per-tool default).
+fn cli_provider_id(cli: &crate::tool::cli::CliToolConfig) -> String {
+    cli.provider.clone().unwrap_or_else(|| cli.name.clone())
+}
+
+/// Metadata for synthetic providers that group multiple CLI tools. If a CLI tool declares
+/// `provider: code` in its frontmatter but no entry exists here, the id is used as-is and
+/// the description is borrowed from the first tool in the group.
+fn synthetic_provider_metadata(id: &str) -> Option<(&'static str, &'static str)> {
+    match id {
+        "code" => Some(("code", "Execute arbitrary code the agent writes in a supported language.")),
+        _ => None,
+    }
+}
+
 /// Build the full provider+tool catalog for the user. Built-in providers come from the static
 /// catalog; tools are sourced from a synthetic registry built with every configurable
 /// provider id allowed, so each tool definition is observed at least once.
@@ -44,6 +60,7 @@ fn build_catalog(state: &AppState) -> Vec<ToolProviderWithTools> {
         .map(|s| s.id.to_string())
         .collect();
     for cli in state.cli_tools_config.iter() {
+        all_allowed.push(cli_provider_id(cli));
         all_allowed.push(cli.name.clone());
     }
     let registry = build_tool_registry(state, "", &all_allowed, false);
@@ -54,7 +71,7 @@ fn build_catalog(state: &AppState) -> Vec<ToolProviderWithTools> {
             || state
                 .cli_tools_config
                 .iter()
-                .any(|c| c.name == def.provider_id);
+                .any(|c| cli_provider_id(c) == def.provider_id);
         by_provider
             .entry(def.provider_id.clone())
             .or_default()
@@ -73,15 +90,23 @@ fn build_catalog(state: &AppState) -> Vec<ToolProviderWithTools> {
         })
         .collect();
 
-    // Append CLI tool providers (one per CLI tool config) — synthesized at request time
-    // since they're configured dynamically rather than baked into BUILTIN_PROVIDERS.
+    // Synthesize CLI providers, grouping configs that share the same effective provider id.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for cli in state.cli_tools_config.iter() {
-        let tools = by_provider.remove(&cli.name).unwrap_or_default();
+        let provider_id = cli_provider_id(cli);
+        if !seen.insert(provider_id.clone()) {
+            continue;
+        }
+        let tools = by_provider.remove(&provider_id).unwrap_or_default();
+        let (display_name, description) = match synthetic_provider_metadata(&provider_id) {
+            Some((name, desc)) => (name.to_string(), desc.to_string()),
+            None => (cli.name.clone(), cli.description.clone()),
+        };
         providers.push(ToolProviderWithTools {
             provider: ToolProvider {
-                id: cli.name.clone(),
-                display_name: cli.name.clone(),
-                description: Some(cli.description.clone()),
+                id: provider_id,
+                display_name,
+                description: Some(description),
                 icon: None,
                 kind: ToolProviderKind::Builtin,
                 status: ToolProviderStatus::Available,
@@ -119,7 +144,7 @@ async fn agent_tools(
                 || state
                     .cli_tools_config
                     .iter()
-                    .any(|c| c.name == d.provider_id),
+                    .any(|c| cli_provider_id(c) == d.provider_id),
         })
         .collect();
     Ok(Json(infos))

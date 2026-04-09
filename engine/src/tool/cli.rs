@@ -26,6 +26,11 @@ pub struct CliToolConfig {
     #[serde(default)]
     pub required: Vec<String>,
     pub timeout_secs: Option<u64>,
+    /// Optional provider grouping. Multiple CLI tools sharing the same `provider`
+    /// are surfaced as one provider in the agent settings UI. Defaults to the
+    /// tool's own name so each CLI tool becomes its own provider by default.
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 pub struct CliTool {
@@ -84,7 +89,11 @@ impl AgentTool for CliTool {
 
         vec![ToolDefinition {
             id: self.config.name.clone(),
-            provider_id: self.config.name.clone(),
+            provider_id: self
+                .config
+                .provider
+                .clone()
+                .unwrap_or_else(|| self.config.name.clone()),
             description: self.config.description.clone(),
             parameters,
         }]
@@ -243,6 +252,7 @@ pub fn load_cli_tool_config(prompts: &PromptLoader, path: &str) -> Option<CliToo
 
     let stdin = yaml.get("stdin").and_then(|v| v.as_str()).map(|s| s.to_string());
     let timeout_secs = yaml.get("timeout_secs").and_then(|v| v.as_u64());
+    let provider = yaml.get("provider").and_then(|v| v.as_str()).map(|s| s.to_string());
 
     let parameters: HashMap<String, Value> = yaml
         .get("parameters")
@@ -273,6 +283,7 @@ pub fn load_cli_tool_config(prompts: &PromptLoader, path: &str) -> Option<CliToo
         parameters,
         required,
         timeout_secs,
+        provider,
     })
 }
 
@@ -360,6 +371,7 @@ mod tests {
             },
             required: vec!["command".to_string()],
             timeout_secs: Some(30),
+            provider: None,
         };
 
         let wm = Arc::new(SandboxManager::new("/tmp/test", false, Arc::new(crate::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(60.0, 60.0, 60.0, 60.0))));
@@ -441,6 +453,7 @@ mod tests {
             },
             required: vec!["command".to_string()],
             timeout_secs: Some(5),
+            provider: None,
         };
 
         let tmp = std::env::temp_dir().join("frona_test_cli_tool");

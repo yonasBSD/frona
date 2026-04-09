@@ -1,5 +1,6 @@
 ---
 name: node
+provider: code
 program: node
 args: ["-e", "${code}"]
 parameters:

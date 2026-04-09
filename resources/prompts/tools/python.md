@@ -1,5 +1,6 @@
 ---
 name: python
+provider: code
 program: python3
 args: ["-c", "${code}"]
 parameters:
