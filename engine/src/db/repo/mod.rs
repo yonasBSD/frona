@@ -6,6 +6,7 @@ pub mod contacts;
 pub mod memory_entries;
 pub mod generic;
 pub mod keypairs;
+pub mod mcp_servers;
 pub mod memories;
 pub mod messages;
 pub mod notifications;
