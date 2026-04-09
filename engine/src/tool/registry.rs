@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -30,8 +30,28 @@ impl AgentToolRegistry {
     }
 
     pub fn register(&mut self, tool: Arc<dyn AgentTool>) {
+        self.register_inner(tool, None);
+    }
+
+    /// Register a tool but only expose definitions whose `id` OR `provider_id` is in `allowed`.
+    /// Matching on `provider_id` lets `Agent.tools` continue to use legacy provider-name entries
+    /// (e.g. `["browser"]`) which expand to every tool in that provider; mixing with individual
+    /// tool ids enables per-tool selection (e.g. `["browser_navigate", "web_fetch"]`).
+    /// If no definitions match, the tool is not inserted at all.
+    pub fn register_filtered(&mut self, tool: Arc<dyn AgentTool>, allowed: &HashSet<String>) {
+        self.register_inner(tool, Some(allowed));
+    }
+
+    fn register_inner(&mut self, tool: Arc<dyn AgentTool>, allowed: Option<&HashSet<String>>) {
         let owner_name = tool.name().to_string();
+        let mut any_registered = false;
         for mut def in tool.definitions() {
+            if let Some(set) = allowed
+                && !set.contains(&def.id)
+                && !set.contains(&def.provider_id)
+            {
+                continue;
+            }
             self.tool_name_to_owner
                 .insert(def.id.clone(), owner_name.clone());
 
@@ -50,8 +70,11 @@ impl AgentToolRegistry {
                 );
             }
             self.definitions.push(def);
+            any_registered = true;
         }
-        self.tools.insert(owner_name, tool);
+        if any_registered {
+            self.tools.insert(owner_name, tool);
+        }
     }
 
     pub async fn execute(&self, tool_name: &str, arguments: Value, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
@@ -106,7 +129,9 @@ pub fn build_tool_registry(
     let mut registry = AgentToolRegistry::new();
 
     let prompts = state.prompts.clone();
+    let allowed: HashSet<String> = allowed_tools.iter().cloned().collect();
 
+    // Always-on (non-configurable) providers: registered for every agent regardless of allowlist.
     registry.register(Arc::new(NotifyHumanTool::new(state.vault_service.clone(), prompts.clone())));
 
     registry.register(Arc::new(super::send_message::SendMessageTool::new(
@@ -141,73 +166,92 @@ pub fn build_tool_registry(
         prompts.clone(),
     )));
 
-    if allowed_tools.iter().any(|t| t == "browser") {
-        registry.register(Arc::new(BrowserTool::new(
+    // Configurable providers: only the specific tool ids in `allowed` are registered.
+    // Each tool struct is cheap to instantiate (just clones Arcs), so we always
+    // construct them and let `register_filtered` drop the unselected definitions.
+    registry.register_filtered(
+        Arc::new(BrowserTool::new(
             state.browser_session_manager.clone(),
             state.vault_service.clone(),
-        )));
-    }
+        )),
+        &allowed,
+    );
 
-    if allowed_tools.iter().any(|t| t == "web_fetch") {
-        registry.register(Arc::new(WebFetchTool::new(
+    registry.register_filtered(
+        Arc::new(WebFetchTool::new(
             state.browser_session_manager.clone(),
             prompts.clone(),
-        )));
+        )),
+        &allowed,
+    );
+
+    registry.register_filtered(
+        Arc::new(WebSearchTool::new(state.search_provider.clone(), prompts.clone())),
+        &allowed,
+    );
+
+    if let Some(executor) = state.task_executor() {
+        registry.register_filtered(
+            Arc::new(TaskTool::new(
+                state.task_service.clone(),
+                state.agent_service.clone(),
+                executor,
+                state.broadcast_service.clone(),
+                prompts.clone(),
+            )),
+            &allowed,
+        );
     }
 
-    if allowed_tools.iter().any(|t| t == "search") {
-        registry.register(Arc::new(WebSearchTool::new(state.search_provider.clone(), prompts.clone())));
-    }
-
-    if allowed_tools.iter().any(|t| t == "task")
-        && let Some(executor) = state.task_executor()
-    {
-        registry.register(Arc::new(TaskTool::new(
-            state.task_service.clone(),
-            state.agent_service.clone(),
-            executor,
-            state.broadcast_service.clone(),
-            prompts.clone(),
-        )));
-    }
-
-    if allowed_tools.iter().any(|t| t == "heartbeat") {
-        registry.register(Arc::new(HeartbeatTool::new(
+    registry.register_filtered(
+        Arc::new(HeartbeatTool::new(
             state.agent_service.clone(),
             state.storage_service.clone(),
             prompts.clone(),
-        )));
-    }
+        )),
+        &allowed,
+    );
 
-    if allowed_tools.iter().any(|t| t == "credentials") {
-        registry.register(Arc::new(RequestCredentialsTool::new(
+    registry.register_filtered(
+        Arc::new(RequestCredentialsTool::new(
             state.vault_service.clone(),
             prompts.clone(),
-        )));
-    }
+        )),
+        &allowed,
+    );
 
-    if allowed_tools.iter().any(|t| t == "app") {
-        registry.register(Arc::new(crate::tool::manage_service::ManageServiceTool::new(
+    registry.register_filtered(
+        Arc::new(crate::tool::manage_service::ManageServiceTool::new(
             state.app_service.clone(),
             prompts.clone(),
             state.notification_service.clone(),
             state.broadcast_service.clone(),
-        )));
-    }
+        )),
+        &allowed,
+    );
 
-    if allowed_tools.iter().any(|t| t == "voice_call") {
-        registry.register(Arc::new(crate::tool::voice::VoiceCallTool {
-            provider: state.voice_provider.clone(),
-            prompts: prompts.clone(),
-            contact_service: state.contact_service.clone(),
-            call_service: state.call_service.clone(),
-        }));
-        registry.register(Arc::new(crate::tool::voice::SendDtmfTool {
-            prompts: prompts.clone(),
-        }));
-        registry.register(Arc::new(crate::tool::voice::HangupCallTool {
-            prompts: prompts.clone(),
-        }));
+    if state.voice_provider.is_some() {
+        registry.register_filtered(
+            Arc::new(crate::tool::voice::VoiceCallTool {
+                provider: state.voice_provider.clone(),
+                prompts: prompts.clone(),
+                contact_service: state.contact_service.clone(),
+                call_service: state.call_service.clone(),
+            }),
+            &allowed,
+        );
+        registry.register_filtered(
+            Arc::new(crate::tool::voice::SendDtmfTool {
+                prompts: prompts.clone(),
+            }),
+            &allowed,
+        );
+        registry.register_filtered(
+            Arc::new(crate::tool::voice::HangupCallTool {
+                prompts: prompts.clone(),
+            }),
+            &allowed,
+        );
     }
 
     if agent_id == "system" {
@@ -228,15 +272,15 @@ pub fn build_tool_registry(
 
     tracing::debug!(cli_tools_count = state.cli_tools_config.len(), ?allowed_tools, "Building tool registry");
     for tool_config in state.cli_tools_config.iter() {
-        if allowed_tools.iter().any(|t| t == &tool_config.name) {
-            tracing::debug!(tool = %tool_config.name, "Registering CLI tool");
-            registry.register(Arc::new(CliTool::new(
+        registry.register_filtered(
+            Arc::new(CliTool::new(
                 tool_config.clone(),
                 state.sandbox_manager.clone(),
                 state.skill_service.clone(),
                 state.storage_service.clone(),
-            )));
-        }
+            )),
+            &allowed,
+        );
     }
 
     let tool_names: Vec<&str> = registry.definitions.iter().map(|d| d.id.as_str()).collect();
@@ -292,6 +336,43 @@ mod tests {
                 description: "A mock action".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }]
+        }
+
+        async fn execute(&self, tool_name: &str, _arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+            Ok(ToolOutput::text(format!("executed {tool_name}")))
+        }
+    }
+
+    /// Multi-tool mock that produces several definitions under a shared provider id.
+    struct MultiTool;
+
+    #[async_trait]
+    impl AgentTool for MultiTool {
+        fn name(&self) -> &str {
+            "multi"
+        }
+
+        fn definitions(&self) -> Vec<ToolDefinition> {
+            vec![
+                ToolDefinition {
+                    id: "browser_navigate".to_string(),
+                    provider_id: "browser".to_string(),
+                    description: "navigate".to_string(),
+                    parameters: serde_json::json!({"type": "object", "properties": {}}),
+                },
+                ToolDefinition {
+                    id: "browser_click".to_string(),
+                    provider_id: "browser".to_string(),
+                    description: "click".to_string(),
+                    parameters: serde_json::json!({"type": "object", "properties": {}}),
+                },
+                ToolDefinition {
+                    id: "browser_type".to_string(),
+                    provider_id: "browser".to_string(),
+                    description: "type".to_string(),
+                    parameters: serde_json::json!({"type": "object", "properties": {}}),
+                },
+            ]
         }
 
         async fn execute(&self, tool_name: &str, _arguments: Value, _ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
@@ -373,5 +454,51 @@ mod tests {
         let ctx = mock_context();
         let result = registry.execute("nonexistent", serde_json::json!({}), &ctx).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_filtered_by_tool_id() {
+        let mut registry = AgentToolRegistry::new();
+        let allowed: HashSet<String> = ["browser_navigate".to_string(), "browser_click".to_string()]
+            .into_iter()
+            .collect();
+        registry.register_filtered(Arc::new(MultiTool), &allowed);
+
+        let ids: Vec<&str> = registry.definitions.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&"browser_navigate"));
+        assert!(ids.contains(&"browser_click"));
+        assert!(!ids.contains(&"browser_type"));
+    }
+
+    #[test]
+    fn register_filtered_by_provider_id_legacy() {
+        let mut registry = AgentToolRegistry::new();
+        let allowed: HashSet<String> = ["browser".to_string()].into_iter().collect();
+        registry.register_filtered(Arc::new(MultiTool), &allowed);
+
+        // Legacy provider-id entry expands to all tools in that provider.
+        assert_eq!(registry.definitions.len(), 3);
+    }
+
+    #[test]
+    fn register_filtered_mixed_forms() {
+        let mut registry = AgentToolRegistry::new();
+        // Mix: provider id "browser" matches all browser tools; an unrelated id is ignored.
+        let allowed: HashSet<String> = ["browser".to_string(), "unrelated_tool".to_string()]
+            .into_iter()
+            .collect();
+        registry.register_filtered(Arc::new(MultiTool), &allowed);
+        assert_eq!(registry.definitions.len(), 3);
+    }
+
+    #[test]
+    fn register_filtered_no_match_skips_tool() {
+        let mut registry = AgentToolRegistry::new();
+        let allowed: HashSet<String> = ["unrelated".to_string()].into_iter().collect();
+        registry.register_filtered(Arc::new(MultiTool), &allowed);
+
+        assert!(registry.definitions.is_empty());
+        assert!(registry.is_empty());
     }
 }
