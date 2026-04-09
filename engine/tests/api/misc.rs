@@ -21,17 +21,23 @@ async fn list_tools_returns_builtin() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    let tools = json.as_array().unwrap();
+    let providers = json.as_array().unwrap();
 
-    // Browser tools are always present (hardcoded definitions, no prompt files needed).
-    // Other tools (web_fetch, search, etc.) use #[agent_tool] macro which loads
-    // definitions from prompt .md files — unavailable in the test environment.
-    let groups: Vec<&str> = tools.iter().map(|t| t["group"].as_str().unwrap()).collect();
-    assert!(groups.contains(&"browser"));
-    // Verify tools have the expected structure
-    let first = &tools[0];
+    // Response shape: Vec<ToolProviderWithTools> — providers contain their own tools.
+    // Browser tools are hardcoded so the browser provider must always carry tools in tests;
+    // other providers may be empty because their definitions live in prompt .md files
+    // unavailable in the test environment.
+    let provider_ids: Vec<&str> = providers.iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert!(provider_ids.contains(&"browser"), "browser provider missing; got {:?}", provider_ids);
+
+    let browser = providers.iter().find(|p| p["id"] == "browser").unwrap();
+    assert!(browser["display_name"].is_string());
+    assert_eq!(browser["kind"]["type"], "builtin");
+    assert_eq!(browser["status"]["state"], "available");
+    let browser_tools = browser["tools"].as_array().unwrap();
+    assert!(!browser_tools.is_empty(), "browser provider should expose tools");
+    let first = &browser_tools[0];
     assert!(first["id"].is_string());
-    assert!(first["group"].is_string());
     assert!(first["description"].is_string());
     assert!(first["configurable"].is_boolean());
 }
