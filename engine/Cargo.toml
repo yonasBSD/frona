@@ -60,6 +60,7 @@ tempfile = "3"
 ignore = "0.4.25"
 agent-skills = "0.2"
 notify = "8"
+rmcp = { version = "1", features = ["client", "transport-child-process"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
@@ -69,3 +70,4 @@ surrealdb = { version = "3.0.0", features = ["kv-mem"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+rmcp = { version = "1", features = ["client", "server", "macros", "transport-child-process", "transport-async-rw"] }
