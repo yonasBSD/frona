@@ -1,6 +1,6 @@
 ---
 id: web_search
-group: search
+provider: search
 parameters:
   query:
     type: string

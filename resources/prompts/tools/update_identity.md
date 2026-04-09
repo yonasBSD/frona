@@ -1,6 +1,6 @@
 ---
 id: update_identity
-group: identity
+provider: identity
 parameters:
   attributes:
     type: object

@@ -1,6 +1,6 @@
 ---
 id: delete_task
-group: task
+provider: task
 parameters:
   task_id:
     type: string

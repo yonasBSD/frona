@@ -288,7 +288,7 @@ mod tests {
         fn definitions(&self) -> Vec<ToolDefinition> {
             vec![ToolDefinition {
                 id: "mock_action".to_string(),
-                group: String::new(),
+                provider_id: String::new(),
                 description: "A mock action".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }]

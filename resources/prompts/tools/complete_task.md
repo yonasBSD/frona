@@ -1,6 +1,6 @@
 ---
 id: complete_task
-group: task
+provider: task
 parameters:
   result:
     type: string

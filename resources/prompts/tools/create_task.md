@@ -1,6 +1,6 @@
 ---
 id: create_task
-group: task
+provider: task
 parameters:
   title:
     type: string

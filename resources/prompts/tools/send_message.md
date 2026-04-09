@@ -1,6 +1,6 @@
 ---
 id: send_message
-group: messaging
+provider: messaging
 parameters:
   content:
     type: string

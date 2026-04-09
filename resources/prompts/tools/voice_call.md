@@ -1,6 +1,6 @@
 ---
 id: make_voice_call
-group: voice_call
+provider: voice_call
 parameters:
   phone_number:
     type: string

@@ -151,7 +151,7 @@ impl AgentTool for MockInternalTool {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
             id: self.tool_name.clone(),
-            group: self.tool_name.clone(),
+            provider_id: self.tool_name.clone(),
             description: format!("Mock tool {}", self.tool_name),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }]
@@ -196,7 +196,7 @@ impl AgentTool for MockAttachmentTool {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
             id: self.tool_name.clone(),
-            group: self.tool_name.clone(),
+            provider_id: self.tool_name.clone(),
             description: format!("Attachment tool {}", self.tool_name),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }]
@@ -233,7 +233,7 @@ impl AgentTool for MockExternalTool {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
             id: self.tool_name.clone(),
-            group: self.tool_name.clone(),
+            provider_id: self.tool_name.clone(),
             description: format!("External tool {}", self.tool_name),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }]
@@ -270,7 +270,7 @@ impl AgentTool for MockFailingTool {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![ToolDefinition {
             id: self.tool_name.clone(),
-            group: self.tool_name.clone(),
+            provider_id: self.tool_name.clone(),
             description: format!("Failing tool {}", self.tool_name),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }]

@@ -1,6 +1,6 @@
 ---
 id: list_tasks
-group: task
+provider: task
 parameters: {}
 required: []
 ---

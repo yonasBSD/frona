@@ -1,6 +1,6 @@
 ---
 id: web_fetch
-group: web_fetch
+provider: web_fetch
 parameters:
   url:
     type: string

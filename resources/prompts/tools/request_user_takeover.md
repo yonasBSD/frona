@@ -1,6 +1,6 @@
 ---
 id: request_user_takeover
-group: human_in_the_loop
+provider: human_in_the_loop
 parameters:
   reason:
     type: string

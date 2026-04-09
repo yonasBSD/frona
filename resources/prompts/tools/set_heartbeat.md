@@ -1,6 +1,6 @@
 ---
 id: set_heartbeat
-group: heartbeat
+provider: heartbeat
 parameters:
   interval_minutes:
     type: integer

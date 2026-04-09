@@ -1,6 +1,6 @@
 ---
 id: request_credentials
-group: credentials
+provider: credentials
 parameters:
   query:
     type: string

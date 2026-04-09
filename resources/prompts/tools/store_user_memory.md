@@ -1,6 +1,6 @@
 ---
 id: store_user_memory
-group: memory
+provider: memory
 parameters:
   memory:
     type: string

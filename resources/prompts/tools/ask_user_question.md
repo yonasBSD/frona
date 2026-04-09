@@ -1,6 +1,6 @@
 ---
 id: ask_user_question
-group: human_in_the_loop
+provider: human_in_the_loop
 parameters:
   question:
     type: string

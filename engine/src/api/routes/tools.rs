@@ -33,9 +33,9 @@ fn registry_to_tool_infos(state: &AppState, agent_id: &str, allowed: &[String]) 
         .map(|d| {
             ToolInfo {
                 id: d.id.clone(),
-                group: d.group.clone(),
+                group: d.provider_id.clone(),
                 description: d.description.clone(),
-                configurable: configurable.contains(&d.group.as_str()),
+                configurable: configurable.contains(&d.provider_id.as_str()),
             }
         })
         .collect()

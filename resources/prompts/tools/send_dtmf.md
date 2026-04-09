@@ -1,6 +1,6 @@
 ---
 id: send_dtmf
-group: voice_call
+provider: voice_call
 parameters:
   digits:
     type: string

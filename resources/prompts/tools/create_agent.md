@@ -1,6 +1,6 @@
 ---
 id: create_agent
-group: agent
+provider: agent
 parameters:
   id:
     type: string

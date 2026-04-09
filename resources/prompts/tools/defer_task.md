@@ -1,6 +1,6 @@
 ---
 id: defer_task
-group: task
+provider: task
 parameters:
   delay_minutes:
     type: integer

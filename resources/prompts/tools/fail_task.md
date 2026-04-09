@@ -1,6 +1,6 @@
 ---
 id: fail_task
-group: task
+provider: task
 parameters:
   reason:
     type: string

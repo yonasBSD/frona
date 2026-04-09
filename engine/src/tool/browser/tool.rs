@@ -35,7 +35,7 @@ impl AgentTool for BrowserTool {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_navigate".to_string(),
                 description: "Navigate to a URL in the browser.".to_string(),
                 parameters: serde_json::json!({
@@ -55,7 +55,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_go_back".to_string(),
                 description: "Navigate back in browser history.".to_string(),
                 parameters: serde_json::json!({
@@ -64,7 +64,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_go_forward".to_string(),
                 description: "Navigate forward in browser history.".to_string(),
                 parameters: serde_json::json!({
@@ -73,7 +73,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_close".to_string(),
                 description: "Close the browser when the task is complete.".to_string(),
                 parameters: serde_json::json!({
@@ -82,7 +82,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_extract".to_string(),
                 description: "Extract text or HTML content from the current page or a specific element.".to_string(),
                 parameters: serde_json::json!({
@@ -102,7 +102,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_read_links".to_string(),
                 description: "Get all links on the current page with their text and URLs.".to_string(),
                 parameters: serde_json::json!({
@@ -111,7 +111,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_get_markdown".to_string(),
                 description: "Get the markdown content of the current page with pagination support.".to_string(),
                 parameters: serde_json::json!({
@@ -133,7 +133,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_snapshot".to_string(),
                 description: "Get an ARIA snapshot of the page with indexed interactive elements.".to_string(),
                 parameters: serde_json::json!({
@@ -148,7 +148,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_screenshot".to_string(),
                 description: "Capture a screenshot of the current page.".to_string(),
                 parameters: serde_json::json!({
@@ -168,7 +168,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_evaluate".to_string(),
                 description: "Execute JavaScript code in the browser context.".to_string(),
                 parameters: serde_json::json!({
@@ -188,7 +188,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_click".to_string(),
                 description: "Click on a DOM element by CSS selector or snapshot index.".to_string(),
                 parameters: serde_json::json!({
@@ -207,7 +207,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_hover".to_string(),
                 description: "Hover over a DOM element by CSS selector or snapshot index.".to_string(),
                 parameters: serde_json::json!({
@@ -226,7 +226,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_select".to_string(),
                 description: "Select an option in a dropdown element.".to_string(),
                 parameters: serde_json::json!({
@@ -250,7 +250,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_input_fill".to_string(),
                 description: "Type text into an input element by CSS selector or snapshot index.".to_string(),
                 parameters: serde_json::json!({
@@ -279,7 +279,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_press_key".to_string(),
                 description: "Press a keyboard key (e.g. Enter, Tab, Escape, ArrowDown).".to_string(),
                 parameters: serde_json::json!({
@@ -294,7 +294,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_scroll".to_string(),
                 description: "Scroll the page by a pixel amount. Positive = down, negative = up. Omit to scroll to bottom.".to_string(),
                 parameters: serde_json::json!({
@@ -308,7 +308,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_wait".to_string(),
                 description: "Wait for a DOM element matching a CSS selector to appear.".to_string(),
                 parameters: serde_json::json!({
@@ -329,7 +329,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_new_tab".to_string(),
                 description: "Open a new tab and navigate to the specified URL.".to_string(),
                 parameters: serde_json::json!({
@@ -344,7 +344,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_tab_list".to_string(),
                 description: "List all open browser tabs with their titles and URLs.".to_string(),
                 parameters: serde_json::json!({
@@ -353,7 +353,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_switch_tab".to_string(),
                 description: "Switch to a specific tab by index.".to_string(),
                 parameters: serde_json::json!({
@@ -369,7 +369,7 @@ impl AgentTool for BrowserTool {
                 }),
             },
             ToolDefinition {
-                group: "browser".to_string(),
+                provider_id: "browser".to_string(),
                 id: "browser_close_tab".to_string(),
                 description: "Close the current active tab.".to_string(),
                 parameters: serde_json::json!({

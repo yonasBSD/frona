@@ -105,7 +105,7 @@ pub fn is_tool_available(state: &crate::core::state::AppState, tool_name: &str) 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub id: String,
-    pub group: String,
+    pub provider_id: String,
     pub description: String,
     pub parameters: Value,
 }
@@ -278,11 +278,15 @@ pub fn load_tool_definition_with_vars(prompts: &PromptLoader, path: &str, vars: 
     let raw = prompts.read_with_vars(path, vars)?;
     let (yaml, body) = parse_frontmatter(&raw)?;
     let id = yaml.get("id")?.as_str()?.to_string();
-    let group = yaml.get("group").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let provider_id = yaml
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let parameters = build_parameters_json(&yaml);
     Some(ToolDefinition {
         id,
-        group,
+        provider_id,
         description: body,
         parameters,
     })

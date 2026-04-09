@@ -1,6 +1,6 @@
 ---
 id: produce_file
-group: file
+provider: file
 parameters:
   path:
     type: string

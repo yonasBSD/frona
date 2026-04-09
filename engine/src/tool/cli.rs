@@ -84,7 +84,7 @@ impl AgentTool for CliTool {
 
         vec![ToolDefinition {
             id: self.config.name.clone(),
-            group: self.config.name.clone(),
+            provider_id: self.config.name.clone(),
             description: self.config.description.clone(),
             parameters,
         }]
