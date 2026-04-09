@@ -71,6 +71,11 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE INDEX IF NOT EXISTS idx_app_user ON TABLE app COLUMNS user_id;
         DEFINE INDEX IF NOT EXISTS idx_app_status ON TABLE app COLUMNS status;
 
+        DEFINE TABLE IF NOT EXISTS mcp_server SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_mcp_server_user ON TABLE mcp_server COLUMNS user_id;
+        DEFINE INDEX IF NOT EXISTS idx_mcp_server_status ON TABLE mcp_server COLUMNS status;
+        DEFINE INDEX IF NOT EXISTS idx_mcp_server_user_slug ON TABLE mcp_server COLUMNS user_id, slug UNIQUE;
+
         DEFINE TABLE IF NOT EXISTS vault_connection SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_vault_connection_user ON TABLE vault_connection COLUMNS user_id;
 
