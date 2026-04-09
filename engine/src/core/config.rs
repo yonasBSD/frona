@@ -729,6 +729,39 @@ impl Default for CacheConfig {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(default)]
+pub struct McpConfig {
+    #[schemars(description = "Whether MCP server support is enabled.")]
+    pub enabled: bool,
+    #[schemars(description = "Base path for per-MCP-server workspace directories.")]
+    pub workspaces_path: String,
+    #[schemars(description = "Path for shared package caches (npm, uv). Defaults to `{workspaces_path}/cache`.")]
+    pub cache_path: String,
+    #[schemars(description = "Maximum number of MCP servers a user may have installed.")]
+    pub max_servers_per_user: u32,
+    #[schemars(description = "Seconds to wait for an MCP server's initialize handshake before failing.")]
+    pub startup_timeout_secs: u64,
+    #[schemars(description = "Interval in seconds between MCP server liveness checks.")]
+    pub health_check_interval_secs: u64,
+    #[schemars(description = "Maximum process restart attempts before marking an MCP server as failed.")]
+    pub max_restart_attempts: u32,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            workspaces_path: "data/mcp".into(),
+            cache_path: "data/mcp/cache".into(),
+            max_servers_per_user: 32,
+            startup_timeout_secs: 30,
+            health_check_interval_secs: 10,
+            max_restart_attempts: 3,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct Config {
@@ -745,6 +778,7 @@ pub struct Config {
     pub voice: VoiceConfig,
     pub app: AppConfig,
     pub cache: CacheConfig,
+    pub mcp: McpConfig,
     #[serde(default)]
     pub models: HashMap<String, ModelGroupConfig>,
     #[serde(default)]
@@ -768,7 +802,9 @@ impl Config {
         let mut builder = config::Config::builder()
             .set_default("database.path", format!("{data_dir}/db")).unwrap()
             .set_default("storage.workspaces_path", format!("{data_dir}/workspaces")).unwrap()
-            .set_default("storage.files_path", format!("{data_dir}/files")).unwrap();
+            .set_default("storage.files_path", format!("{data_dir}/files")).unwrap()
+            .set_default("mcp.workspaces_path", format!("{data_dir}/mcp")).unwrap()
+            .set_default("mcp.cache_path", format!("{data_dir}/mcp/cache")).unwrap();
 
         if let Some(ref content) = yaml_content {
             let expanded = expand_env_vars(content);
