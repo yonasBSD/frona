@@ -15,6 +15,7 @@ pub mod update_identity;
 pub mod voice;
 pub mod web_fetch;
 pub mod web_search;
+pub mod mcp;
 pub mod provider;
 pub mod sandbox;
 
