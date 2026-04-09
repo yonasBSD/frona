@@ -251,12 +251,14 @@ impl Sandbox {
         Ok(config)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
         program: &str,
         args: &[&str],
         working_dir: Option<&str>,
         extra_path_dirs: Vec<String>,
+        stdin: Option<std::process::Stdio>,
         stdout: std::process::Stdio,
         stderr: std::process::Stdio,
     ) -> Result<tokio::process::Child, AppError> {
@@ -298,6 +300,9 @@ impl Sandbox {
             cmd.env(key, value);
         }
 
+        if let Some(stdin) = stdin {
+            cmd.stdin(stdin);
+        }
         cmd.stdout(stdout);
         cmd.stderr(stderr);
 

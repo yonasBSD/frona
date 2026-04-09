@@ -357,6 +357,7 @@ impl AppManager {
             &["-c", command],
             Some(&app_dir_str),
             extra_path_dirs,
+            None,
             std::process::Stdio::from(log_file),
             std::process::Stdio::from(log_file_clone),
         )?;
