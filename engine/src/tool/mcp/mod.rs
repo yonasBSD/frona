@@ -1,5 +1,6 @@
 pub mod client;
 pub mod manager;
+pub mod mcp_tool;
 pub mod metadata;
 pub mod models;
 pub mod registry;

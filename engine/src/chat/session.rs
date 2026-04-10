@@ -167,9 +167,11 @@ impl ChatSessionContext {
         let tool_registry = crate::tool::registry::build_tool_registry(
             state,
             &chat.agent_id,
+            user_id,
             &agent_config.tools,
             is_task,
-        );
+        )
+        .await;
         let agent = state
             .agent_service
             .find_by_id(&chat.agent_id)

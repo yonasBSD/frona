@@ -107,9 +107,10 @@ impl AgentToolRegistry {
     }
 }
 
-pub fn build_tool_registry(
+pub async fn build_tool_registry(
     state: &AppState,
     agent_id: &str,
+    user_id: &str,
     allowed_tools: &[String],
     is_task: bool,
 ) -> AgentToolRegistry {
@@ -281,6 +282,32 @@ pub fn build_tool_registry(
             )),
             &allowed,
         );
+    }
+
+    {
+        let mut mcp_allowlist: HashMap<String, HashSet<String>> = HashMap::new();
+        for id in &allowed {
+            if let Some(rest) = id.strip_prefix("mcp__")
+                && let Some((slug, tool)) = rest.split_once("__")
+            {
+                mcp_allowlist
+                    .entry(slug.to_string())
+                    .or_default()
+                    .insert(tool.to_string());
+            }
+        }
+        if !mcp_allowlist.is_empty() {
+            let mcp_defs = state
+                .mcp_manager
+                .tools_for_user(user_id, &mcp_allowlist)
+                .await;
+            if !mcp_defs.is_empty() {
+                registry.register(Arc::new(super::mcp::mcp_tool::McpTool::new(
+                    state.mcp_manager.clone(),
+                    mcp_defs,
+                )));
+            }
+        }
     }
 
     let tool_names: Vec<&str> = registry.definitions.iter().map(|d| d.id.as_str()).collect();
