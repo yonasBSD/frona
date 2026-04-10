@@ -98,12 +98,27 @@ pub struct McpServer {
     pub tool_cache: Vec<CachedMcpTool>,
     pub workspace_dir: String,
 
+    #[serde(default)]
+    pub extra_read_paths: Vec<String>,
+    #[serde(default)]
+    pub extra_write_paths: Vec<String>,
+
     pub installed_at: DateTime<Utc>,
     pub last_started_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
 }
 
+/// Wire-format binding the install API accepts. Translated server-side into
+/// rows on `principal_credential_binding`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialBinding {
+    pub connection_id: String,
+    pub vault_item_id: String,
+    pub env_var: String,
+    pub field: crate::credential::vault::models::VaultField,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpServerInstall {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry_id: Option<String>,
@@ -111,6 +126,26 @@ pub struct McpServerInstall {
     pub manifest: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name_override: Option<String>,
+    #[serde(default)]
+    pub credentials: Vec<CredentialBinding>,
+    #[serde(default)]
+    pub extra_env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub extra_read_paths: Vec<String>,
+    #[serde(default)]
+    pub extra_write_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpServerUpdate {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<Vec<CredentialBinding>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_env: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_read_paths: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_write_paths: Option<Vec<String>>,
 }
 
 /// Returns `"_"` when the input would otherwise produce an empty slug.

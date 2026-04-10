@@ -72,10 +72,14 @@ impl McpManager {
         resolved_env: Vec<(String, String)>,
     ) -> Sandbox {
         let sandbox_id = format!("mcp-{}", server.id);
+        let mut read_paths = vec![self.cache_path.clone()];
+        read_paths.extend(server.extra_read_paths.iter().cloned());
+        let mut write_paths = vec![server.workspace_dir.clone()];
+        write_paths.extend(server.extra_write_paths.iter().cloned());
         self.sandbox_manager
             .get_sandbox(&sandbox_id, true, Vec::new())
-            .with_read_paths(vec![self.cache_path.clone()])
-            .with_write_paths(vec![server.workspace_dir.clone()])
+            .with_read_paths(read_paths)
+            .with_write_paths(write_paths)
             .with_extra_env_vars(resolved_env)
     }
 
