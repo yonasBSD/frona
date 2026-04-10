@@ -195,6 +195,7 @@ pub async fn init(path: &str) -> Result<Surreal<Db>, surrealdb::Error> {
     };
 
     setup_schema(&db).await?;
+    crate::db::migrations::run_migrations(&db).await?;
 
     info!("SurrealDB schema initialized");
     Ok(db)

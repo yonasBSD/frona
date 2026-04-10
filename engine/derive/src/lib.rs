@@ -4,6 +4,13 @@ use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Expr, ImplItem, ItemImpl, Lit, Meta, Token};
 use syn::parse::{Parse, ParseStream};
 
+mod migration;
+
+#[proc_macro_attribute]
+pub fn migration(attr: TokenStream, item: TokenStream) -> TokenStream {
+    migration::migration(attr, item)
+}
+
 #[proc_macro_derive(Entity, attributes(entity))]
 pub fn derive_entity(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

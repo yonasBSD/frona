@@ -11,3 +11,4 @@ syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 heck = "0.5"
+chrono = { version = "0.4", default-features = false, features = ["std"] }

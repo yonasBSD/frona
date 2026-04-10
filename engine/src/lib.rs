@@ -18,4 +18,4 @@ pub mod space;
 pub mod storage;
 pub mod tool;
 
-pub use frona_derive::Entity;
+pub use frona_derive::{Entity, migration};

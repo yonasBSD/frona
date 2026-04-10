@@ -1872,6 +1872,7 @@ dependencies = [
  "hyper 1.9.0",
  "hyper-util",
  "ignore",
+ "inventory",
  "jsonwebtoken 9.3.1",
  "keepass",
  "keeper-secrets-manager-core",
@@ -1916,6 +1917,7 @@ dependencies = [
 name = "frona-derive"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "heck",
  "proc-macro2",
  "quote",
@@ -2999,6 +3001,15 @@ checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
  "block-padding",
  "generic-array 0.14.9",
+]
+
+[[package]]
+name = "inventory"
+version = "0.3.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
