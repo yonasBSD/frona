@@ -1,0 +1,430 @@
+//! Lifecycle integration test for `McpServerService`:
+//! install → update → uninstall, exercising grant verification, binding
+//! persistence, binding replacement on update, and grant+binding sweep on
+//! uninstall. Does not exercise `start` (which requires spawning a real
+//! sandboxed child process).
+
+use async_trait::async_trait;
+use std::sync::Arc;
+
+use frona::core::error::AppError;
+use frona::credential::vault::models::*;
+use frona::credential::vault::service::VaultService;
+use frona::db::init::setup_schema;
+use frona::db::repo::generic::SurrealRepo;
+use frona::tool::mcp::metadata::{
+    RegistryEnvVar, RegistryPackage, RegistryServerEntry, RegistryTransport,
+};
+use frona::tool::mcp::models::{CredentialBinding, McpServerInstall, McpServerUpdate, McpServer};
+use frona::tool::mcp::registry::McpRegistryClient;
+use frona::tool::mcp::repository::McpServerRepository;
+use frona::tool::mcp::service::{McpServerService, NoopPackageInstaller};
+use frona::tool::mcp::{McpManager, PackageInstaller};
+
+struct FakeRegistry {
+    entry: RegistryServerEntry,
+}
+
+#[async_trait]
+impl McpRegistryClient for FakeRegistry {
+    async fn search(
+        &self,
+        _query: &str,
+        _limit: usize,
+    ) -> Result<Vec<RegistryServerEntry>, AppError> {
+        Ok(vec![self.entry.clone()])
+    }
+    async fn fetch(&self, _name: &str) -> Result<RegistryServerEntry, AppError> {
+        Ok(self.entry.clone())
+    }
+    async fn fetch_version(
+        &self,
+        _name: &str,
+        _version: &str,
+    ) -> Result<RegistryServerEntry, AppError> {
+        Ok(self.entry.clone())
+    }
+}
+
+fn sample_entry(env_vars: Vec<RegistryEnvVar>) -> RegistryServerEntry {
+    RegistryServerEntry {
+        name: "io.example/workspace-mcp".into(),
+        description: "A fake MCP server".into(),
+        version: "1.0.0".into(),
+        title: Some("Workspace MCP".into()),
+        repository: None,
+        website_url: None,
+        packages: vec![RegistryPackage {
+            registry_type: "npm".into(),
+            identifier: "@example/workspace-mcp".into(),
+            version: Some("1.0.0".into()),
+            runtime_hint: None,
+            transport: RegistryTransport { kind: "stdio".into(), url: None },
+            runtime_arguments: vec![],
+            package_arguments: vec![],
+            environment_variables: env_vars,
+        }],
+        remotes: vec![],
+        status: Default::default(),
+        is_latest: true,
+        status_message: None,
+        status_changed_at: None,
+        published_at: None,
+        updated_at: None,
+        enrichment: None,
+        score: None,
+    }
+}
+
+fn secret_env_var(name: &str) -> RegistryEnvVar {
+    RegistryEnvVar {
+        name: name.into(),
+        description: None,
+        is_required: true,
+        is_secret: true,
+        format: None,
+    }
+}
+
+async fn build_test_harness(
+    env_vars: Vec<RegistryEnvVar>,
+) -> (surrealdb::Surreal<surrealdb::engine::local::Db>, VaultService, McpServerService, tempfile::TempDir)
+{
+    let db = surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(())
+        .await
+        .unwrap();
+    db.use_ns("test").use_db("test").await.unwrap();
+    setup_schema(&db).await.unwrap();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let workspaces_path = tmp.path().join("mcp").to_string_lossy().into_owned();
+    let cache_path = tmp.path().join("mcp-cache").to_string_lossy().into_owned();
+    std::fs::create_dir_all(&workspaces_path).unwrap();
+    std::fs::create_dir_all(&cache_path).unwrap();
+
+    let vault = VaultService::new(
+        Arc::new(SurrealRepo::<VaultConnection>::new(db.clone())),
+        Arc::new(SurrealRepo::<VaultGrant>::new(db.clone())),
+        Arc::new(SurrealRepo::<Credential>::new(db.clone())),
+        Arc::new(SurrealRepo::<VaultAccessLog>::new(db.clone())),
+        Arc::new(SurrealRepo::<PrincipalCredentialBinding>::new(db.clone())),
+        "test-secret",
+        Default::default(),
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+    );
+    vault.sync_config_connections().await.unwrap();
+
+    let sandbox_manager = Arc::new(frona::tool::sandbox::SandboxManager::new(
+        tmp.path().join("sandbox"),
+        true, // sandbox_disabled: we never actually start servers in these tests
+        Arc::new(frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(
+            80.0, 80.0, 90.0, 90.0,
+        )),
+    ));
+    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces_path, cache_path));
+    let mcp_repo: Arc<dyn McpServerRepository> =
+        Arc::new(SurrealRepo::<McpServer>::new(db.clone()));
+    let registry: Arc<dyn McpRegistryClient> = Arc::new(FakeRegistry {
+        entry: sample_entry(env_vars),
+    });
+    let installer: Arc<dyn PackageInstaller> = Arc::new(NoopPackageInstaller);
+    let service = McpServerService::new(
+        mcp_repo,
+        manager,
+        registry,
+        Arc::new(vault.clone()),
+        installer,
+    );
+
+    (db, vault, service, tmp)
+}
+
+async fn seed_credential_and_grant(
+    vault: &VaultService,
+    user_id: &str,
+    principal: GrantPrincipal,
+    name: &str,
+    password: &str,
+) -> String {
+    let cred = vault
+        .create_credential(
+            user_id,
+            CreateLocalItemRequest::UsernamePassword {
+                name: name.into(),
+                username: "u".into(),
+                password: password.into(),
+            },
+        )
+        .await
+        .unwrap();
+    vault
+        .create_grant(
+            user_id,
+            principal,
+            "local",
+            &cred.id,
+            name,
+            &GrantDuration::Permanent,
+        )
+        .await
+        .unwrap();
+    cred.id
+}
+
+fn binding(env_var: &str, vault_item_id: &str) -> CredentialBinding {
+    CredentialBinding {
+        connection_id: "local".into(),
+        vault_item_id: vault_item_id.into(),
+        env_var: env_var.into(),
+        field: VaultField::Password,
+    }
+}
+
+#[tokio::test]
+async fn install_rejects_when_binding_has_no_matching_grant() {
+    let (_db, _vault, service, _tmp) =
+        build_test_harness(vec![secret_env_var("GITHUB_TOKEN")]).await;
+
+    let req = McpServerInstall {
+        registry_id: Some("io.example/workspace-mcp".into()),
+        manifest: None,
+        display_name_override: None,
+        credentials: vec![binding("GITHUB_TOKEN", "nonexistent-item")],
+        extra_env: Default::default(),
+        extra_read_paths: vec![],
+        extra_write_paths: vec![],
+    };
+    let err = service.install("user1", req).await.unwrap_err();
+    assert!(
+        matches!(err, AppError::Forbidden(_)),
+        "expected Forbidden for missing grant, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn install_rejects_when_binding_is_missing_for_declared_secret() {
+    let (_db, _vault, service, _tmp) =
+        build_test_harness(vec![secret_env_var("GITHUB_TOKEN")]).await;
+
+    let req = McpServerInstall {
+        registry_id: Some("io.example/workspace-mcp".into()),
+        manifest: None,
+        display_name_override: None,
+        credentials: vec![], // missing required secret
+        extra_env: Default::default(),
+        extra_read_paths: vec![],
+        extra_write_paths: vec![],
+    };
+    let err = service.install("user1", req).await.unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "expected Validation for missing binding, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn install_rejects_extraneous_binding() {
+    let (_db, _vault, service, _tmp) =
+        build_test_harness(vec![secret_env_var("GITHUB_TOKEN")]).await;
+
+    let req = McpServerInstall {
+        registry_id: Some("io.example/workspace-mcp".into()),
+        manifest: None,
+        display_name_override: None,
+        credentials: vec![
+            binding("GITHUB_TOKEN", "item"),
+            binding("NOT_DECLARED", "item2"),
+        ],
+        extra_env: Default::default(),
+        extra_read_paths: vec![],
+        extra_write_paths: vec![],
+    };
+    let err = service.install("user1", req).await.unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "expected Validation for extraneous binding, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn install_rejects_relative_extra_paths() {
+    let (_db, _vault, service, _tmp) = build_test_harness(vec![]).await;
+
+    let req = McpServerInstall {
+        registry_id: Some("io.example/workspace-mcp".into()),
+        manifest: None,
+        display_name_override: None,
+        credentials: vec![],
+        extra_env: Default::default(),
+        extra_read_paths: vec!["relative/path".into()],
+        extra_write_paths: vec![],
+    };
+    let err = service.install("user1", req).await.unwrap_err();
+    assert!(matches!(err, AppError::Validation(_)));
+}
+
+#[tokio::test]
+async fn install_succeeds_with_empty_env_entry() {
+    let (db, _vault, service, _tmp) = build_test_harness(vec![]).await;
+
+    let req = McpServerInstall {
+        registry_id: Some("io.example/workspace-mcp".into()),
+        manifest: None,
+        display_name_override: None,
+        credentials: vec![],
+        extra_env: Default::default(),
+        extra_read_paths: vec![],
+        extra_write_paths: vec![],
+    };
+    let persisted = service.install("user1", req).await.unwrap();
+    assert_eq!(persisted.user_id, "user1");
+    assert_eq!(persisted.slug, "workspace_mcp");
+    assert_eq!(persisted.command, "npx");
+    assert_eq!(persisted.args, vec!["--yes", "@example/workspace-mcp@1.0.0"]);
+
+    let mcp_repo: Arc<dyn McpServerRepository> =
+        Arc::new(SurrealRepo::<McpServer>::new(db));
+    let list = mcp_repo.find_by_user("user1").await.unwrap();
+    assert_eq!(list.len(), 1);
+}
+
+#[tokio::test]
+async fn uninstall_sweeps_bindings_and_grants() {
+    let (_db, vault, service, _tmp) = build_test_harness(vec![]).await;
+
+    let persisted = service
+        .install(
+            "user1",
+            McpServerInstall {
+                registry_id: Some("io.example/workspace-mcp".into()),
+                manifest: None,
+                display_name_override: None,
+                credentials: vec![],
+                extra_env: Default::default(),
+                extra_read_paths: vec![],
+                extra_write_paths: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let principal = GrantPrincipal::McpServer(&persisted.id);
+
+    // Post-install, write a grant + binding directly against the server's
+    // principal to prove uninstall sweeps them even if they were added later.
+    let cred_id = seed_credential_and_grant(
+        &vault,
+        "user1",
+        principal.clone(),
+        "gh",
+        "ghp_xxx",
+    )
+    .await;
+    vault
+        .create_binding(
+            "user1",
+            principal.clone(),
+            "gh",
+            "local",
+            &cred_id,
+            CredentialTarget::Single {
+                env_var: "GH".into(),
+                field: VaultField::Password,
+            },
+            BindingScope::Durable,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        vault
+            .list_bindings_for_principal("user1", &principal)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    service.uninstall("user1", &persisted.id).await.unwrap();
+
+    assert!(
+        vault
+            .list_bindings_for_principal("user1", &principal)
+            .await
+            .unwrap()
+            .is_empty(),
+        "bindings should be swept on uninstall"
+    );
+    let remaining_grants = vault
+        .list_bindings_for_principal("user1", &principal)
+        .await
+        .unwrap();
+    assert!(remaining_grants.is_empty(), "grants should be swept on uninstall");
+}
+
+#[tokio::test]
+async fn update_extra_env_replaces_value() {
+    let (_db, _vault, service, _tmp) = build_test_harness(vec![]).await;
+
+    let persisted = service
+        .install(
+            "user1",
+            McpServerInstall {
+                registry_id: Some("io.example/workspace-mcp".into()),
+                manifest: None,
+                display_name_override: None,
+                credentials: vec![],
+                extra_env: [("LOG_LEVEL".to_string(), "info".to_string())]
+                    .into_iter()
+                    .collect(),
+                extra_read_paths: vec![],
+                extra_write_paths: vec![],
+            },
+        )
+        .await
+        .unwrap();
+
+    let update = McpServerUpdate {
+        credentials: None,
+        extra_env: Some(
+            [("LOG_LEVEL".to_string(), "debug".to_string())]
+                .into_iter()
+                .collect(),
+        ),
+        extra_read_paths: None,
+        extra_write_paths: None,
+    };
+    let result = service.update("user1", &persisted.id, update).await.unwrap();
+    assert_eq!(result.server.env.get("LOG_LEVEL").map(String::as_str), Some("debug"));
+    assert!(!result.restart_required, "not running, so no restart needed");
+}
+
+#[tokio::test]
+async fn update_rejects_when_another_user_owns_the_server() {
+    let (_db, _vault, service, _tmp) = build_test_harness(vec![]).await;
+
+    let persisted = service
+        .install(
+            "owner",
+            McpServerInstall {
+                registry_id: Some("io.example/workspace-mcp".into()),
+                manifest: None,
+                display_name_override: None,
+                credentials: vec![],
+                extra_env: Default::default(),
+                extra_read_paths: vec![],
+                extra_write_paths: vec![],
+            },
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .update("attacker", &persisted.id, McpServerUpdate::default())
+        .await;
+    assert!(
+        matches!(result, Err(AppError::Forbidden(_))),
+        "non-owner update should return Forbidden"
+    );
+}

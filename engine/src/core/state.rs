@@ -110,6 +110,8 @@ pub struct AppState {
     pub storage_service: StorageService,
     pub prompts: PromptLoader,
     pub vault_service: VaultService,
+    pub mcp_manager: Arc<crate::tool::mcp::McpManager>,
+    pub mcp_service: Arc<crate::tool::mcp::McpServerService>,
     pub keypair_service: KeyPairService,
     pub presign_service: PresignService,
     pub token_service: TokenService,
@@ -253,6 +255,27 @@ impl AppState {
             config.app.port_range_end,
         ));
 
+        let mcp_manager = Arc::new(crate::tool::mcp::McpManager::new(
+            sandbox_manager.clone(),
+            config.mcp.workspaces_path.clone(),
+            config.mcp.cache_path.clone(),
+        ));
+        let mcp_repo: Arc<dyn crate::tool::mcp::repository::McpServerRepository> =
+            Arc::new(SurrealRepo::<crate::tool::mcp::McpServer>::new(db.clone()));
+        let mcp_registry: Arc<dyn crate::tool::mcp::McpRegistryClient> =
+            Arc::new(crate::tool::mcp::PrebuiltMcpRegistryClient::new(
+                std::path::PathBuf::from(&config.mcp.cache_path).join("registry"),
+            ));
+        let mcp_installer: Arc<dyn crate::tool::mcp::PackageInstaller> =
+            Arc::new(crate::tool::mcp::NoopPackageInstaller);
+        let mcp_service = Arc::new(crate::tool::mcp::McpServerService::new(
+            mcp_repo,
+            mcp_manager.clone(),
+            mcp_registry,
+            Arc::new(vault_service.clone()),
+            mcp_installer,
+        ));
+
         Self {
             db: db.clone(),
             auth_service: Arc::new(AuthService::new()),
@@ -294,6 +317,8 @@ impl AppState {
             storage_service: storage,
             prompts: prompt_loader,
             vault_service,
+            mcp_manager,
+            mcp_service,
             keypair_service,
             presign_service,
             token_service,

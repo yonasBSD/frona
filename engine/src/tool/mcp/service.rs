@@ -1,0 +1,672 @@
+//! Every mutating method on [`McpServerService`] enforces ownership against
+//! the caller's `user_id` via [`McpServerService::load_owned`].
+
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use chrono::Utc;
+use uuid::Uuid;
+
+use crate::core::error::AppError;
+use crate::credential::vault::models::{BindingScope, CredentialTarget, GrantPrincipal};
+use crate::credential::vault::service::VaultService;
+use crate::tool::ToolDefinition;
+
+use super::manager::McpManager;
+use super::metadata::{RegistryPackage, RegistryServerEntry};
+use super::models::{
+    CachedMcpTool, CredentialBinding, McpPackage, McpRuntime, McpServer, McpServerInstall,
+    McpServerStatus, McpServerUpdate, sanitize_slug,
+};
+use super::registry::McpRegistryClient;
+use super::repository::McpServerRepository;
+
+#[async_trait]
+pub trait PackageInstaller: Send + Sync {
+    async fn install(&self, server: &McpServer) -> Result<(), AppError>;
+}
+
+/// Placeholder installer that runs no warm-up. Wired in `AppState` until the
+/// real sandboxed `npx` / `uvx` warm-up implementation lands.
+pub struct NoopPackageInstaller;
+
+#[async_trait]
+impl PackageInstaller for NoopPackageInstaller {
+    async fn install(&self, _server: &McpServer) -> Result<(), AppError> {
+        Ok(())
+    }
+}
+
+pub struct McpServerService {
+    repo: Arc<dyn McpServerRepository>,
+    manager: Arc<McpManager>,
+    registry: Arc<dyn McpRegistryClient>,
+    vault: Arc<VaultService>,
+    installer: Arc<dyn PackageInstaller>,
+}
+
+pub struct StartResult {
+    pub tools: Vec<ToolDefinition>,
+}
+
+pub struct UpdateResult {
+    pub server: McpServer,
+    /// `true` when the caller must stop + start the server for the changes to
+    /// take effect (because it was running when the patch landed).
+    pub restart_required: bool,
+}
+
+impl McpServerService {
+    pub fn new(
+        repo: Arc<dyn McpServerRepository>,
+        manager: Arc<McpManager>,
+        registry: Arc<dyn McpRegistryClient>,
+        vault: Arc<VaultService>,
+        installer: Arc<dyn PackageInstaller>,
+    ) -> Self {
+        Self {
+            repo,
+            manager,
+            registry,
+            vault,
+            installer,
+        }
+    }
+
+    pub async fn list_for_user(&self, user_id: &str) -> Result<Vec<McpServer>, AppError> {
+        self.repo.find_by_user(user_id).await
+    }
+
+    pub async fn install(
+        &self,
+        user_id: &str,
+        req: McpServerInstall,
+    ) -> Result<McpServer, AppError> {
+        let entry = self.resolve_entry(&req).await?;
+        let package = pick_package(&entry).ok_or_else(|| {
+            AppError::Validation(
+                "registry entry has no npm/pypi package with a supported transport".into(),
+            )
+        })?;
+
+        validate_credential_bindings(package, &req.credentials)?;
+        validate_absolute_paths(&req.extra_read_paths)?;
+        validate_absolute_paths(&req.extra_write_paths)?;
+
+        let slug_source = req
+            .display_name_override
+            .as_deref()
+            .or(entry.title.as_deref())
+            .unwrap_or(&entry.name);
+        let slug = sanitize_slug(slug_source);
+
+        let id = Uuid::new_v4().to_string();
+        self.verify_grants(user_id, &id, &req.credentials).await?;
+
+        let workspace_dir = Path::new(self.manager.workspaces_path())
+            .join(&id)
+            .to_string_lossy()
+            .into_owned();
+        std::fs::create_dir_all(&workspace_dir).map_err(|e| {
+            AppError::Tool(format!("creating MCP server workspace {workspace_dir}: {e}"))
+        })?;
+
+        let (runtime, command, args) = build_invocation(package)?;
+        let mcp_package = McpPackage {
+            runtime,
+            name: package.identifier.clone(),
+            version: package.version.clone().unwrap_or_else(|| "latest".into()),
+        };
+
+        let now = Utc::now();
+        let server = McpServer {
+            id: id.clone(),
+            user_id: user_id.to_string(),
+            slug,
+            display_name: req
+                .display_name_override
+                .or(entry.title.clone())
+                .unwrap_or_else(|| entry.name.clone()),
+            description: Some(entry.description.clone()),
+            repository_url: entry.repository.as_ref().and_then(|r| r.url.clone()),
+            registry_id: Some(entry.name.clone()),
+            server_info: None,
+            package: mcp_package,
+            command,
+            args,
+            env: req.extra_env,
+            status: McpServerStatus::Installed,
+            tool_cache: Vec::new(),
+            workspace_dir,
+            extra_read_paths: req.extra_read_paths,
+            extra_write_paths: req.extra_write_paths,
+            installed_at: now,
+            last_started_at: None,
+            updated_at: now,
+        };
+
+        let persisted = self.repo.create(&server).await?;
+        self.write_bindings(user_id, &persisted.id, req.credentials).await?;
+        self.installer.install(&persisted).await?;
+        Ok(persisted)
+    }
+
+    async fn write_bindings(
+        &self,
+        user_id: &str,
+        server_id: &str,
+        bindings: Vec<CredentialBinding>,
+    ) -> Result<(), AppError> {
+        let principal = GrantPrincipal::McpServer(server_id);
+        for binding in bindings {
+            self.vault
+                .create_binding(
+                    user_id,
+                    principal.clone(),
+                    &binding.env_var,
+                    &binding.connection_id,
+                    &binding.vault_item_id,
+                    CredentialTarget::Single {
+                        env_var: binding.env_var.clone(),
+                        field: binding.field,
+                    },
+                    BindingScope::Durable,
+                    None,
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn verify_grants(
+        &self,
+        user_id: &str,
+        server_id: &str,
+        bindings: &[CredentialBinding],
+    ) -> Result<(), AppError> {
+        let principal = GrantPrincipal::McpServer(server_id);
+        for binding in bindings {
+            let ok = self
+                .vault
+                .has_grant_for_item(
+                    user_id,
+                    &principal,
+                    &binding.connection_id,
+                    &binding.vault_item_id,
+                )
+                .await?;
+            if !ok {
+                return Err(AppError::Forbidden(format!(
+                    "no grant for vault item {} in connection {} — approve it before installing",
+                    binding.vault_item_id, binding.connection_id,
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn update(
+        &self,
+        user_id: &str,
+        server_id: &str,
+        req: McpServerUpdate,
+    ) -> Result<UpdateResult, AppError> {
+        let mut server = self.load_owned(user_id, server_id).await?;
+        let was_running = matches!(server.status, McpServerStatus::Running);
+
+        if let Some(paths) = &req.extra_read_paths {
+            validate_absolute_paths(paths)?;
+        }
+        if let Some(paths) = &req.extra_write_paths {
+            validate_absolute_paths(paths)?;
+        }
+
+        if let Some(credentials) = req.credentials {
+            if let Some(id) = server.registry_id.as_deref() {
+                let entry = self.registry.fetch(id).await?;
+                if let Some(package) = pick_package(&entry) {
+                    validate_credential_bindings(package, &credentials)?;
+                }
+            }
+            self.verify_grants(user_id, &server.id, &credentials).await?;
+            self.vault
+                .delete_bindings_for_principal(user_id, &GrantPrincipal::McpServer(&server.id))
+                .await?;
+            self.write_bindings(user_id, &server.id, credentials).await?;
+        }
+
+        if let Some(extra_env) = req.extra_env {
+            server.env = extra_env;
+        }
+        if let Some(read) = req.extra_read_paths {
+            server.extra_read_paths = read;
+        }
+        if let Some(write) = req.extra_write_paths {
+            server.extra_write_paths = write;
+        }
+        server.updated_at = Utc::now();
+        let server = self.repo.update(&server).await?;
+
+        Ok(UpdateResult {
+            server,
+            restart_required: was_running,
+        })
+    }
+
+    pub async fn uninstall(&self, user_id: &str, server_id: &str) -> Result<(), AppError> {
+        let server = self.load_owned(user_id, server_id).await?;
+        let _ = self.manager.stop(server_id).await;
+        let principal = GrantPrincipal::McpServer(&server.id);
+        self.vault.delete_bindings_for_principal(user_id, &principal).await?;
+        self.vault.delete_grants_for_principal(user_id, &principal).await?;
+        let _ = std::fs::remove_dir_all(PathBuf::from(&server.workspace_dir));
+        self.repo.delete(server_id).await
+    }
+
+    pub async fn start(&self, user_id: &str, server_id: &str) -> Result<StartResult, AppError> {
+        let mut server = self.load_owned(user_id, server_id).await?;
+        let resolved_env = self.resolve_env(&server).await?;
+
+        server.status = McpServerStatus::Starting;
+        server.updated_at = Utc::now();
+        self.repo.update(&server).await?;
+
+        let tools = match self.manager.start(&server, resolved_env).await {
+            Ok(tools) => tools,
+            Err(e) => {
+                server.status = McpServerStatus::Failed;
+                server.updated_at = Utc::now();
+                let _ = self.repo.update(&server).await;
+                return Err(e);
+            }
+        };
+
+        server.status = McpServerStatus::Running;
+        server.last_started_at = Some(Utc::now());
+        server.updated_at = Utc::now();
+        server.tool_cache = tools
+            .iter()
+            .map(|t| CachedMcpTool {
+                name: strip_namespace(&t.id, &server.slug),
+                description: t.description.clone(),
+                input_schema: t.parameters.clone(),
+            })
+            .collect();
+        self.repo.update(&server).await?;
+        Ok(StartResult { tools })
+    }
+
+    pub async fn stop(&self, user_id: &str, server_id: &str) -> Result<(), AppError> {
+        let mut server = self.load_owned(user_id, server_id).await?;
+        self.manager.stop(server_id).await?;
+        server.status = McpServerStatus::Stopped;
+        server.updated_at = Utc::now();
+        self.repo.update(&server).await?;
+        Ok(())
+    }
+
+    async fn load_owned(&self, user_id: &str, server_id: &str) -> Result<McpServer, AppError> {
+        let server = self
+            .repo
+            .find_by_id(server_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("mcp server {server_id}")))?;
+        if server.user_id != user_id {
+            return Err(AppError::Forbidden(format!(
+                "mcp server {server_id} belongs to another user"
+            )));
+        }
+        Ok(server)
+    }
+
+    async fn resolve_entry(
+        &self,
+        req: &McpServerInstall,
+    ) -> Result<RegistryServerEntry, AppError> {
+        if let Some(manifest) = &req.manifest {
+            return serde_json::from_value(manifest.clone())
+                .map_err(|e| AppError::Validation(format!("invalid MCP server manifest: {e}")));
+        }
+        let name = req.registry_id.as_deref().ok_or_else(|| {
+            AppError::Validation("install request must provide registry_id or manifest".into())
+        })?;
+        self.registry.fetch(name).await
+    }
+
+    async fn resolve_env(
+        &self,
+        server: &McpServer,
+    ) -> Result<BTreeMap<String, String>, AppError> {
+        let mut out = server.env.clone();
+        let principal = GrantPrincipal::McpServer(&server.id);
+        let bindings = self
+            .vault
+            .list_bindings_for_principal(&server.user_id, &principal)
+            .await?;
+        for binding in bindings {
+            let authorized = self
+                .vault
+                .has_grant_for_item(
+                    &server.user_id,
+                    &principal,
+                    &binding.connection_id,
+                    &binding.vault_item_id,
+                )
+                .await?;
+            if !authorized {
+                return Err(AppError::Forbidden(format!(
+                    "grant missing for vault item {} in connection {} — re-approve it",
+                    binding.vault_item_id, binding.connection_id,
+                )));
+            }
+
+            let secret = self
+                .vault
+                .get_secret(&server.user_id, &binding.connection_id, &binding.vault_item_id)
+                .await?;
+            for (k, v) in
+                crate::credential::vault::service::project_target(&secret, &binding.target)
+            {
+                out.insert(k, v);
+            }
+        }
+        Ok(out)
+    }
+}
+
+fn pick_package(entry: &RegistryServerEntry) -> Option<&RegistryPackage> {
+    const PREFERRED_RUNTIMES: &[&str] = &["npm", "pypi"];
+    const PREFERRED_TRANSPORTS: &[&str] = &["stdio", "streamable-http", "sse"];
+    for runtime in PREFERRED_RUNTIMES {
+        for transport in PREFERRED_TRANSPORTS {
+            if let Some(p) = entry.packages.iter().find(|p| {
+                p.registry_type == *runtime && p.transport.kind == *transport
+            }) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+fn build_invocation(
+    package: &RegistryPackage,
+) -> Result<(McpRuntime, String, Vec<String>), AppError> {
+    let pinned = package
+        .version
+        .as_deref()
+        .map(|v| format!("{}@{v}", package.identifier))
+        .unwrap_or_else(|| package.identifier.clone());
+
+    let runtime_args: Vec<String> = package
+        .runtime_arguments
+        .iter()
+        .filter_map(|a| a.value.clone().or_else(|| a.default.clone()))
+        .collect();
+    let package_args: Vec<String> = package
+        .package_arguments
+        .iter()
+        .filter_map(|a| a.value.clone().or_else(|| a.default.clone()))
+        .collect();
+
+    match package.registry_type.as_str() {
+        "npm" => {
+            let mut args = vec!["--yes".to_string(), pinned];
+            args.extend(runtime_args);
+            args.extend(package_args);
+            Ok((McpRuntime::Npm, "npx".into(), args))
+        }
+        "pypi" => {
+            let mut args = vec!["run".to_string(), "--from".into(), pinned];
+            args.extend(runtime_args);
+            args.extend(package_args);
+            Ok((McpRuntime::Pypi, "uvx".into(), args))
+        }
+        other => Err(AppError::Validation(format!(
+            "unsupported MCP package runtime: {other}"
+        ))),
+    }
+}
+
+/// Every `is_secret` env var declared by the chosen package must have exactly
+/// one matching binding in `credentials`, and any binding referring to an env
+/// var the package does not declare is an error. No silent passthrough.
+fn validate_credential_bindings(
+    package: &RegistryPackage,
+    bindings: &[CredentialBinding],
+) -> Result<(), AppError> {
+    let required: HashSet<&str> = package
+        .environment_variables
+        .iter()
+        .filter(|v| v.is_secret)
+        .map(|v| v.name.as_str())
+        .collect();
+    let provided: HashSet<&str> = bindings.iter().map(|b| b.env_var.as_str()).collect();
+
+    let missing: Vec<&&str> = required.difference(&provided).collect();
+    if !missing.is_empty() {
+        return Err(AppError::Validation(format!(
+            "missing credential binding(s) for secret env var(s): {}",
+            missing
+                .into_iter()
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    let extraneous: Vec<&&str> = provided.difference(&required).collect();
+    if !extraneous.is_empty() {
+        return Err(AppError::Validation(format!(
+            "binding(s) provided for env var(s) the package does not declare: {}",
+            extraneous
+                .into_iter()
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn validate_absolute_paths(paths: &[String]) -> Result<(), AppError> {
+    for p in paths {
+        let path = Path::new(p);
+        if !path.is_absolute() {
+            return Err(AppError::Validation(format!(
+                "sandbox path must be absolute: {p}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn strip_namespace(tool_id: &str, slug: &str) -> String {
+    let prefix = format!("mcp__{slug}__");
+    tool_id
+        .strip_prefix(&prefix)
+        .unwrap_or(tool_id)
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credential::vault::models::VaultField;
+    use crate::tool::mcp::metadata::{RegistryArgument, RegistryEnvVar, RegistryTransport};
+
+    fn pkg(registry_type: &str, transport: &str) -> RegistryPackage {
+        RegistryPackage {
+            registry_type: registry_type.into(),
+            identifier: "@example/thing".into(),
+            version: Some("1.2.3".into()),
+            runtime_hint: None,
+            transport: RegistryTransport {
+                kind: transport.into(),
+                url: None,
+            },
+            runtime_arguments: vec![],
+            package_arguments: vec![],
+            environment_variables: vec![],
+        }
+    }
+
+    fn secret_env_var(name: &str) -> RegistryEnvVar {
+        RegistryEnvVar {
+            name: name.into(),
+            description: None,
+            is_required: true,
+            is_secret: true,
+            format: None,
+        }
+    }
+
+    fn entry_with(packages: Vec<RegistryPackage>) -> RegistryServerEntry {
+        RegistryServerEntry {
+            name: "io.example/foo".into(),
+            description: "d".into(),
+            version: "1.0.0".into(),
+            title: None,
+            repository: None,
+            website_url: None,
+            packages,
+            remotes: vec![],
+            status: Default::default(),
+            is_latest: true,
+            status_message: None,
+            status_changed_at: None,
+            published_at: None,
+            updated_at: None,
+            enrichment: None,
+            score: None,
+        }
+    }
+
+    fn binding(env_var: &str) -> CredentialBinding {
+        CredentialBinding {
+            connection_id: "conn".into(),
+            vault_item_id: "item".into(),
+            env_var: env_var.into(),
+            field: VaultField::Password,
+        }
+    }
+
+    #[test]
+    fn pick_package_prefers_npm_stdio_over_alternatives() {
+        let entry = entry_with(vec![
+            pkg("pypi", "stdio"),
+            pkg("npm", "sse"),
+            pkg("npm", "stdio"),
+        ]);
+        let chosen = pick_package(&entry).unwrap();
+        assert_eq!(chosen.registry_type, "npm");
+        assert_eq!(chosen.transport.kind, "stdio");
+    }
+
+    #[test]
+    fn pick_package_falls_back_to_pypi_when_no_npm() {
+        let entry = entry_with(vec![pkg("pypi", "stdio")]);
+        assert_eq!(pick_package(&entry).unwrap().registry_type, "pypi");
+    }
+
+    #[test]
+    fn pick_package_returns_none_for_oci_only() {
+        assert!(pick_package(&entry_with(vec![pkg("oci", "stdio")])).is_none());
+    }
+
+    #[test]
+    fn build_invocation_pins_npm_version_and_uses_npx() {
+        let mut p = pkg("npm", "stdio");
+        p.package_arguments = vec![RegistryArgument {
+            kind: "positional".into(),
+            name: None,
+            value_hint: None,
+            value: Some("--verbose".into()),
+            default: None,
+            is_required: false,
+            is_repeated: false,
+        }];
+        let (runtime, cmd, args) = build_invocation(&p).unwrap();
+        assert_eq!(runtime, McpRuntime::Npm);
+        assert_eq!(cmd, "npx");
+        assert_eq!(args, vec!["--yes", "@example/thing@1.2.3", "--verbose"]);
+    }
+
+    #[test]
+    fn build_invocation_pypi_uses_uvx_run_from() {
+        let (runtime, cmd, args) = build_invocation(&pkg("pypi", "stdio")).unwrap();
+        assert_eq!(runtime, McpRuntime::Pypi);
+        assert_eq!(cmd, "uvx");
+        assert_eq!(args, vec!["run", "--from", "@example/thing@1.2.3"]);
+    }
+
+    #[test]
+    fn build_invocation_errors_on_unsupported_runtime() {
+        assert!(matches!(
+            build_invocation(&pkg("oci", "stdio")),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn validate_credential_bindings_accepts_exact_match() {
+        let mut p = pkg("npm", "stdio");
+        p.environment_variables = vec![secret_env_var("GITHUB_TOKEN")];
+        assert!(validate_credential_bindings(&p, &[binding("GITHUB_TOKEN")]).is_ok());
+    }
+
+    #[test]
+    fn validate_credential_bindings_rejects_missing_secret() {
+        let mut p = pkg("npm", "stdio");
+        p.environment_variables = vec![secret_env_var("GITHUB_TOKEN")];
+        let err = validate_credential_bindings(&p, &[]).unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn validate_credential_bindings_rejects_extraneous_binding() {
+        let mut p = pkg("npm", "stdio");
+        p.environment_variables = vec![secret_env_var("GITHUB_TOKEN")];
+        let err = validate_credential_bindings(
+            &p,
+            &[binding("GITHUB_TOKEN"), binding("NOT_DECLARED")],
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn validate_credential_bindings_ignores_non_secret_env_vars() {
+        let mut p = pkg("npm", "stdio");
+        p.environment_variables = vec![
+            secret_env_var("SECRET"),
+            RegistryEnvVar {
+                name: "PUBLIC".into(),
+                description: None,
+                is_required: false,
+                is_secret: false,
+                format: None,
+            },
+        ];
+        assert!(validate_credential_bindings(&p, &[binding("SECRET")]).is_ok());
+    }
+
+    #[test]
+    fn validate_absolute_paths_rejects_relative() {
+        assert!(validate_absolute_paths(&["/abs".into()]).is_ok());
+        assert!(matches!(
+            validate_absolute_paths(&["relative/path".into()]).unwrap_err(),
+            AppError::Validation(_)
+        ));
+    }
+
+    #[test]
+    fn strip_namespace_removes_prefix() {
+        assert_eq!(
+            strip_namespace("mcp__google_workspace__gmail_send", "google_workspace"),
+            "gmail_send"
+        );
+        assert_eq!(strip_namespace("already_bare", "anything"), "already_bare");
+    }
+}
