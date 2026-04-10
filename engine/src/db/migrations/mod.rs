@@ -24,16 +24,15 @@ use chrono::{DateTime, Utc};
 use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 
-#[cfg(test)]
-mod _smoke;
+mod rename_vault_grant_to_principal;
 
 pub type MigrationFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), surrealdb::Error>> + Send + 'a>>;
 
 pub struct Migration {
-    /// Nanoseconds since the Unix epoch. Precomputed at macro-expansion time
-    /// so the `inventory::submit!` initializer is a pure-const expression.
-    /// Use [`Migration::datetime`] to get an owned `DateTime<Utc>`.
+    /// Precomputed at macro-expansion time so the `inventory::submit!`
+    /// initializer is a pure-const expression. Use [`Migration::datetime`]
+    /// to recover a `DateTime<Utc>`.
     pub timestamp_nanos: i64,
     pub run: for<'a> fn(&'a Surreal<Db>) -> MigrationFuture<'a>,
 }
@@ -246,9 +245,9 @@ mod tests {
         assert!(
             registered
                 .iter()
-                .any(|m| m.datetime().to_rfc3339() == "1970-01-01T00:00:00+00:00"),
-            "smoke migration from _smoke.rs should be present in the inventory \
-             (proves #[migration] → inventory::submit! path works)"
+                .any(|m| m.datetime().to_rfc3339() == "2026-04-09T21:00:00+00:00"),
+            "rename_vault_grant_to_principal should be present in the inventory \
+             (proves #[migration] → inventory::submit! path works end-to-end)"
         );
     }
 

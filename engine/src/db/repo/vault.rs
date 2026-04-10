@@ -2,8 +2,14 @@ use async_trait::async_trait;
 use chrono::Utc;
 
 use crate::core::error::AppError;
-use crate::credential::vault::models::{Credential, VaultAccessLog, VaultConnection, VaultGrant};
-use crate::credential::vault::repository::{CredentialRepository, VaultAccessLogRepository, VaultConnectionRepository, VaultGrantRepository};
+use crate::credential::vault::models::{
+    Credential, GrantPrincipal, PrincipalCredentialBinding, VaultAccessLog, VaultConnection,
+    VaultGrant,
+};
+use crate::credential::vault::repository::{
+    CredentialRepository, PrincipalCredentialBindingRepository, VaultAccessLogRepository,
+    VaultConnectionRepository, VaultGrantRepository,
+};
 
 use super::generic::SurrealRepo;
 
@@ -11,6 +17,7 @@ pub type SurrealVaultConnectionRepo = SurrealRepo<VaultConnection>;
 pub type SurrealVaultGrantRepo = SurrealRepo<VaultGrant>;
 pub type SurrealCredentialRepo = SurrealRepo<Credential>;
 pub type SurrealVaultAccessLogRepo = SurrealRepo<VaultAccessLog>;
+pub type SurrealPrincipalCredentialBindingRepo = SurrealRepo<PrincipalCredentialBinding>;
 
 const SELECT_CLAUSE: &str = "SELECT *, meta::id(id) as id";
 
@@ -137,44 +144,28 @@ impl VaultGrantRepository for SurrealRepo<VaultGrant> {
     async fn find_matching_grant(
         &self,
         user_id: &str,
-        agent_id: &str,
+        principal: &GrantPrincipal,
         query: &str,
-        env_var_prefix: Option<&str>,
     ) -> Result<Option<VaultGrant>, AppError> {
         let now = Utc::now();
-        let surreal_query = if env_var_prefix.is_some() {
-            format!(
-                "{SELECT_CLAUSE} FROM vault_grant \
-                 WHERE user_id = $user_id \
-                 AND agent_id = $agent_id \
-                 AND (query = $query OR env_var_prefix = $env_var_prefix) \
-                 AND (expires_at IS NONE OR expires_at > $now) \
-                 LIMIT 1"
-            )
-        } else {
-            format!(
-                "{SELECT_CLAUSE} FROM vault_grant \
-                 WHERE user_id = $user_id \
-                 AND agent_id = $agent_id \
-                 AND query = $query \
-                 AND (expires_at IS NONE OR expires_at > $now) \
-                 LIMIT 1"
-            )
-        };
+        let surreal_query = format!(
+            "{SELECT_CLAUSE} FROM vault_grant \
+             WHERE user_id = $user_id \
+             AND principal.kind = $principal_kind \
+             AND principal.id = $principal_id \
+             AND query = $query \
+             AND (expires_at IS NONE OR expires_at > $now) \
+             LIMIT 1"
+        );
 
-        let mut db_query = self
+        let mut result = self
             .db()
             .query(&surreal_query)
             .bind(("user_id", user_id.to_string()))
-            .bind(("agent_id", agent_id.to_string()))
+            .bind(("principal_kind", principal.kind))
+            .bind(("principal_id", principal.id.clone()))
             .bind(("query", query.to_string()))
-            .bind(("now", now));
-
-        if let Some(prefix) = env_var_prefix {
-            db_query = db_query.bind(("env_var_prefix", prefix.to_string()));
-        }
-
-        let mut result = db_query
+            .bind(("now", now))
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -183,6 +174,52 @@ impl VaultGrantRepository for SurrealRepo<VaultGrant> {
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(grant)
+    }
+
+    async fn find_by_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<Vec<VaultGrant>, AppError> {
+        let query = format!(
+            "{SELECT_CLAUSE} FROM vault_grant \
+             WHERE user_id = $user_id \
+             AND principal.kind = $principal_kind \
+             AND principal.id = $principal_id \
+             ORDER BY created_at ASC"
+        );
+        let mut result = self
+            .db()
+            .query(&query)
+            .bind(("user_id", user_id.to_string()))
+            .bind(("principal_kind", principal.kind))
+            .bind(("principal_id", principal.id.clone()))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let grants: Vec<VaultGrant> = result
+            .take(0)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(grants)
+    }
+
+    async fn delete_by_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<(), AppError> {
+        self.db()
+            .query(
+                "DELETE FROM vault_grant \
+                 WHERE user_id = $user_id \
+                 AND principal.kind = $principal_kind \
+                 AND principal.id = $principal_id",
+            )
+            .bind(("user_id", user_id.to_string()))
+            .bind(("principal_kind", principal.kind))
+            .bind(("principal_id", principal.id.clone()))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 
     async fn delete_by_connection_id(&self, connection_id: &str) -> Result<(), AppError> {
@@ -255,5 +292,166 @@ impl VaultAccessLogRepository for SurrealRepo<VaultAccessLog> {
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(log)
+    }
+}
+
+#[async_trait]
+impl PrincipalCredentialBindingRepository for SurrealRepo<PrincipalCredentialBinding> {
+    async fn find_for_lookup(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+        query: &str,
+        chat_id: Option<&str>,
+    ) -> Result<Option<PrincipalCredentialBinding>, AppError> {
+        let now = Utc::now();
+        if let Some(chat) = chat_id {
+            let q = format!(
+                "{SELECT_CLAUSE} FROM principal_credential_binding \
+                 WHERE user_id = $user_id \
+                 AND principal.kind = $principal_kind \
+                 AND principal.id = $principal_id \
+                 AND query = $query \
+                 AND scope.Chat.chat_id = $chat_id \
+                 AND (expires_at IS NONE OR expires_at > $now) \
+                 LIMIT 1"
+            );
+            let mut result = self
+                .db()
+                .query(&q)
+                .bind(("user_id", user_id.to_string()))
+                .bind(("principal_kind", principal.kind))
+                .bind(("principal_id", principal.id.clone()))
+                .bind(("query", query.to_string()))
+                .bind(("chat_id", chat.to_string()))
+                .bind(("now", now))
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let chat_match: Option<PrincipalCredentialBinding> = result
+                .take(0)
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if chat_match.is_some() {
+                return Ok(chat_match);
+            }
+        }
+
+        let q = format!(
+            "{SELECT_CLAUSE} FROM principal_credential_binding \
+             WHERE user_id = $user_id \
+             AND principal.kind = $principal_kind \
+             AND principal.id = $principal_id \
+             AND query = $query \
+             AND scope.Durable IS NOT NONE \
+             AND (expires_at IS NONE OR expires_at > $now) \
+             LIMIT 1"
+        );
+        let mut result = self
+            .db()
+            .query(&q)
+            .bind(("user_id", user_id.to_string()))
+            .bind(("principal_kind", principal.kind))
+            .bind(("principal_id", principal.id.clone()))
+            .bind(("query", query.to_string()))
+            .bind(("now", now))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let durable: Option<PrincipalCredentialBinding> = result
+            .take(0)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(durable)
+    }
+
+    async fn find_for_chat(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+        chat_id: &str,
+    ) -> Result<Vec<PrincipalCredentialBinding>, AppError> {
+        let now = Utc::now();
+        let q = format!(
+            "{SELECT_CLAUSE} FROM principal_credential_binding \
+             WHERE user_id = $user_id \
+             AND principal.kind = $principal_kind \
+             AND principal.id = $principal_id \
+             AND (scope.Durable IS NOT NONE \
+                  OR (scope.Chat.chat_id = $chat_id)) \
+             AND (expires_at IS NONE OR expires_at > $now) \
+             ORDER BY created_at ASC"
+        );
+        let mut result = self
+            .db()
+            .query(&q)
+            .bind(("user_id", user_id.to_string()))
+            .bind(("principal_kind", principal.kind))
+            .bind(("principal_id", principal.id.clone()))
+            .bind(("chat_id", chat_id.to_string()))
+            .bind(("now", now))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let bindings: Vec<PrincipalCredentialBinding> = result
+            .take(0)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(bindings)
+    }
+
+    async fn find_for_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<Vec<PrincipalCredentialBinding>, AppError> {
+        let now = Utc::now();
+        let q = format!(
+            "{SELECT_CLAUSE} FROM principal_credential_binding \
+             WHERE user_id = $user_id \
+             AND principal.kind = $principal_kind \
+             AND principal.id = $principal_id \
+             AND (expires_at IS NONE OR expires_at > $now) \
+             ORDER BY created_at ASC"
+        );
+        let mut result = self
+            .db()
+            .query(&q)
+            .bind(("user_id", user_id.to_string()))
+            .bind(("principal_kind", principal.kind))
+            .bind(("principal_id", principal.id.clone()))
+            .bind(("now", now))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let bindings: Vec<PrincipalCredentialBinding> = result
+            .take(0)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(bindings)
+    }
+
+    async fn delete_by_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<(), AppError> {
+        self.db()
+            .query(
+                "DELETE FROM principal_credential_binding \
+                 WHERE user_id = $user_id \
+                 AND principal.kind = $principal_kind \
+                 AND principal.id = $principal_id",
+            )
+            .bind(("user_id", user_id.to_string()))
+            .bind(("principal_kind", principal.kind))
+            .bind(("principal_id", principal.id.clone()))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn delete_by_chat(&self, chat_id: &str) -> Result<(), AppError> {
+        self.db()
+            .query(
+                "DELETE FROM principal_credential_binding \
+                 WHERE scope.Chat.chat_id = $chat_id",
+            )
+            .bind(("chat_id", chat_id.to_string()))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 }

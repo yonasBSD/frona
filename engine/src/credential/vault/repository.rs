@@ -3,7 +3,10 @@ use async_trait::async_trait;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
 
-use super::models::{Credential, VaultAccessLog, VaultConnection, VaultGrant};
+use super::models::{
+    Credential, GrantPrincipal, PrincipalCredentialBinding, VaultAccessLog, VaultConnection,
+    VaultGrant,
+};
 
 #[async_trait]
 pub trait CredentialRepository: Repository<Credential> {
@@ -28,10 +31,19 @@ pub trait VaultGrantRepository: Repository<VaultGrant> {
     async fn find_matching_grant(
         &self,
         user_id: &str,
-        agent_id: &str,
+        principal: &GrantPrincipal,
         query: &str,
-        env_var_prefix: Option<&str>,
     ) -> Result<Option<VaultGrant>, AppError>;
+    async fn find_by_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<Vec<VaultGrant>, AppError>;
+    async fn delete_by_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<(), AppError>;
     async fn delete_by_connection_id(&self, connection_id: &str) -> Result<(), AppError>;
 }
 
@@ -44,4 +56,45 @@ pub trait VaultAccessLogRepository: Repository<VaultAccessLog> {
         query: &str,
         env_var_prefix: Option<&str>,
     ) -> Result<Option<VaultAccessLog>, AppError>;
+}
+
+#[async_trait]
+pub trait PrincipalCredentialBindingRepository:
+    Repository<PrincipalCredentialBinding>
+{
+    /// Look up the binding for an exact `(user, principal, query)` triple,
+    /// honoring scope: returns the chat-scoped one if `chat_id` is supplied
+    /// and a match exists, otherwise the durable one. Expired bindings are
+    /// filtered out.
+    async fn find_for_lookup(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+        query: &str,
+        chat_id: Option<&str>,
+    ) -> Result<Option<PrincipalCredentialBinding>, AppError>;
+
+    /// All non-expired bindings visible to a chat session: every durable
+    /// binding for the principal plus any bindings scoped to this chat.
+    async fn find_for_chat(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+        chat_id: &str,
+    ) -> Result<Vec<PrincipalCredentialBinding>, AppError>;
+
+    /// Every non-expired binding for a principal regardless of scope.
+    async fn find_for_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<Vec<PrincipalCredentialBinding>, AppError>;
+
+    async fn delete_by_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<(), AppError>;
+
+    async fn delete_by_chat(&self, chat_id: &str) -> Result<(), AppError>;
 }

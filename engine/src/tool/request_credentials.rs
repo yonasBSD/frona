@@ -53,100 +53,42 @@ impl RequestCredentialsTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        let principal = crate::credential::vault::models::GrantPrincipal::Agent(ctx.agent.id.clone());
         if !force
-            && let Some(grant) = self
+            && let Some(binding) = self
                 .vault_service
-                .find_matching_grant(
-                    &ctx.user.id,
-                    &ctx.agent.id,
-                    &query,
-                    env_var_prefix.as_deref(),
-                )
+                .find_binding(&ctx.user.id, &principal, &query, Some(&ctx.chat.id))
                 .await?
         {
             let secret = self
                 .vault_service
-                .get_secret(&ctx.user.id, &grant.connection_id, &grant.vault_item_id)
+                .get_secret(&ctx.user.id, &binding.connection_id, &binding.vault_item_id)
                 .await?;
 
             self.vault_service
                 .log_access(
                     &ctx.user.id,
-                    &ctx.agent.id,
+                    principal.clone(),
                     &ctx.chat.id,
-                    &grant.connection_id,
-                    &grant.vault_item_id,
+                    &binding.connection_id,
+                    &binding.vault_item_id,
                     env_var_prefix.as_deref(),
                     &query,
                     &reason,
                 )
                 .await?;
 
-            if let Some(ref prefix) = env_var_prefix {
-                let env_vars = secret.to_env_vars(prefix);
-                let var_names: Vec<String> =
-                    env_vars.iter().map(|(k, _)| k.clone()).collect();
+            let env_vars =
+                crate::credential::vault::service::project_target(&secret, &binding.target);
+            let var_names: Vec<String> =
+                env_vars.iter().map(|(k, _)| k.clone()).collect();
+            let mut vault_vars = ctx.vault_env_vars.write().await;
+            vault_vars.extend(env_vars);
 
-                let mut vault_vars = ctx.vault_env_vars.write().await;
-                vault_vars.extend(env_vars);
-
-                return Ok(ToolOutput::text(format!(
-                    "Credentials loaded into environment variables: {}. Use these in CLI commands.",
-                    var_names.join(", ")
-                )));
-            }
-
-            let mut parts = Vec::new();
-            parts.push(format!("Credentials for: {}", secret.name));
-            if let Some(ref u) = secret.username {
-                parts.push(format!("Username: {u}"));
-            }
-            if let Some(ref p) = secret.password {
-                parts.push(format!("Password: {p}"));
-            }
-            for (k, v) in &secret.fields {
-                parts.push(format!("{k}: {v}"));
-            }
-            return Ok(ToolOutput::text(parts.join("\n")));
-        }
-
-        if !force
-            && let Some(access) = self
-                .vault_service
-                .find_existing_access(&ctx.chat.id, &query, env_var_prefix.as_deref())
-                .await?
-        {
-            let secret = self
-                .vault_service
-                .get_secret(&ctx.user.id, &access.connection_id, &access.vault_item_id)
-                .await?;
-
-            if let Some(ref prefix) = env_var_prefix {
-                let env_vars = secret.to_env_vars(prefix);
-                let var_names: Vec<String> =
-                    env_vars.iter().map(|(k, _)| k.clone()).collect();
-
-                let mut vault_vars = ctx.vault_env_vars.write().await;
-                vault_vars.extend(env_vars);
-
-                return Ok(ToolOutput::text(format!(
-                    "Credentials already loaded into environment variables: {}. Use these in CLI commands.",
-                    var_names.join(", ")
-                )));
-            }
-
-            let mut parts = Vec::new();
-            parts.push(format!("Credentials for: {}", secret.name));
-            if let Some(ref u) = secret.username {
-                parts.push(format!("Username: {u}"));
-            }
-            if let Some(ref p) = secret.password {
-                parts.push(format!("Password: {p}"));
-            }
-            for (k, v) in &secret.fields {
-                parts.push(format!("{k}: {v}"));
-            }
-            return Ok(ToolOutput::text(parts.join("\n")));
+            return Ok(ToolOutput::text(format!(
+                "Credentials loaded into environment variables: {}. Use these in CLI commands.",
+                var_names.join(", ")
+            )));
         }
 
         let json = serde_json::json!({

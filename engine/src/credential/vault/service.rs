@@ -11,7 +11,10 @@ use crate::core::error::AppError;
 
 use super::models::*;
 use super::provider::{VaultProvider, create_local_provider, create_vault_provider};
-use super::repository::{CredentialRepository, VaultAccessLogRepository, VaultConnectionRepository, VaultGrantRepository};
+use super::repository::{
+    CredentialRepository, PrincipalCredentialBindingRepository, VaultAccessLogRepository,
+    VaultConnectionRepository, VaultGrantRepository,
+};
 
 #[derive(Clone)]
 pub struct VaultService {
@@ -19,6 +22,7 @@ pub struct VaultService {
     grant_repo: Arc<dyn VaultGrantRepository>,
     credential_repo: Arc<dyn CredentialRepository>,
     access_log_repo: Arc<dyn VaultAccessLogRepository>,
+    binding_repo: Arc<dyn PrincipalCredentialBindingRepository>,
     encryption_key: [u8; 32],
     vault_config: VaultConfig,
     data_dir: PathBuf,
@@ -32,6 +36,7 @@ impl VaultService {
         grant_repo: Arc<dyn VaultGrantRepository>,
         credential_repo: Arc<dyn CredentialRepository>,
         access_log_repo: Arc<dyn VaultAccessLogRepository>,
+        binding_repo: Arc<dyn PrincipalCredentialBindingRepository>,
         encryption_secret: &str,
         vault_config: VaultConfig,
         data_dir: PathBuf,
@@ -44,6 +49,7 @@ impl VaultService {
             grant_repo,
             credential_repo,
             access_log_repo,
+            binding_repo,
             encryption_key,
             vault_config,
             data_dir,
@@ -152,13 +158,12 @@ impl VaultService {
     pub async fn find_matching_grant(
         &self,
         user_id: &str,
-        agent_id: &str,
+        principal: &GrantPrincipal,
         query: &str,
-        env_var_prefix: Option<&str>,
     ) -> Result<Option<VaultGrant>, AppError> {
         let grant = self
             .grant_repo
-            .find_matching_grant(user_id, agent_id, query, env_var_prefix)
+            .find_matching_grant(user_id, principal, query)
             .await?;
 
         if let Some(ref g) = grant {
@@ -178,15 +183,13 @@ impl VaultService {
         Ok(grant)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn create_grant(
         &self,
         user_id: &str,
-        agent_id: &str,
+        principal: GrantPrincipal,
         connection_id: &str,
         vault_item_id: &str,
         query: &str,
-        env_var_prefix: Option<&str>,
         duration: &GrantDuration,
     ) -> Result<VaultGrant, AppError> {
         let expires_at = match duration {
@@ -205,9 +208,8 @@ impl VaultService {
             user_id: user_id.to_string(),
             connection_id: connection_id.to_string(),
             vault_item_id: vault_item_id.to_string(),
-            agent_id: agent_id.to_string(),
+            principal,
             query: query.to_string(),
-            env_var_prefix: env_var_prefix.map(String::from),
             expires_at,
             created_at: Utc::now(),
         };
@@ -218,7 +220,7 @@ impl VaultService {
     pub async fn log_access(
         &self,
         user_id: &str,
-        agent_id: &str,
+        principal: GrantPrincipal,
         chat_id: &str,
         connection_id: &str,
         vault_item_id: &str,
@@ -229,7 +231,7 @@ impl VaultService {
         let log = VaultAccessLog {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),
-            agent_id: agent_id.to_string(),
+            principal,
             chat_id: chat_id.to_string(),
             connection_id: connection_id.to_string(),
             vault_item_id: vault_item_id.to_string(),
@@ -256,31 +258,130 @@ impl VaultService {
         &self,
         user_id: &str,
         chat_id: &str,
+        agent_id: &str,
     ) -> Result<Vec<(String, String)>, AppError> {
-        let logs = self.access_log_repo.find_by_chat_id(chat_id).await?;
+        let principal = GrantPrincipal::Agent(agent_id);
+        let bindings = self
+            .binding_repo
+            .find_for_chat(user_id, &principal, chat_id)
+            .await?;
         let mut env_vars = Vec::new();
-
-        for log in logs {
-            let Some(ref prefix) = log.env_var_prefix else {
-                continue;
-            };
+        for binding in bindings {
             match self
-                .get_secret(user_id, &log.connection_id, &log.vault_item_id)
+                .get_secret(user_id, &binding.connection_id, &binding.vault_item_id)
                 .await
             {
-                Ok(secret) => env_vars.extend(secret.to_env_vars(prefix)),
+                Ok(secret) => env_vars.extend(project_target(&secret, &binding.target)),
                 Err(e) => {
                     tracing::warn!(
-                        vault_item_id = %log.vault_item_id,
+                        vault_item_id = %binding.vault_item_id,
                         error = %e,
-                        "Failed to fetch secret for access log entry"
+                        "Failed to fetch secret for binding"
                     );
                 }
             }
         }
-
         Ok(env_vars)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn has_grant_for_item(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+        connection_id: &str,
+        vault_item_id: &str,
+    ) -> Result<bool, AppError> {
+        let grants = self
+            .grant_repo
+            .find_by_principal(user_id, principal)
+            .await?;
+        Ok(grants
+            .iter()
+            .any(|g| g.connection_id == connection_id && g.vault_item_id == vault_item_id))
+    }
+
+    pub async fn delete_grants_for_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<(), AppError> {
+        self.grant_repo.delete_by_principal(user_id, principal).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_binding(
+        &self,
+        user_id: &str,
+        principal: GrantPrincipal,
+        query: &str,
+        connection_id: &str,
+        vault_item_id: &str,
+        target: CredentialTarget,
+        scope: BindingScope,
+        expires_at: Option<chrono::DateTime<Utc>>,
+    ) -> Result<PrincipalCredentialBinding, AppError> {
+        let binding = PrincipalCredentialBinding {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: user_id.to_string(),
+            principal,
+            query: query.to_string(),
+            connection_id: connection_id.to_string(),
+            vault_item_id: vault_item_id.to_string(),
+            target,
+            scope,
+            expires_at,
+            created_at: Utc::now(),
+        };
+        self.binding_repo.create(&binding).await
+    }
+
+    pub async fn find_binding(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+        query: &str,
+        chat_id: Option<&str>,
+    ) -> Result<Option<PrincipalCredentialBinding>, AppError> {
+        self.binding_repo
+            .find_for_lookup(user_id, principal, query, chat_id)
+            .await
+    }
+
+    pub async fn list_bindings_for_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<Vec<PrincipalCredentialBinding>, AppError> {
+        self.binding_repo
+            .find_for_principal(user_id, principal)
+            .await
+    }
+
+    pub async fn delete_bindings_for_principal(
+        &self,
+        user_id: &str,
+        principal: &GrantPrincipal,
+    ) -> Result<(), AppError> {
+        self.binding_repo.delete_by_principal(user_id, principal).await
+    }
+}
+
+pub fn project_target(secret: &VaultSecret, target: &CredentialTarget) -> Vec<(String, String)> {
+    match target {
+        CredentialTarget::Prefix { env_var_prefix } => secret.to_env_vars(env_var_prefix),
+        CredentialTarget::Single { env_var, field } => {
+            let value = match field {
+                VaultField::Password => secret.password.clone(),
+                VaultField::Username => secret.username.clone(),
+                VaultField::Custom { name } => secret.fields.get(name).cloned(),
+            };
+            value.map(|v| vec![(env_var.clone(), v)]).unwrap_or_default()
+        }
+    }
+}
+
+impl VaultService {
 
     pub async fn list_grants(
         &self,
@@ -771,9 +872,93 @@ pub fn decrypt_password(encrypted_b64: &str, key: &[u8; 32]) -> Result<String, A
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn test_key() -> [u8; 32] {
         derive_key("test-secret")
+    }
+
+    fn sample_secret() -> VaultSecret {
+        VaultSecret {
+            id: "i1".into(),
+            name: "GitHub".into(),
+            username: Some("octocat".into()),
+            password: Some("ghp_xxx".into()),
+            notes: None,
+            fields: {
+                let mut m = HashMap::new();
+                m.insert("api_key".into(), "ghp_custom".into());
+                m
+            },
+        }
+    }
+
+    #[test]
+    fn project_target_prefix_spreads_all_fields() {
+        let secret = sample_secret();
+        let target = CredentialTarget::Prefix {
+            env_var_prefix: "GH".into(),
+        };
+        let vars: std::collections::HashMap<_, _> = project_target(&secret, &target)
+            .into_iter()
+            .collect();
+        assert_eq!(vars.get("GH_USERNAME").map(String::as_str), Some("octocat"));
+        assert_eq!(vars.get("GH_PASSWORD").map(String::as_str), Some("ghp_xxx"));
+        assert_eq!(vars.get("GH_API_KEY").map(String::as_str), Some("ghp_custom"));
+    }
+
+    #[test]
+    fn project_target_single_projects_password_only() {
+        let secret = sample_secret();
+        let target = CredentialTarget::Single {
+            env_var: "GITHUB_TOKEN".into(),
+            field: VaultField::Password,
+        };
+        let vars = project_target(&secret, &target);
+        assert_eq!(vars, vec![("GITHUB_TOKEN".to_string(), "ghp_xxx".to_string())]);
+    }
+
+    #[test]
+    fn project_target_single_projects_username() {
+        let secret = sample_secret();
+        let target = CredentialTarget::Single {
+            env_var: "GH_USER".into(),
+            field: VaultField::Username,
+        };
+        let vars = project_target(&secret, &target);
+        assert_eq!(vars, vec![("GH_USER".to_string(), "octocat".to_string())]);
+    }
+
+    #[test]
+    fn project_target_single_projects_custom_field() {
+        let secret = sample_secret();
+        let target = CredentialTarget::Single {
+            env_var: "API_KEY".into(),
+            field: VaultField::Custom { name: "api_key".into() },
+        };
+        let vars = project_target(&secret, &target);
+        assert_eq!(vars, vec![("API_KEY".to_string(), "ghp_custom".to_string())]);
+    }
+
+    #[test]
+    fn project_target_single_returns_empty_when_field_missing() {
+        let mut secret = sample_secret();
+        secret.password = None;
+        let target = CredentialTarget::Single {
+            env_var: "GITHUB_TOKEN".into(),
+            field: VaultField::Password,
+        };
+        assert!(project_target(&secret, &target).is_empty());
+    }
+
+    #[test]
+    fn project_target_single_returns_empty_for_unknown_custom_field() {
+        let secret = sample_secret();
+        let target = CredentialTarget::Single {
+            env_var: "X".into(),
+            field: VaultField::Custom { name: "nonexistent".into() },
+        };
+        assert!(project_target(&secret, &target).is_empty());
     }
 
     #[test]

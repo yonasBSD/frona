@@ -109,13 +109,55 @@ pub enum UpdateLocalItemRequest {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+#[surreal(crate = "surrealdb::types")]
+pub struct GrantPrincipal {
+    pub kind: GrantPrincipalKind,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(crate = "surrealdb::types", rename_all = "snake_case")]
+pub enum GrantPrincipalKind {
+    Agent,
+    McpServer,
+    App,
+}
+
+impl GrantPrincipal {
+    #[allow(non_snake_case)]
+    pub fn Agent(id: impl Into<String>) -> Self {
+        Self {
+            kind: GrantPrincipalKind::Agent,
+            id: id.into(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn McpServer(id: impl Into<String>) -> Self {
+        Self {
+            kind: GrantPrincipalKind::McpServer,
+            id: id.into(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn App(id: impl Into<String>) -> Self {
+        Self {
+            kind: GrantPrincipalKind::App,
+            id: id.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]
 #[entity(table = "vault_access_log")]
 pub struct VaultAccessLog {
     pub id: String,
     pub user_id: String,
-    pub agent_id: String,
+    pub principal: GrantPrincipal,
     pub chat_id: String,
     pub connection_id: String,
     pub vault_item_id: String,
@@ -202,9 +244,56 @@ pub struct VaultGrant {
     pub user_id: String,
     pub connection_id: String,
     pub vault_item_id: String,
-    pub agent_id: String,
+    pub principal: GrantPrincipal,
     pub query: String,
-    pub env_var_prefix: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// `SurrealValue` ignores `tag/content/rename_all` attributes on enum variants
+/// and always emits the externally-tagged form (`{"Custom": {"name": "..."}}`).
+/// The query layer accommodates this; queries that need to navigate into
+/// variant data use the variant name as the field path key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+pub enum VaultField {
+    Password,
+    Username,
+    Custom { name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+pub enum CredentialTarget {
+    /// Used by chat-time agent grants where the LLM asks for a credential
+    /// "by prefix" and gets every field of the secret as `{PREFIX}_*`.
+    Prefix { env_var_prefix: String },
+    /// Used by MCP install where the consumer declared a specific env var name
+    /// and we project exactly one secret field into it.
+    Single { env_var: String, field: VaultField },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+pub enum BindingScope {
+    /// Survives across chats; persists until the principal is deleted.
+    Durable,
+    /// Auto-purged when the chat is deleted. Used for `GrantDuration::Once`.
+    Chat { chat_id: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
+#[surreal(crate = "surrealdb::types")]
+#[entity(table = "principal_credential_binding")]
+pub struct PrincipalCredentialBinding {
+    pub id: String,
+    pub user_id: String,
+    pub principal: GrantPrincipal,
+    /// Lookup key. For agent chat this is the LLM's request query
+    /// (e.g. `"github"`); for MCP it's the env var name (e.g. `"GITHUB_TOKEN"`).
+    pub query: String,
+    pub connection_id: String,
+    pub vault_item_id: String,
+    pub target: CredentialTarget,
+    pub scope: BindingScope,
+    #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -322,9 +411,8 @@ pub struct VaultGrantResponse {
     pub id: String,
     pub connection_id: String,
     pub vault_item_id: String,
-    pub agent_id: String,
+    pub principal: GrantPrincipal,
     pub query: String,
-    pub env_var_prefix: Option<String>,
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -335,9 +423,8 @@ impl From<VaultGrant> for VaultGrantResponse {
             id: g.id,
             connection_id: g.connection_id,
             vault_item_id: g.vault_item_id,
-            agent_id: g.agent_id,
+            principal: g.principal,
             query: g.query,
-            env_var_prefix: g.env_var_prefix,
             expires_at: g.expires_at,
             created_at: g.created_at,
         }

@@ -191,7 +191,7 @@ impl ChatSessionContext {
 
         let vault_env = state
             .vault_service
-            .hydrate_chat_env_vars(user_id, &chat.id)
+            .hydrate_chat_env_vars(user_id, &chat.id, &chat.agent_id)
             .await
             .unwrap_or_default();
         if !vault_env.is_empty() {

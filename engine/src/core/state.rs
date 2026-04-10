@@ -221,6 +221,8 @@ impl AppState {
             Arc::new(SurrealRepo::<crate::credential::vault::models::VaultGrant>::new(db.clone()));
         let vault_access_log_repo: Arc<dyn crate::credential::vault::repository::VaultAccessLogRepository> =
             Arc::new(SurrealRepo::<crate::credential::vault::models::VaultAccessLog>::new(db.clone()));
+        let binding_repo: Arc<dyn crate::credential::vault::repository::PrincipalCredentialBindingRepository> =
+            Arc::new(SurrealRepo::<crate::credential::vault::models::PrincipalCredentialBinding>::new(db.clone()));
         let data_dir = PathBuf::from(&config.database.path)
             .parent()
             .map(|p| p.to_path_buf())
@@ -230,6 +232,7 @@ impl AppState {
             vault_grant_repo,
             vault_credential_repo,
             vault_access_log_repo,
+            binding_repo,
             &config.auth.encryption_secret,
             config.vault.clone(),
             data_dir,

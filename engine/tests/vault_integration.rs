@@ -40,11 +40,15 @@ fn build_service(db: &surrealdb::Surreal<surrealdb::engine::local::Db>) -> Vault
         Arc::new(SurrealRepo::<frona::credential::vault::models::Credential>::new(db.clone()));
     let access_log_repo: Arc<dyn VaultAccessLogRepository> =
         Arc::new(SurrealRepo::<VaultAccessLog>::new(db.clone()));
+    let binding_repo: Arc<
+        dyn frona::credential::vault::repository::PrincipalCredentialBindingRepository,
+    > = Arc::new(SurrealRepo::<PrincipalCredentialBinding>::new(db.clone()));
     VaultService::new(
         connection_repo,
         grant_repo,
         credential_repo,
         access_log_repo,
+        binding_repo,
         "test-secret",
         VaultConfig::default(),
         std::path::PathBuf::from("/tmp/test-data"),
@@ -109,11 +113,10 @@ async fn delete_connection_removes_grants() {
 
     svc.create_grant(
         "user1",
-        "agent1",
+        GrantPrincipal::Agent("agent1"),
         &conn.id,
         "item1",
         "github",
-        None,
         &GrantDuration::Permanent,
     )
     .await
@@ -136,52 +139,27 @@ async fn find_matching_grant_by_query() {
 
     svc.create_grant(
         "user1",
-        "agent1",
+        GrantPrincipal::Agent("agent1"),
         &conn.id,
         "item1",
         "github",
-        None,
         &GrantDuration::Permanent,
     )
     .await
     .unwrap();
 
+
     let found = svc
-        .find_matching_grant("user1", "agent1", "github", None)
+        .find_matching_grant("user1", &GrantPrincipal::Agent("agent1"), "github")
         .await
         .unwrap();
     assert!(found.is_some());
 
     let not_found = svc
-        .find_matching_grant("user1", "agent1", "gitlab", None)
+        .find_matching_grant("user1", &GrantPrincipal::Agent("agent1"), "gitlab")
         .await
         .unwrap();
     assert!(not_found.is_none());
-}
-
-#[tokio::test]
-async fn find_matching_grant_by_env_var_prefix() {
-    let db = setup_db().await;
-    let svc = build_service(&db);
-    let conn = create_test_connection(&svc, "user1").await;
-
-    svc.create_grant(
-        "user1",
-        "agent1",
-        &conn.id,
-        "item1",
-        "github",
-        Some("GH"),
-        &GrantDuration::Permanent,
-    )
-    .await
-    .unwrap();
-
-    let found = svc
-        .find_matching_grant("user1", "agent1", "unrelated-query", Some("GH"))
-        .await
-        .unwrap();
-    assert!(found.is_some());
 }
 
 #[tokio::test]
@@ -198,16 +176,15 @@ async fn expired_grant_is_cleaned_up() {
         user_id: "user1".into(),
         connection_id: conn.id,
         vault_item_id: "item1".into(),
-        agent_id: "agent1".into(),
+        principal: GrantPrincipal::Agent("agent1"),
         query: "old-service".into(),
-        env_var_prefix: None,
         expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
         created_at: chrono::Utc::now(),
     };
     grant_repo.create(&expired_grant).await.unwrap();
 
     let result = svc
-        .find_matching_grant("user1", "agent1", "old-service", None)
+        .find_matching_grant("user1", &GrantPrincipal::Agent("agent1"), "old-service")
         .await
         .unwrap();
     assert!(result.is_none(), "Expired grant should not match");
@@ -250,6 +227,117 @@ async fn cannot_delete_system_managed_connection() {
 }
 
 #[tokio::test]
+async fn find_by_principal_returns_only_matching_scope() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    let conn = create_test_connection(&svc, "user1").await;
+
+    svc.create_grant(
+        "user1",
+        GrantPrincipal::Agent("agent1"),
+        &conn.id,
+        "item_a",
+        "github",
+        &GrantDuration::Permanent,
+    )
+    .await
+    .unwrap();
+    svc.create_grant(
+        "user1",
+        GrantPrincipal::McpServer("srv1"),
+        &conn.id,
+        "item_b",
+        "gmail",
+        &GrantDuration::Permanent,
+    )
+    .await
+    .unwrap();
+    svc.create_grant(
+        "user1",
+        GrantPrincipal::McpServer("srv2"),
+        &conn.id,
+        "item_c",
+        "slack",
+        &GrantDuration::Permanent,
+    )
+    .await
+    .unwrap();
+
+    let grant_repo: Arc<dyn VaultGrantRepository> =
+        Arc::new(SurrealRepo::<VaultGrant>::new(db.clone()));
+
+    let mcp1_grants = grant_repo
+        .find_by_principal("user1", &GrantPrincipal::McpServer("srv1"))
+        .await
+        .unwrap();
+    assert_eq!(mcp1_grants.len(), 1);
+    assert_eq!(mcp1_grants[0].vault_item_id, "item_b");
+
+    let agent_grants = grant_repo
+        .find_by_principal("user1", &GrantPrincipal::Agent("agent1"))
+        .await
+        .unwrap();
+    assert_eq!(agent_grants.len(), 1);
+    assert_eq!(agent_grants[0].vault_item_id, "item_a");
+
+    let no_grants = grant_repo
+        .find_by_principal("user1", &GrantPrincipal::McpServer("ghost"))
+        .await
+        .unwrap();
+    assert!(no_grants.is_empty());
+}
+
+#[tokio::test]
+async fn delete_by_principal_sweeps_only_matching_scope() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    let conn = create_test_connection(&svc, "user1").await;
+
+    svc.create_grant(
+        "user1",
+        GrantPrincipal::McpServer("srv1"),
+        &conn.id,
+        "item_a",
+        "github",
+        &GrantDuration::Permanent,
+    )
+    .await
+    .unwrap();
+    svc.create_grant(
+        "user1",
+        GrantPrincipal::McpServer("srv1"),
+        &conn.id,
+        "item_b",
+        "gmail",
+        &GrantDuration::Permanent,
+    )
+    .await
+    .unwrap();
+    svc.create_grant(
+        "user1",
+        GrantPrincipal::Agent("agent1"),
+        &conn.id,
+        "item_c",
+        "untouched",
+        &GrantDuration::Permanent,
+    )
+    .await
+    .unwrap();
+
+    let grant_repo: Arc<dyn VaultGrantRepository> =
+        Arc::new(SurrealRepo::<VaultGrant>::new(db.clone()));
+
+    grant_repo
+        .delete_by_principal("user1", &GrantPrincipal::McpServer("srv1"))
+        .await
+        .unwrap();
+
+    let remaining = svc.list_grants("user1").await.unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].query, "untouched");
+}
+
+#[tokio::test]
 async fn revoke_grant() {
     let db = setup_db().await;
     let svc = build_service(&db);
@@ -257,11 +345,10 @@ async fn revoke_grant() {
     let grant = svc
         .create_grant(
             "user1",
-            "agent1",
+            GrantPrincipal::Agent("agent1"),
             "conn1",
             "item1",
             "test",
-            None,
             &GrantDuration::Permanent,
         )
         .await
@@ -306,7 +393,7 @@ async fn vault_access_log_crud() {
     let log = svc
         .log_access(
             "user1",
-            "agent1",
+            GrantPrincipal::Agent("agent1"),
             "chat1",
             "conn1",
             "item1",
@@ -318,7 +405,7 @@ async fn vault_access_log_crud() {
         .unwrap();
 
     assert_eq!(log.user_id, "user1");
-    assert_eq!(log.agent_id, "agent1");
+    assert_eq!(log.principal, GrantPrincipal::Agent("agent1"));
     assert_eq!(log.chat_id, "chat1");
     assert_eq!(log.env_var_prefix.as_deref(), Some("GH"));
 
@@ -340,11 +427,10 @@ async fn once_grant_not_created() {
     let result = svc
         .create_grant(
             "user1",
-            "agent1",
+            GrantPrincipal::Agent("agent1"),
             "conn1",
             "item1",
             "github",
-            None,
             &GrantDuration::Once,
         )
         .await;
@@ -355,33 +441,272 @@ async fn once_grant_not_created() {
 }
 
 #[tokio::test]
-async fn access_log_without_prefix_skipped_in_hydration() {
+async fn hydrate_returns_empty_when_no_bindings() {
     let db = setup_db().await;
     let svc = build_service(&db);
 
-    svc.log_access(
-        "user1", "agent1", "chat1", "conn1", "item1",
-        None, "github", "Need creds",
-    )
-    .await
-    .unwrap();
-
-    let env_vars = svc.hydrate_chat_env_vars("user1", "chat1").await.unwrap();
-    assert!(env_vars.is_empty(), "Entries without env_var_prefix should be skipped");
+    let env_vars = svc
+        .hydrate_chat_env_vars("user1", "chat1", "agent1")
+        .await
+        .unwrap();
+    assert!(env_vars.is_empty());
 }
 
 #[tokio::test]
-async fn hydrate_empty_for_other_chat() {
+async fn hydrate_projects_durable_bindings_into_env_vars() {
     let db = setup_db().await;
     let svc = build_service(&db);
+    svc.sync_config_connections().await.unwrap();
 
-    svc.log_access(
-        "user1", "agent1", "chat1", "conn1", "item1",
-        Some("GH"), "github", "Need creds",
+    let credential = svc
+        .create_credential(
+            "user1",
+            CreateLocalItemRequest::UsernamePassword {
+                name: "GitHub".into(),
+                username: "octocat".into(),
+                password: "ghp_durable".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    svc.create_binding(
+        "user1",
+        GrantPrincipal::Agent("agent1"),
+        "github",
+        "local",
+        &credential.id,
+        CredentialTarget::Prefix { env_var_prefix: "GH".into() },
+        BindingScope::Durable,
+        None,
     )
     .await
     .unwrap();
 
-    let env_vars = svc.hydrate_chat_env_vars("user1", "other-chat").await.unwrap();
-    assert!(env_vars.is_empty());
+    let env: std::collections::HashMap<String, String> = svc
+        .hydrate_chat_env_vars("user1", "any-chat", "agent1")
+        .await
+        .unwrap()
+        .into_iter()
+        .collect();
+
+    assert_eq!(env.get("GH_USERNAME").map(String::as_str), Some("octocat"));
+    assert_eq!(env.get("GH_PASSWORD").map(String::as_str), Some("ghp_durable"));
+}
+
+#[tokio::test]
+async fn hydrate_honors_chat_scope_isolation() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    svc.sync_config_connections().await.unwrap();
+
+    let cred = svc
+        .create_credential(
+            "user1",
+            CreateLocalItemRequest::UsernamePassword {
+                name: "X".into(),
+                username: "u".into(),
+                password: "p".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    svc.create_binding(
+        "user1",
+        GrantPrincipal::Agent("agent1"),
+        "x",
+        "local",
+        &cred.id,
+        CredentialTarget::Prefix { env_var_prefix: "X".into() },
+        BindingScope::Chat { chat_id: "chat1".into() },
+        None,
+    )
+    .await
+    .unwrap();
+
+    let in_chat = svc
+        .hydrate_chat_env_vars("user1", "chat1", "agent1")
+        .await
+        .unwrap();
+    assert!(!in_chat.is_empty(), "chat1 should see its own binding");
+
+    let other_chat = svc
+        .hydrate_chat_env_vars("user1", "chat2", "agent1")
+        .await
+        .unwrap();
+    assert!(
+        other_chat.is_empty(),
+        "chat2 must not see chat1's chat-scoped binding"
+    );
+}
+
+#[tokio::test]
+async fn binding_lookup_prefers_chat_scope_over_durable() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    let conn = create_test_connection(&svc, "user1").await;
+
+    let principal = GrantPrincipal::Agent("agent1");
+    svc.create_binding(
+        "user1",
+        principal.clone(),
+        "github",
+        &conn.id,
+        "item_durable",
+        CredentialTarget::Prefix {
+            env_var_prefix: "GH".into(),
+        },
+        BindingScope::Durable,
+        None,
+    )
+    .await
+    .unwrap();
+    svc.create_binding(
+        "user1",
+        principal.clone(),
+        "github",
+        &conn.id,
+        "item_chat",
+        CredentialTarget::Prefix {
+            env_var_prefix: "GH".into(),
+        },
+        BindingScope::Chat {
+            chat_id: "chat1".into(),
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    let chat_match = svc
+        .find_binding("user1", &principal, "github", Some("chat1"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(chat_match.vault_item_id, "item_chat");
+
+    let other_chat_match = svc
+        .find_binding("user1", &principal, "github", Some("other-chat"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        other_chat_match.vault_item_id, "item_durable",
+        "chat-scoped binding for chat1 must not leak into other chats"
+    );
+
+    let no_chat_filter = svc
+        .find_binding("user1", &principal, "github", None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(no_chat_filter.vault_item_id, "item_durable");
+}
+
+#[tokio::test]
+async fn deleting_a_chat_cascades_into_its_chat_scoped_bindings() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    let conn = create_test_connection(&svc, "user1").await;
+
+    db.query("CREATE chat:ch1 CONTENT { user_id: 'user1', agent_id: 'agent1', title: 't', created_at: time::now(), updated_at: time::now() }")
+        .await
+        .unwrap();
+
+    svc.create_binding(
+        "user1",
+        GrantPrincipal::Agent("agent1"),
+        "github",
+        &conn.id,
+        "item_chat",
+        CredentialTarget::Prefix { env_var_prefix: "GH".into() },
+        BindingScope::Chat { chat_id: "ch1".into() },
+        None,
+    )
+    .await
+    .unwrap();
+    svc.create_binding(
+        "user1",
+        GrantPrincipal::Agent("agent1"),
+        "github-durable",
+        &conn.id,
+        "item_durable",
+        CredentialTarget::Prefix { env_var_prefix: "GHD".into() },
+        BindingScope::Durable,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let before = svc
+        .list_bindings_for_principal("user1", &GrantPrincipal::Agent("agent1"))
+        .await
+        .unwrap();
+    assert_eq!(before.len(), 2);
+
+    db.query("DELETE chat:ch1").await.unwrap().check().unwrap();
+
+    let after = svc
+        .list_bindings_for_principal("user1", &GrantPrincipal::Agent("agent1"))
+        .await
+        .unwrap();
+    assert_eq!(
+        after.len(),
+        1,
+        "chat-scoped binding should be swept when its chat is deleted"
+    );
+    assert_eq!(after[0].vault_item_id, "item_durable");
+}
+
+#[tokio::test]
+async fn delete_bindings_for_principal_sweeps_only_matching_principal() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    let conn = create_test_connection(&svc, "user1").await;
+
+    svc.create_binding(
+        "user1",
+        GrantPrincipal::Agent("agent1"),
+        "q",
+        &conn.id,
+        "i1",
+        CredentialTarget::Prefix {
+            env_var_prefix: "P".into(),
+        },
+        BindingScope::Durable,
+        None,
+    )
+    .await
+    .unwrap();
+    svc.create_binding(
+        "user1",
+        GrantPrincipal::McpServer("srv1"),
+        "q",
+        &conn.id,
+        "i2",
+        CredentialTarget::Prefix {
+            env_var_prefix: "P".into(),
+        },
+        BindingScope::Durable,
+        None,
+    )
+    .await
+    .unwrap();
+
+    svc.delete_bindings_for_principal("user1", &GrantPrincipal::McpServer("srv1"))
+        .await
+        .unwrap();
+
+    let agent_remaining = svc
+        .list_bindings_for_principal("user1", &GrantPrincipal::Agent("agent1"))
+        .await
+        .unwrap();
+    assert_eq!(agent_remaining.len(), 1);
+
+    let mcp_remaining = svc
+        .list_bindings_for_principal("user1", &GrantPrincipal::McpServer("srv1"))
+        .await
+        .unwrap();
+    assert!(mcp_remaining.is_empty());
 }

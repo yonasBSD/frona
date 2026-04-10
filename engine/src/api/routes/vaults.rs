@@ -172,18 +172,22 @@ async fn approve_request(
         .unwrap_or_default();
 
     {
-        let agent_id = &chat.agent_id;
+        use crate::credential::vault::models::GrantPrincipal;
+        let principal = GrantPrincipal::Agent(chat.agent_id.clone());
+
+        let target =
+            binding_target_for_approval(req.env_var_prefix.as_deref(), &original_query);
+        let (scope, expires_at) = binding_scope_for_duration(&req.grant_duration, &req.chat_id);
 
         if !matches!(req.grant_duration, GrantDuration::Once) {
             state
                 .vault_service
                 .create_grant(
                     &auth.user_id,
-                    agent_id,
+                    principal.clone(),
                     &req.connection_id,
                     &req.vault_item_id,
                     &original_query,
-                    req.env_var_prefix.as_deref(),
                     &req.grant_duration,
                 )
                 .await?;
@@ -191,9 +195,23 @@ async fn approve_request(
 
         state
             .vault_service
+            .create_binding(
+                &auth.user_id,
+                principal.clone(),
+                &original_query,
+                &req.connection_id,
+                &req.vault_item_id,
+                target,
+                scope,
+                expires_at,
+            )
+            .await?;
+
+        state
+            .vault_service
             .log_access(
                 &auth.user_id,
-                agent_id,
+                principal,
                 &req.chat_id,
                 &req.connection_id,
                 &req.vault_item_id,
@@ -389,4 +407,105 @@ async fn delete_local_item(
         .delete_credential(&auth.user_id, &id)
         .await?;
     Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+fn binding_target_for_approval(
+    requested_prefix: Option<&str>,
+    fallback_query: &str,
+) -> crate::credential::vault::models::CredentialTarget {
+    use crate::credential::vault::models::CredentialTarget;
+    CredentialTarget::Prefix {
+        env_var_prefix: requested_prefix
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| fallback_query.to_string()),
+    }
+}
+
+fn binding_scope_for_duration(
+    duration: &GrantDuration,
+    chat_id: &str,
+) -> (
+    crate::credential::vault::models::BindingScope,
+    Option<chrono::DateTime<chrono::Utc>>,
+) {
+    use crate::credential::vault::models::BindingScope;
+    match duration {
+        GrantDuration::Once => (
+            BindingScope::Chat {
+                chat_id: chat_id.to_string(),
+            },
+            None,
+        ),
+        GrantDuration::Hours(h) => (
+            BindingScope::Durable,
+            Some(chrono::Utc::now() + chrono::Duration::hours(*h as i64)),
+        ),
+        GrantDuration::Days(d) => (
+            BindingScope::Durable,
+            Some(chrono::Utc::now() + chrono::Duration::days(*d as i64)),
+        ),
+        GrantDuration::Permanent => (BindingScope::Durable, None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credential::vault::models::{BindingScope, CredentialTarget};
+
+    #[test]
+    fn binding_target_uses_requested_prefix_when_supplied() {
+        let target = binding_target_for_approval(Some("GH"), "github");
+        match target {
+            CredentialTarget::Prefix { env_var_prefix } => assert_eq!(env_var_prefix, "GH"),
+            _ => panic!("expected Prefix target"),
+        }
+    }
+
+    #[test]
+    fn binding_target_falls_back_to_query_when_no_prefix() {
+        let target = binding_target_for_approval(None, "github");
+        match target {
+            CredentialTarget::Prefix { env_var_prefix } => assert_eq!(env_var_prefix, "github"),
+            _ => panic!("expected Prefix target"),
+        }
+    }
+
+    #[test]
+    fn once_duration_produces_chat_scoped_binding_with_no_expiry() {
+        let (scope, expires_at) = binding_scope_for_duration(&GrantDuration::Once, "chat-xyz");
+        match scope {
+            BindingScope::Chat { chat_id } => assert_eq!(chat_id, "chat-xyz"),
+            _ => panic!("Once should produce Chat scope"),
+        }
+        assert!(expires_at.is_none());
+    }
+
+    #[test]
+    fn hours_duration_produces_durable_with_expiry() {
+        let (scope, expires_at) = binding_scope_for_duration(&GrantDuration::Hours(2), "chat1");
+        assert!(matches!(scope, BindingScope::Durable));
+        let expiry = expires_at.expect("Hours should set expires_at");
+        let delta = expiry - chrono::Utc::now();
+        assert!(delta > chrono::Duration::minutes(119));
+        assert!(delta < chrono::Duration::minutes(121));
+    }
+
+    #[test]
+    fn days_duration_produces_durable_with_expiry() {
+        let (scope, expires_at) = binding_scope_for_duration(&GrantDuration::Days(7), "chat1");
+        assert!(matches!(scope, BindingScope::Durable));
+        let expiry = expires_at.expect("Days should set expires_at");
+        let delta = expiry - chrono::Utc::now();
+        assert!(delta > chrono::Duration::days(6) + chrono::Duration::hours(23));
+        assert!(delta < chrono::Duration::days(7) + chrono::Duration::hours(1));
+    }
+
+    #[test]
+    fn permanent_duration_produces_durable_with_no_expiry() {
+        let (scope, expires_at) =
+            binding_scope_for_duration(&GrantDuration::Permanent, "chat1");
+        assert!(matches!(scope, BindingScope::Durable));
+        assert!(expires_at.is_none());
+    }
 }
