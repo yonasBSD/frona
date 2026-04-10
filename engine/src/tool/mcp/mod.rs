@@ -4,6 +4,7 @@ pub mod metadata;
 pub mod models;
 pub mod registry;
 pub mod service;
+pub mod supervisor;
 pub mod repository;
 
 pub use client::{McpClient, McpClientHandler, default_client_info};

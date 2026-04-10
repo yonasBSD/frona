@@ -79,6 +79,29 @@ impl McpServerService {
         self.repo.find_by_user(user_id).await
     }
 
+    pub async fn find_running(&self) -> Result<Vec<McpServer>, AppError> {
+        self.repo.find_running().await
+    }
+
+    pub async fn find_by_id(&self, server_id: &str) -> Result<McpServer, AppError> {
+        self.repo
+            .find_by_id(server_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("mcp server {server_id}")))
+    }
+
+    pub async fn mark_status(
+        &self,
+        server_id: &str,
+        status: McpServerStatus,
+    ) -> Result<(), AppError> {
+        let mut server = self.find_by_id(server_id).await?;
+        server.status = status;
+        server.updated_at = Utc::now();
+        self.repo.update(&server).await?;
+        Ok(())
+    }
+
     pub async fn install(
         &self,
         user_id: &str,

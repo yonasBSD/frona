@@ -269,6 +269,23 @@ impl AppManager {
         self.processes.lock().await.keys().cloned().collect()
     }
 
+    pub async fn restart_count_for(&self, app_id: &str) -> u32 {
+        self.processes
+            .lock()
+            .await
+            .get(app_id)
+            .map(|p| p.restart_count)
+            .unwrap_or(0)
+    }
+
+    pub async fn agent_id_for(&self, app_id: &str) -> Option<String> {
+        self.processes
+            .lock()
+            .await
+            .get(app_id)
+            .map(|p| p.agent_id.clone())
+    }
+
     async fn allocate_port(&self) -> Result<u16, AppError> {
         let mut ports = self.allocated_ports.lock().await;
         for port in self.port_range.0..self.port_range.1 {

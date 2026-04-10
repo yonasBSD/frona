@@ -107,11 +107,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     {
-        let app_state = state.clone();
+        use frona::core::supervisor::{SupervisorConfig, run};
+
+        let app_supervisor = std::sync::Arc::new(
+            frona::app::supervisor::AppSupervisor::new(state.clone()),
+        );
+        let app_config = SupervisorConfig {
+            health_check_interval: std::time::Duration::from_secs(
+                10,
+            ),
+            max_restart_attempts: config.app.max_restart_attempts,
+            hibernate_after: if config.app.hibernate_after_secs > 0 {
+                Some(std::time::Duration::from_secs(config.app.hibernate_after_secs))
+            } else {
+                None
+            },
+        };
+        let shutdown = state.shutdown_token.clone();
+        let notif = state.notification_service.clone();
+        let broadcast = state.broadcast_service.clone();
         tokio::spawn(async move {
-            if let Err(e) = frona::app::supervisor::restore_and_supervise_apps(app_state).await {
-                tracing::error!(error = %e, "App restoration failed");
-            }
+            run(app_supervisor, shutdown, notif, broadcast, app_config).await;
+        });
+
+        let mcp_supervisor = std::sync::Arc::new(
+            frona::tool::mcp::supervisor::McpSupervisor::new(
+                state.mcp_service.clone(),
+                state.mcp_manager.clone(),
+            ),
+        );
+        let mcp_config = SupervisorConfig {
+            health_check_interval: std::time::Duration::from_secs(
+                config.mcp.health_check_interval_secs,
+            ),
+            max_restart_attempts: config.mcp.max_restart_attempts,
+            hibernate_after: None,
+        };
+        let shutdown = state.shutdown_token.clone();
+        let notif = state.notification_service.clone();
+        let broadcast = state.broadcast_service.clone();
+        tokio::spawn(async move {
+            run(mcp_supervisor, shutdown, notif, broadcast, mcp_config).await;
         });
     }
 

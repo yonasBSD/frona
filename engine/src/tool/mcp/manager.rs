@@ -225,6 +225,15 @@ impl McpManager {
     pub async fn is_running(&self, server_id: &str) -> bool {
         self.connections.read().await.contains_key(server_id)
     }
+
+    pub async fn restart_count(&self, server_id: &str) -> u32 {
+        self.connections
+            .read()
+            .await
+            .get(server_id)
+            .map(|c| c.restart_count)
+            .unwrap_or(0)
+    }
 }
 
 /// Transition hint for the service layer: which `McpServerStatus` a connection should
