@@ -1,0 +1,200 @@
+//! End-to-end tests that spawn `fake-mcp-server` as a real child process,
+//! exercise the MCP client handshake + tool invocation, and verify the manager
+//! detects dead processes for the supervisor.
+//!
+//! The binary must be built first:
+//!     cargo build -p frona --bin fake-mcp-server --features __test-bins
+//!
+//! These tests are `#[ignore]`d by default so they don't fail when the binary
+//! isn't built. Run with:
+//!     cargo test -p frona --test mcp_e2e -- --ignored
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
+
+use frona::tool::mcp::models::{
+    McpPackage, McpRuntime, McpServer, McpServerStatus,
+};
+use frona::tool::mcp::{McpManager};
+use frona::tool::sandbox::SandboxManager;
+use frona::tool::sandbox::driver::resource_monitor::SystemResourceManager;
+
+fn fake_server_binary() -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../target/debug/fake-mcp-server");
+    if !path.exists() {
+        panic!(
+            "fake-mcp-server binary not found at {}. Build it first:\n  \
+             cargo build -p frona --bin fake-mcp-server --features __test-bins",
+            path.display()
+        );
+    }
+    path.to_string_lossy().into_owned()
+}
+
+fn make_server(id: &str, binary: &str, workspace: &str) -> McpServer {
+    let now = chrono::Utc::now();
+    McpServer {
+        id: id.to_string(),
+        user_id: "test-user".to_string(),
+        slug: format!("fake_{id}"),
+        display_name: format!("Fake {id}"),
+        description: None,
+        repository_url: None,
+        registry_id: None,
+        server_info: None,
+        package: McpPackage {
+            runtime: McpRuntime::Binary,
+            name: "fake-mcp-server".into(),
+            version: "0.0.0".into(),
+        },
+        command: binary.to_string(),
+        args: vec![],
+        env: BTreeMap::new(),
+        status: McpServerStatus::Installed,
+        tool_cache: vec![],
+        workspace_dir: workspace.to_string(),
+        extra_read_paths: vec![],
+        extra_write_paths: vec![],
+        installed_at: now,
+        last_started_at: None,
+        updated_at: now,
+    }
+}
+
+fn test_manager(tmp: &std::path::Path) -> Arc<McpManager> {
+    let sandbox = Arc::new(SandboxManager::new(
+        tmp.join("sandbox"),
+        true,
+        Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),
+    ));
+    Arc::new(McpManager::new(
+        sandbox,
+        tmp.join("workspaces").to_string_lossy().into_owned(),
+        tmp.join("cache").to_string_lossy().into_owned(),
+    ))
+}
+
+#[tokio::test]
+#[ignore = "requires fake-mcp-server binary; build with --features __test-bins"]
+async fn spawn_handshake_and_tool_call() {
+    let binary = fake_server_binary();
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws1");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let manager = test_manager(tmp.path());
+    let server = make_server("s1", &binary, &workspace.to_string_lossy());
+
+    let tools = manager
+        .start(&server, BTreeMap::new())
+        .await
+        .expect("start should succeed");
+
+    assert!(
+        tools.iter().any(|t| t.id == "mcp__fake_s1__echo"),
+        "echo tool should be discovered; got: {:?}",
+        tools.iter().map(|t| &t.id).collect::<Vec<_>>()
+    );
+    assert!(
+        tools.iter().any(|t| t.id == "mcp__fake_s1__add"),
+        "add tool should be discovered"
+    );
+
+    let result = manager
+        .call("s1", "echo", serde_json::json!({"text": "hello"}))
+        .await
+        .expect("echo call should succeed");
+    let text: String = result
+        .content
+        .iter()
+        .filter_map(|c| match &c.raw {
+            rmcp::model::RawContent::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "hello");
+
+    let result = manager
+        .call("s1", "add", serde_json::json!({"a": 3, "b": 7}))
+        .await
+        .expect("add call should succeed");
+    let sum: String = result
+        .content
+        .iter()
+        .filter_map(|c| match &c.raw {
+            rmcp::model::RawContent::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sum, "10");
+
+    manager.stop("s1").await.expect("stop should succeed");
+    assert!(!manager.is_running("s1").await);
+}
+
+#[tokio::test]
+#[ignore = "requires fake-mcp-server binary; build with --features __test-bins"]
+async fn health_check_detects_killed_process() {
+    let binary = fake_server_binary();
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws2");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let manager = test_manager(tmp.path());
+    let server = make_server("s2", &binary, &workspace.to_string_lossy());
+
+    manager
+        .start(&server, BTreeMap::new())
+        .await
+        .expect("start should succeed");
+    assert!(manager.is_running("s2").await);
+
+    // Kill the child process externally (simulating a crash)
+    {
+        let mut conns = manager.connections_mut().await;
+        if let Some(conn) = conns.get_mut("s2") {
+            conn.child.kill().await.expect("kill should succeed");
+            let _ = conn.child.wait().await;
+        }
+    }
+
+    // Give the OS a moment to reap
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let dead = manager.health_check().await;
+    assert!(
+        dead.contains(&"s2".to_string()),
+        "health_check should report s2 as dead; got {dead:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires fake-mcp-server binary; build with --features __test-bins"]
+async fn tools_for_user_returns_filtered_tools() {
+    let binary = fake_server_binary();
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws3");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let manager = test_manager(tmp.path());
+    let server = make_server("s3", &binary, &workspace.to_string_lossy());
+
+    manager
+        .start(&server, BTreeMap::new())
+        .await
+        .expect("start should succeed");
+
+    let mut allowlist = HashMap::new();
+    allowlist.insert("fake_s3".to_string(), {
+        let mut s = HashSet::new();
+        s.insert("echo".to_string());
+        s
+    });
+
+    let tools = manager.tools_for_user("test-user", &allowlist).await;
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].id, "mcp__fake_s3__echo");
+
+    manager.stop("s3").await.unwrap();
+}

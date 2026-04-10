@@ -66,6 +66,17 @@ run = "npm run lint"
 description = "Run all tests"
 run = "cargo test --workspace"
 
+[tasks."test:e2e"]
+description = "Build the fake MCP server and run end-to-end tests"
+run = """
+cargo build -p frona --bin fake-mcp-server --features __test-bins
+cargo test -p frona --test mcp_e2e -- --ignored
+"""
+
+[tasks."test:all"]
+description = "Run all tests including end-to-end"
+depends = ["test", "test:e2e"]
+
 [tasks.docker]
 description = "Build production Docker image"
 run = "build/build.sh"

@@ -229,6 +229,12 @@ impl McpManager {
         self.connections.read().await.contains_key(server_id)
     }
 
+    pub async fn connections_mut(
+        &self,
+    ) -> tokio::sync::RwLockWriteGuard<'_, std::collections::HashMap<String, McpConnection>> {
+        self.connections.write().await
+    }
+
     pub async fn restart_count(&self, server_id: &str) -> u32 {
         self.connections
             .read()
