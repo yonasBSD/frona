@@ -1,4 +1,5 @@
 mod agents;
+mod app_supervisor;
 mod apps;
 mod auth;
 mod chats;

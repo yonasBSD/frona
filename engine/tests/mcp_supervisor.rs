@@ -1,0 +1,171 @@
+//! Integration tests for `McpSupervisor` verifying the adapter delegates
+//! correctly to `McpServerService` and `McpManager` against a real in-memory DB.
+
+use std::sync::Arc;
+
+use frona::core::error::AppError;
+use frona::core::supervisor::Supervisor;
+use frona::db::init::setup_schema;
+use frona::db::repo::generic::SurrealRepo;
+use frona::tool::mcp::models::{McpServerStatus, McpServer, McpPackage, McpRuntime};
+use frona::tool::mcp::repository::McpServerRepository;
+use frona::tool::mcp::supervisor::McpSupervisor;
+use frona::tool::mcp::{McpManager, McpServerService, NoopPackageInstaller, PrebuiltMcpRegistryClient, PackageInstaller, McpRegistryClient};
+use frona::credential::vault::models::*;
+use frona::credential::vault::service::VaultService;
+use std::collections::BTreeMap;
+
+async fn build_mcp_supervisor() -> (
+    McpSupervisor,
+    Arc<dyn McpServerRepository>,
+    tempfile::TempDir,
+) {
+    let db = surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(())
+        .await
+        .unwrap();
+    db.use_ns("test").use_db("test").await.unwrap();
+    setup_schema(&db).await.unwrap();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let workspaces = tmp.path().join("mcp").to_string_lossy().into_owned();
+    let cache = tmp.path().join("cache").to_string_lossy().into_owned();
+    std::fs::create_dir_all(&workspaces).unwrap();
+    std::fs::create_dir_all(&cache).unwrap();
+
+    let sandbox_manager = Arc::new(frona::tool::sandbox::SandboxManager::new(
+        tmp.path().join("sandbox"),
+        true,
+        Arc::new(
+            frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(
+                80.0, 80.0, 90.0, 90.0,
+            ),
+        ),
+    ));
+    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces, cache));
+    let mcp_repo: Arc<dyn McpServerRepository> =
+        Arc::new(SurrealRepo::<McpServer>::new(db.clone()));
+    let vault = VaultService::new(
+        Arc::new(SurrealRepo::<VaultConnection>::new(db.clone())),
+        Arc::new(SurrealRepo::<VaultGrant>::new(db.clone())),
+        Arc::new(SurrealRepo::<Credential>::new(db.clone())),
+        Arc::new(SurrealRepo::<VaultAccessLog>::new(db.clone())),
+        Arc::new(SurrealRepo::<PrincipalCredentialBinding>::new(db.clone())),
+        "test-secret",
+        Default::default(),
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+    );
+    let registry: Arc<dyn McpRegistryClient> = Arc::new(PrebuiltMcpRegistryClient::new(
+        tmp.path().join("registry"),
+    ));
+    let installer: Arc<dyn PackageInstaller> = Arc::new(NoopPackageInstaller);
+    let service = Arc::new(McpServerService::new(
+        mcp_repo.clone(),
+        manager.clone(),
+        registry,
+        Arc::new(vault),
+        installer,
+    ));
+
+    let supervisor = McpSupervisor::new(service, manager);
+    (supervisor, mcp_repo, tmp)
+}
+
+fn make_server(id: &str, user_id: &str, status: McpServerStatus) -> McpServer {
+    let now = chrono::Utc::now();
+    McpServer {
+        id: id.to_string(),
+        user_id: user_id.to_string(),
+        slug: format!("test_{id}"),
+        display_name: format!("Test Server {id}"),
+        description: None,
+        repository_url: None,
+        registry_id: None,
+        server_info: None,
+        package: McpPackage {
+            runtime: McpRuntime::Npm,
+            name: "@example/test".into(),
+            version: "1.0.0".into(),
+        },
+        command: "echo".into(),
+        args: vec![],
+        env: BTreeMap::new(),
+        status,
+        tool_cache: vec![],
+        workspace_dir: "/tmp/test".into(),
+        extra_read_paths: vec![],
+        extra_write_paths: vec![],
+        installed_at: now,
+        last_started_at: None,
+        updated_at: now,
+    }
+}
+
+#[tokio::test]
+async fn find_running_returns_running_servers_only() {
+    let (supervisor, repo, _tmp) = build_mcp_supervisor().await;
+
+    repo.create(&make_server("s1", "u1", McpServerStatus::Running))
+        .await
+        .unwrap();
+    repo.create(&make_server("s2", "u1", McpServerStatus::Installed))
+        .await
+        .unwrap();
+    repo.create(&make_server("s3", "u1", McpServerStatus::Running))
+        .await
+        .unwrap();
+
+    let running = supervisor.find_running().await.unwrap();
+    assert_eq!(running.len(), 2);
+    assert!(running.contains(&"s1".to_string()));
+    assert!(running.contains(&"s3".to_string()));
+}
+
+#[tokio::test]
+async fn mark_failed_updates_db_status() {
+    let (supervisor, repo, _tmp) = build_mcp_supervisor().await;
+
+    repo.create(&make_server("s1", "u1", McpServerStatus::Running))
+        .await
+        .unwrap();
+
+    supervisor.mark_failed("s1", "too many restarts").await.unwrap();
+
+    let server = repo.find_by_id("s1").await.unwrap().unwrap();
+    assert!(matches!(server.status, McpServerStatus::Failed));
+}
+
+#[tokio::test]
+async fn owner_of_returns_user_id_from_db() {
+    let (supervisor, repo, _tmp) = build_mcp_supervisor().await;
+
+    repo.create(&make_server("s1", "owner-42", McpServerStatus::Running))
+        .await
+        .unwrap();
+
+    assert_eq!(supervisor.owner_of("s1").await.unwrap(), "owner-42");
+}
+
+#[tokio::test]
+async fn display_name_returns_server_display_name() {
+    let (supervisor, repo, _tmp) = build_mcp_supervisor().await;
+
+    repo.create(&make_server("s1", "u1", McpServerStatus::Running))
+        .await
+        .unwrap();
+
+    assert_eq!(supervisor.display_name("s1").await, "Test Server s1");
+}
+
+#[tokio::test]
+async fn owner_of_missing_server_returns_not_found() {
+    let (supervisor, _repo, _tmp) = build_mcp_supervisor().await;
+    let result = supervisor.owner_of("nonexistent").await;
+    assert!(matches!(result, Err(AppError::NotFound(_))));
+}
+
+#[tokio::test]
+async fn label_is_mcp() {
+    let (supervisor, _repo, _tmp) = build_mcp_supervisor().await;
+    assert_eq!(supervisor.label(), "mcp");
+}
