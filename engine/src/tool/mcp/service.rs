@@ -102,6 +102,14 @@ impl McpServerService {
         Ok(())
     }
 
+    pub async fn search_registry(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<RegistryServerEntry>, AppError> {
+        self.registry.search(query, limit).await
+    }
+
     pub async fn install(
         &self,
         user_id: &str,

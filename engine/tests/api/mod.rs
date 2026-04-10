@@ -1,6 +1,7 @@
 mod agents;
 mod app_supervisor;
 mod apps;
+mod mcp;
 mod auth;
 mod chats;
 mod contacts;
@@ -85,6 +86,7 @@ fn build_app(state: AppState) -> Router {
         .merge(routes::config::router())
         .merge(routes::notifications::router())
         .merge(routes::apps::router())
+        .merge(routes::mcp::router())
         .merge(routes::system::router())
         .layer(axum::middleware::from_fn_with_state(state.clone(), shutdown_gate))
         .with_state(state)
@@ -245,6 +247,16 @@ fn auth_delete(uri: &str, token: &str) -> Request<Body> {
         .uri(uri)
         .header("authorization", format!("Bearer {token}"))
         .body(Body::empty())
+        .unwrap()
+}
+
+fn auth_patch_json(uri: &str, token: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("PATCH")
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap()
 }
 
