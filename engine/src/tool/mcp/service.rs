@@ -28,8 +28,75 @@ pub trait PackageInstaller: Send + Sync {
     async fn install(&self, server: &McpServer) -> Result<(), AppError>;
 }
 
-/// Placeholder installer that runs no warm-up. Wired in `AppState` until the
-/// real sandboxed `npx` / `uvx` warm-up implementation lands.
+pub struct SandboxedPackageInstaller {
+    manager: Arc<McpManager>,
+}
+
+impl SandboxedPackageInstaller {
+    pub fn new(manager: Arc<McpManager>) -> Self {
+        Self { manager }
+    }
+}
+
+#[async_trait]
+impl PackageInstaller for SandboxedPackageInstaller {
+    async fn install(&self, server: &McpServer) -> Result<(), AppError> {
+        let sandbox = self.manager.build_install_sandbox(server);
+        sandbox.setup()?;
+
+        let (warmup_cmd, warmup_args) = match server.package.runtime {
+            McpRuntime::Npm => {
+                let pkg = format!("{}@{}", server.package.name, server.package.version);
+                ("npx", vec!["--yes".to_string(), pkg, "--version".to_string()])
+            }
+            McpRuntime::Pypi => {
+                let pkg = format!("{}=={}", server.package.name, server.package.version);
+                ("uvx", vec![
+                    "run".to_string(),
+                    "--from".to_string(),
+                    pkg,
+                    "--".to_string(),
+                    "--version".to_string(),
+                ])
+            }
+            McpRuntime::Binary => return Ok(()),
+        };
+
+        let args_refs: Vec<&str> = warmup_args.iter().map(|s| s.as_str()).collect();
+        let child = sandbox.spawn(
+            warmup_cmd,
+            &args_refs,
+            Some(&server.workspace_dir),
+            Vec::new(),
+            None,
+            std::process::Stdio::piped(),
+            std::process::Stdio::piped(),
+        )?;
+
+        let output = child.wait_with_output().await.map_err(|e| {
+            AppError::Tool(format!("MCP package warm-up failed to run: {e}"))
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Tool(format!(
+                "MCP package warm-up for {} exited with {}: {}",
+                server.package.name,
+                output.status,
+                stderr.lines().rev().take(10).collect::<Vec<_>>().join("\n"),
+            )));
+        }
+
+        tracing::info!(
+            server_id = %server.id,
+            package = %server.package.name,
+            runtime = %server.package.runtime,
+            "package warm-up succeeded"
+        );
+        Ok(())
+    }
+}
+
 pub struct NoopPackageInstaller;
 
 #[async_trait]

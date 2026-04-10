@@ -64,7 +64,27 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
         resource_manager.clone(),
     );
     let metrics = setup_metrics_recorder();
-    let state = AppState::new(db, &config, None, agent_service, storage, metrics, resource_manager);
+    let mut state = AppState::new(db.clone(), &config, None, agent_service, storage, metrics, resource_manager);
+
+    // Override the MCP service with a noop package installer so tests don't
+    // try to run npx/uvx against fake packages.
+    {
+        let mcp_repo: std::sync::Arc<dyn frona::tool::mcp::McpServerRepository> =
+            std::sync::Arc::new(SurrealRepo::<frona::tool::mcp::McpServer>::new(db));
+        let mcp_registry: std::sync::Arc<dyn frona::tool::mcp::McpRegistryClient> =
+            std::sync::Arc::new(frona::tool::mcp::PrebuiltMcpRegistryClient::new(
+                std::path::PathBuf::from(&base).join("mcp-registry"),
+            ));
+        let noop: std::sync::Arc<dyn frona::tool::mcp::PackageInstaller> =
+            std::sync::Arc::new(frona::tool::mcp::NoopPackageInstaller);
+        state.mcp_service = std::sync::Arc::new(frona::tool::mcp::McpServerService::new(
+            mcp_repo,
+            state.mcp_manager.clone(),
+            mcp_registry,
+            std::sync::Arc::new(state.vault_service.clone()),
+            noop,
+        ));
+    }
     (state, tmp)
 }
 

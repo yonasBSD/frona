@@ -267,7 +267,9 @@ impl AppState {
                 std::path::PathBuf::from(&config.mcp.cache_path).join("registry"),
             ));
         let mcp_installer: Arc<dyn crate::tool::mcp::PackageInstaller> =
-            Arc::new(crate::tool::mcp::NoopPackageInstaller);
+            Arc::new(crate::tool::mcp::SandboxedPackageInstaller::new(
+                mcp_manager.clone(),
+            ));
         let mcp_service = Arc::new(crate::tool::mcp::McpServerService::new(
             mcp_repo,
             mcp_manager.clone(),

@@ -61,6 +61,7 @@ impl McpManager {
                 self.cache_path.clone(),
                 server.workspace_dir.clone(),
             ])
+            .with_extra_env_vars(uv_env_vars(&self.cache_path, &server.workspace_dir))
     }
 
     /// Sandbox for the long-lived server process. Caches are read-only (they were
@@ -76,11 +77,13 @@ impl McpManager {
         read_paths.extend(server.extra_read_paths.iter().cloned());
         let mut write_paths = vec![server.workspace_dir.clone()];
         write_paths.extend(server.extra_write_paths.iter().cloned());
+        let mut env = uv_env_vars(&self.cache_path, &server.workspace_dir);
+        env.extend(resolved_env);
         self.sandbox_manager
             .get_sandbox(&sandbox_id, true, Vec::new())
             .with_read_paths(read_paths)
             .with_write_paths(write_paths)
-            .with_extra_env_vars(resolved_env)
+            .with_extra_env_vars(env)
     }
 
     /// Spawn the server inside its run sandbox, perform the MCP `initialize` handshake
@@ -239,6 +242,13 @@ impl McpManager {
 /// Transition hint for the service layer: which `McpServerStatus` a connection should
 /// land in after a successful `start` call.
 pub const STARTED_STATUS: McpServerStatus = McpServerStatus::Running;
+
+fn uv_env_vars(cache_path: &str, workspace_dir: &str) -> Vec<(String, String)> {
+    vec![
+        ("UV_CACHE_DIR".into(), format!("{cache_path}/uv")),
+        ("UV_TOOL_DIR".into(), format!("{workspace_dir}/.uv-tools")),
+    ]
+}
 
 struct ConnectionView<'a> {
     user_id: &'a str,

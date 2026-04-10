@@ -21,5 +21,5 @@ pub use metadata::{
 pub use registry::{
     McpRegistryClient, PREBUILT_METADATA_URL, PREBUILT_SERVERS_URL, PrebuiltMcpRegistryClient,
 };
-pub use service::{McpServerService, NoopPackageInstaller, PackageInstaller, StartResult, UpdateResult};
+pub use service::{McpServerService, NoopPackageInstaller, PackageInstaller, SandboxedPackageInstaller, StartResult, UpdateResult};
 pub use repository::McpServerRepository;
