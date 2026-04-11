@@ -71,7 +71,6 @@ fn test_manager(tmp: &std::path::Path) -> Arc<McpManager> {
     Arc::new(McpManager::new(
         sandbox,
         tmp.join("workspaces").to_string_lossy().into_owned(),
-        tmp.join("cache").to_string_lossy().into_owned(),
     ))
 }
 

@@ -255,10 +255,17 @@ impl AppState {
             config.app.port_range_end,
         ));
 
+        let mcp_workspaces = std::fs::canonicalize(&config.mcp.workspaces_path)
+            .unwrap_or_else(|_| {
+                std::fs::create_dir_all(&config.mcp.workspaces_path).ok();
+                std::fs::canonicalize(&config.mcp.workspaces_path)
+                    .unwrap_or_else(|_| PathBuf::from(&config.mcp.workspaces_path))
+            })
+            .to_string_lossy()
+            .into_owned();
         let mcp_manager = Arc::new(crate::tool::mcp::McpManager::new(
             sandbox_manager.clone(),
-            config.mcp.workspaces_path.clone(),
-            config.mcp.cache_path.clone(),
+            mcp_workspaces,
         ));
         let mcp_repo: Arc<dyn crate::tool::mcp::repository::McpServerRepository> =
             Arc::new(SurrealRepo::<crate::tool::mcp::McpServer>::new(db.clone()));

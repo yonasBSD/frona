@@ -207,6 +207,7 @@ pub fn search_dump(
             .unwrap_or(0.0)
             .partial_cmp(&a.score.unwrap_or(0.0))
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.name.cmp(&b.name))
     });
     hits.truncate(limit);
     Ok(hits)

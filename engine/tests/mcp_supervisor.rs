@@ -28,9 +28,7 @@ async fn build_mcp_supervisor() -> (
 
     let tmp = tempfile::tempdir().unwrap();
     let workspaces = tmp.path().join("mcp").to_string_lossy().into_owned();
-    let cache = tmp.path().join("cache").to_string_lossy().into_owned();
     std::fs::create_dir_all(&workspaces).unwrap();
-    std::fs::create_dir_all(&cache).unwrap();
 
     let sandbox_manager = Arc::new(frona::tool::sandbox::SandboxManager::new(
         tmp.path().join("sandbox"),
@@ -41,7 +39,7 @@ async fn build_mcp_supervisor() -> (
             ),
         ),
     ));
-    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces, cache));
+    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces));
     let mcp_repo: Arc<dyn McpServerRepository> =
         Arc::new(SurrealRepo::<McpServer>::new(db.clone()));
     let vault = VaultService::new(

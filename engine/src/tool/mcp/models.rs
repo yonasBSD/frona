@@ -41,7 +41,6 @@ pub enum McpServerStatus {
     Starting,
     Running,
     Stopped,
-    /// Terminal state, reached after exhausting `max_restart_attempts`.
     Failed,
 }
 

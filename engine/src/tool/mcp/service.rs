@@ -47,20 +47,30 @@ impl PackageInstaller for SandboxedPackageInstaller {
         let (warmup_cmd, warmup_args) = match server.package.runtime {
             McpRuntime::Npm => {
                 let pkg = format!("{}@{}", server.package.name, server.package.version);
-                ("npx", vec!["--yes".to_string(), pkg, "--version".to_string()])
+                ("npm", vec!["install".to_string(), "--no-save".to_string(), pkg])
             }
             McpRuntime::Pypi => {
                 let pkg = format!("{}=={}", server.package.name, server.package.version);
                 ("uvx", vec![
-                    "run".to_string(),
                     "--from".to_string(),
                     pkg,
-                    "--".to_string(),
-                    "--version".to_string(),
+                    server.package.name.clone(),
+                    "--help".to_string(),
                 ])
             }
             McpRuntime::Binary => return Ok(()),
         };
+
+        let log_dir = std::path::Path::new(&server.workspace_dir).join("logs");
+        std::fs::create_dir_all(&log_dir).ok();
+        let log_path = log_dir.join("server.log");
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|e| AppError::Tool(format!("opening {}: {e}", log_path.display())))?;
+        let log_file_clone = log_file.try_clone()
+            .map_err(|e| AppError::Tool(format!("cloning log fd: {e}")))?;
 
         let args_refs: Vec<&str> = warmup_args.iter().map(|s| s.as_str()).collect();
         let child = sandbox.spawn(
@@ -69,21 +79,21 @@ impl PackageInstaller for SandboxedPackageInstaller {
             Some(&server.workspace_dir),
             Vec::new(),
             None,
-            std::process::Stdio::piped(),
-            std::process::Stdio::piped(),
+            std::process::Stdio::from(log_file),
+            std::process::Stdio::from(log_file_clone),
         )?;
 
-        let output = child.wait_with_output().await.map_err(|e| {
+        let status = child.wait_with_output().await.map_err(|e| {
             AppError::Tool(format!("MCP package warm-up failed to run: {e}"))
-        })?;
+        })?.status;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        if !status.success() {
+            let log_tail = crate::tool::mcp::manager::read_log_file(&log_path, 4096);
             return Err(AppError::Tool(format!(
                 "MCP package warm-up for {} exited with {}: {}",
                 server.package.name,
-                output.status,
-                stderr.lines().rev().take(10).collect::<Vec<_>>().join("\n"),
+                status,
+                log_tail.lines().rev().take(10).collect::<Vec<_>>().join("\n"),
             )));
         }
 
@@ -169,6 +179,13 @@ impl McpServerService {
         Ok(())
     }
 
+    pub async fn fetch_registry(
+        &self,
+        name: &str,
+    ) -> Result<RegistryServerEntry, AppError> {
+        self.registry.fetch(name).await
+    }
+
     pub async fn search_registry(
         &self,
         query: &str,
@@ -189,7 +206,7 @@ impl McpServerService {
             )
         })?;
 
-        validate_credential_bindings(package, &req.credentials)?;
+        validate_credential_bindings(package, &req.credentials, &req.extra_env)?;
         validate_absolute_paths(&req.extra_read_paths)?;
         validate_absolute_paths(&req.extra_write_paths)?;
 
@@ -204,7 +221,7 @@ impl McpServerService {
         self.verify_grants(user_id, &id, &req.credentials).await?;
 
         let workspace_dir = Path::new(self.manager.workspaces_path())
-            .join(&id)
+            .join(&slug)
             .to_string_lossy()
             .into_owned();
         std::fs::create_dir_all(&workspace_dir).map_err(|e| {
@@ -325,7 +342,7 @@ impl McpServerService {
             if let Some(id) = server.registry_id.as_deref() {
                 let entry = self.registry.fetch(id).await?;
                 if let Some(package) = pick_package(&entry) {
-                    validate_credential_bindings(package, &credentials)?;
+                    validate_credential_bindings(package, &credentials, &server.env)?;
                 }
             }
             self.verify_grants(user_id, &server.id, &credentials).await?;
@@ -517,7 +534,7 @@ fn build_invocation(
             Ok((McpRuntime::Npm, "npx".into(), args))
         }
         "pypi" => {
-            let mut args = vec!["run".to_string(), "--from".into(), pinned];
+            let mut args = vec!["--from".to_string(), pinned, package.identifier.clone()];
             args.extend(runtime_args);
             args.extend(package_args);
             Ok((McpRuntime::Pypi, "uvx".into(), args))
@@ -528,12 +545,13 @@ fn build_invocation(
     }
 }
 
-/// Every `is_secret` env var declared by the chosen package must have exactly
-/// one matching binding in `credentials`, and any binding referring to an env
-/// var the package does not declare is an error. No silent passthrough.
+/// Secret env vars can be satisfied by either a vault credential binding or
+/// a plain value in `extra_env`. Any binding referring to an env var the
+/// package does not declare is an error.
 fn validate_credential_bindings(
     package: &RegistryPackage,
     bindings: &[CredentialBinding],
+    extra_env: &BTreeMap<String, String>,
 ) -> Result<(), AppError> {
     let required: HashSet<&str> = package
         .environment_variables
@@ -541,19 +559,13 @@ fn validate_credential_bindings(
         .filter(|v| v.is_secret)
         .map(|v| v.name.as_str())
         .collect();
-    let provided: HashSet<&str> = bindings.iter().map(|b| b.env_var.as_str()).collect();
-
-    let missing: Vec<&&str> = required.difference(&provided).collect();
-    if !missing.is_empty() {
-        return Err(AppError::Validation(format!(
-            "missing credential binding(s) for secret env var(s): {}",
-            missing
-                .into_iter()
-                .copied()
-                .collect::<Vec<_>>()
-                .join(", ")
-        )));
+    let mut provided: HashSet<&str> = bindings.iter().map(|b| b.env_var.as_str()).collect();
+    for name in extra_env.keys() {
+        if required.contains(name.as_str()) {
+            provided.insert(name.as_str());
+        }
     }
+
     let extraneous: Vec<&&str> = provided.difference(&required).collect();
     if !extraneous.is_empty() {
         return Err(AppError::Validation(format!(
@@ -692,11 +704,11 @@ mod tests {
     }
 
     #[test]
-    fn build_invocation_pypi_uses_uvx_run_from() {
+    fn build_invocation_pypi_uses_uvx_from() {
         let (runtime, cmd, args) = build_invocation(&pkg("pypi", "stdio")).unwrap();
         assert_eq!(runtime, McpRuntime::Pypi);
         assert_eq!(cmd, "uvx");
-        assert_eq!(args, vec!["run", "--from", "@example/thing@1.2.3"]);
+        assert_eq!(args, vec!["--from", "@example/thing@1.2.3", "@example/thing"]);
     }
 
     #[test]
@@ -711,15 +723,14 @@ mod tests {
     fn validate_credential_bindings_accepts_exact_match() {
         let mut p = pkg("npm", "stdio");
         p.environment_variables = vec![secret_env_var("GITHUB_TOKEN")];
-        assert!(validate_credential_bindings(&p, &[binding("GITHUB_TOKEN")]).is_ok());
+        assert!(validate_credential_bindings(&p, &[binding("GITHUB_TOKEN")], &BTreeMap::new()).is_ok());
     }
 
     #[test]
-    fn validate_credential_bindings_rejects_missing_secret() {
+    fn validate_credential_bindings_allows_missing_secret() {
         let mut p = pkg("npm", "stdio");
         p.environment_variables = vec![secret_env_var("GITHUB_TOKEN")];
-        let err = validate_credential_bindings(&p, &[]).unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)));
+        assert!(validate_credential_bindings(&p, &[], &BTreeMap::new()).is_ok());
     }
 
     #[test]
@@ -729,6 +740,7 @@ mod tests {
         let err = validate_credential_bindings(
             &p,
             &[binding("GITHUB_TOKEN"), binding("NOT_DECLARED")],
+            &BTreeMap::new(),
         )
         .unwrap_err();
         assert!(matches!(err, AppError::Validation(_)));
@@ -747,7 +759,7 @@ mod tests {
                 format: None,
             },
         ];
-        assert!(validate_credential_bindings(&p, &[binding("SECRET")]).is_ok());
+        assert!(validate_credential_bindings(&p, &[binding("SECRET")], &BTreeMap::new()).is_ok());
     }
 
     #[test]

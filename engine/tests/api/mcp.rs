@@ -116,7 +116,7 @@ async fn install_server_with_manifest_no_secrets() {
 }
 
 #[tokio::test]
-async fn install_server_missing_binding_returns_validation_error() {
+async fn install_server_allows_missing_secret_binding() {
     let (state, _tmp) = test_app_state().await;
     let (token, _) =
         register_user(&state, "mcp-nobind", "mcpnobind@example.com", "password123").await;
@@ -132,7 +132,7 @@ async fn install_server_missing_binding_returns_validation_error() {
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]

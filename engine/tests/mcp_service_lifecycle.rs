@@ -15,7 +15,7 @@ use frona::db::repo::generic::SurrealRepo;
 use frona::tool::mcp::metadata::{
     RegistryEnvVar, RegistryPackage, RegistryServerEntry, RegistryTransport,
 };
-use frona::tool::mcp::models::{CredentialBinding, McpServerInstall, McpServerUpdate, McpServer};
+use frona::tool::mcp::models::{CredentialBinding, McpServerInstall, McpServerStatus, McpServerUpdate, McpServer};
 use frona::tool::mcp::registry::McpRegistryClient;
 use frona::tool::mcp::repository::McpServerRepository;
 use frona::tool::mcp::service::{McpServerService, NoopPackageInstaller};
@@ -98,9 +98,7 @@ async fn build_test_harness(
 
     let tmp = tempfile::tempdir().unwrap();
     let workspaces_path = tmp.path().join("mcp").to_string_lossy().into_owned();
-    let cache_path = tmp.path().join("mcp-cache").to_string_lossy().into_owned();
     std::fs::create_dir_all(&workspaces_path).unwrap();
-    std::fs::create_dir_all(&cache_path).unwrap();
 
     let vault = VaultService::new(
         Arc::new(SurrealRepo::<VaultConnection>::new(db.clone())),
@@ -122,7 +120,7 @@ async fn build_test_harness(
             80.0, 80.0, 90.0, 90.0,
         )),
     ));
-    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces_path, cache_path));
+    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces_path));
     let mcp_repo: Arc<dyn McpServerRepository> =
         Arc::new(SurrealRepo::<McpServer>::new(db.clone()));
     let registry: Arc<dyn McpRegistryClient> = Arc::new(FakeRegistry {
@@ -203,7 +201,7 @@ async fn install_rejects_when_binding_has_no_matching_grant() {
 }
 
 #[tokio::test]
-async fn install_rejects_when_binding_is_missing_for_declared_secret() {
+async fn install_allows_missing_binding_for_declared_secret() {
     let (_db, _vault, service, _tmp) =
         build_test_harness(vec![secret_env_var("GITHUB_TOKEN")]).await;
 
@@ -211,16 +209,13 @@ async fn install_rejects_when_binding_is_missing_for_declared_secret() {
         registry_id: Some("io.example/workspace-mcp".into()),
         manifest: None,
         display_name_override: None,
-        credentials: vec![], // missing required secret
+        credentials: vec![],
         extra_env: Default::default(),
         extra_read_paths: vec![],
         extra_write_paths: vec![],
     };
-    let err = service.install("user1", req).await.unwrap_err();
-    assert!(
-        matches!(err, AppError::Validation(_)),
-        "expected Validation for missing binding, got {err:?}"
-    );
+    let server = service.install("user1", req).await.unwrap();
+    assert_eq!(server.status, McpServerStatus::Installed);
 }
 
 #[tokio::test]

@@ -18,26 +18,24 @@ pub struct McpConnection {
     pub tools: Vec<ToolDefinition>,
     pub child: tokio::process::Child,
     pub restart_count: u32,
+    pub log_path: Option<std::path::PathBuf>,
 }
 
 pub struct McpManager {
     connections: Arc<RwLock<HashMap<String, McpConnection>>>,
     sandbox_manager: Arc<SandboxManager>,
     workspaces_path: String,
-    cache_path: String,
 }
 
 impl McpManager {
     pub fn new(
         sandbox_manager: Arc<SandboxManager>,
         workspaces_path: String,
-        cache_path: String,
     ) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             sandbox_manager,
             workspaces_path,
-            cache_path,
         }
     }
 
@@ -45,45 +43,38 @@ impl McpManager {
         &self.workspaces_path
     }
 
-    pub fn cache_path(&self) -> &str {
-        &self.cache_path
-    }
-
     /// Sandbox for install-phase package warm-up: network allowed, write access to the
     /// shared cache dir and the per-server workspace so `npx --yes …` / `uv pip install`
     /// can populate them.
     pub fn build_install_sandbox(&self, server: &McpServer) -> Sandbox {
-        let sandbox_id = format!("mcp-{}", server.id);
-        self.sandbox_manager
-            .get_sandbox(&sandbox_id, true, Vec::new())
-            .with_read_paths(vec![self.cache_path.clone()])
-            .with_write_paths(vec![
-                self.cache_path.clone(),
-                server.workspace_dir.clone(),
-            ])
-            .with_extra_env_vars(uv_env_vars(&self.cache_path, &server.workspace_dir))
+        self.mcp_sandbox(server)
+            .with_extra_env_vars(package_manager_env_vars(&server.workspace_dir))
     }
 
-    /// Sandbox for the long-lived server process. Caches are read-only (they were
-    /// populated at install time). Writes are scoped to the server's own workspace dir
-    /// so OAuth tokens and local state survive restart.
     pub fn build_run_sandbox(
         &self,
         server: &McpServer,
         resolved_env: Vec<(String, String)>,
     ) -> Sandbox {
-        let sandbox_id = format!("mcp-{}", server.id);
-        let mut read_paths = vec![self.cache_path.clone()];
-        read_paths.extend(server.extra_read_paths.iter().cloned());
-        let mut write_paths = vec![server.workspace_dir.clone()];
-        write_paths.extend(server.extra_write_paths.iter().cloned());
-        let mut env = uv_env_vars(&self.cache_path, &server.workspace_dir);
+        let mut env = package_manager_env_vars(&server.workspace_dir);
         env.extend(resolved_env);
-        self.sandbox_manager
-            .get_sandbox(&sandbox_id, true, Vec::new())
-            .with_read_paths(read_paths)
-            .with_write_paths(write_paths)
+        self.mcp_sandbox(server)
+            .with_read_paths(server.extra_read_paths.to_vec())
+            .with_write_paths(server.extra_write_paths.to_vec())
             .with_extra_env_vars(env)
+    }
+
+    fn mcp_sandbox(&self, server: &McpServer) -> Sandbox {
+        let sandbox_id = format!("mcp-{}", server.id);
+        self.sandbox_manager
+            .sandbox_at(
+                std::path::PathBuf::from(&server.workspace_dir),
+                &sandbox_id,
+                true,
+                Vec::new(),
+            )
+            .without_venv()
+            .without_node()
     }
 
     /// Spawn the server inside its run sandbox, perform the MCP `initialize` handshake
@@ -101,6 +92,15 @@ impl McpManager {
         let args_owned: Vec<String> = server.args.clone();
         let args_refs: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
 
+        let log_dir = std::path::Path::new(&server.workspace_dir).join("logs");
+        std::fs::create_dir_all(&log_dir).ok();
+        let log_path = log_dir.join("server.log");
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|e| AppError::Tool(format!("opening {}: {e}", log_path.display())))?;
+
         let mut child = sandbox.spawn(
             &server.command,
             &args_refs,
@@ -108,7 +108,7 @@ impl McpManager {
             Vec::new(),
             Some(std::process::Stdio::piped()),
             std::process::Stdio::piped(),
-            std::process::Stdio::inherit(),
+            std::process::Stdio::from(log_file),
         )?;
 
         let stdin = child
@@ -141,6 +141,7 @@ impl McpManager {
             tools: tools.clone(),
             child,
             restart_count: 0,
+            log_path: Some(log_path),
         };
 
         self.connections
@@ -229,6 +230,23 @@ impl McpManager {
         self.connections.read().await.contains_key(server_id)
     }
 
+    pub async fn read_logs(&self, server_id: &str, max_bytes: u64) -> String {
+        let log_path = {
+            let conns = self.connections.read().await;
+            conns.get(server_id).and_then(|c| c.log_path.clone())
+        };
+        match log_path {
+            Some(path) => read_log_file(&path, max_bytes),
+            None => {
+                let fallback = std::path::PathBuf::from(self.workspaces_path())
+                    .join(server_id)
+                    .join("logs")
+                    .join("server.log");
+                read_log_file(&fallback, max_bytes)
+            }
+        }
+    }
+
     pub async fn connections_mut(
         &self,
     ) -> tokio::sync::RwLockWriteGuard<'_, std::collections::HashMap<String, McpConnection>> {
@@ -249,11 +267,34 @@ impl McpManager {
 /// land in after a successful `start` call.
 pub const STARTED_STATUS: McpServerStatus = McpServerStatus::Running;
 
-fn uv_env_vars(cache_path: &str, workspace_dir: &str) -> Vec<(String, String)> {
-    vec![
-        ("UV_CACHE_DIR".into(), format!("{cache_path}/uv")),
+pub fn read_log_file(path: &std::path::Path, max_bytes: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let Ok(metadata) = file.metadata() else {
+        return String::new();
+    };
+    let len = metadata.len();
+    if len > max_bytes {
+        let _ = file.seek(SeekFrom::End(-(max_bytes as i64)));
+    }
+    let mut buf = String::new();
+    let _ = file.read_to_string(&mut buf);
+    buf
+}
+
+fn package_manager_env_vars(workspace_dir: &str) -> Vec<(String, String)> {
+    let workspace = std::path::Path::new(workspace_dir);
+    let mut env = vec![
+        ("UV_CACHE_DIR".into(), format!("{workspace_dir}/.uv-cache")),
         ("UV_TOOL_DIR".into(), format!("{workspace_dir}/.uv-tools")),
-    ]
+        ("UV_LINK_MODE".into(), "copy".into()),
+        ("NPM_CONFIG_CACHE".into(), format!("{workspace_dir}/.npm-cache")),
+    ];
+    let (_, node_env) = crate::tool::sandbox::node_env_vars(workspace);
+    env.extend(node_env);
+    env
 }
 
 struct ConnectionView<'a> {
