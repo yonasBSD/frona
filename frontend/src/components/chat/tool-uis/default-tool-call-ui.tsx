@@ -45,7 +45,9 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
 };
 
 function displayToolName(name: string): string {
-  return TOOL_DISPLAY_NAMES[name] ?? name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  if (TOOL_DISPLAY_NAMES[name]) return TOOL_DISPLAY_NAMES[name];
+  const bare = name.includes("__") ? name.split("__").pop()! : name;
+  return bare.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 type ToolStatus = ToolCallMessagePartStatus["type"];

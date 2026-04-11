@@ -102,7 +102,7 @@ async fn install_server_with_manifest_no_secrets() {
 
     let server = install_via_manifest(&state, &token, sample_manifest()).await;
     assert!(server["id"].is_string());
-    assert_eq!(server["display_name"], "io.test/echo-mcp");
+    assert_eq!(server["display_name"], "echo-mcp");
     assert_eq!(server["status"], "installed");
     assert_eq!(server["command"], "npx");
 

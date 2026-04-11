@@ -200,7 +200,11 @@ export function ToolsSection({ tools, onChange }: ToolsSectionProps) {
                     title={unavailable && provider.status.state === "unavailable" ? provider.status.reason : undefined}
                   >
                     <span className="flex items-center gap-2">
-                      {titleCase(provider.display_name)}
+                      {provider.kind.type === "builtin"
+                        ? titleCase(provider.display_name)
+                        : provider.display_name.includes("/")
+                          ? provider.display_name.split("/").pop()
+                          : provider.display_name}
                       {unavailable && (
                         <span className="text-xs font-normal text-text-tertiary">(unavailable)</span>
                       )}
@@ -272,7 +276,7 @@ export function ToolsSection({ tools, onChange }: ToolsSectionProps) {
                             className="h-3.5 w-3.5 mt-0.5 rounded border-border text-accent focus:ring-accent disabled:opacity-50"
                           />
                           <div className="flex-1">
-                            <div className="font-mono text-text-primary">{tool.id}</div>
+                            <div className="font-mono text-text-primary">{tool.id.includes("__") ? tool.id.split("__").pop() : tool.id}</div>
                             {tool.description && (
                               <div className="text-text-tertiary line-clamp-2">{tool.description}</div>
                             )}
