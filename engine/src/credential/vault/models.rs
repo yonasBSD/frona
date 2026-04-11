@@ -325,15 +325,16 @@ impl VaultSecret {
 
     pub fn to_env_vars(&self, prefix: &str) -> Vec<(String, String)> {
         let mut vars = Vec::new();
+        let sep = if prefix.is_empty() { "" } else { "_" };
         if let Some(ref u) = self.username {
-            vars.push((format!("{prefix}_USERNAME"), u.clone()));
+            vars.push((format!("{prefix}{sep}USERNAME"), u.trim().to_string()));
         }
         if let Some(ref p) = self.password {
-            vars.push((format!("{prefix}_PASSWORD"), p.clone()));
+            vars.push((format!("{prefix}{sep}PASSWORD"), p.trim().to_string()));
         }
         for (key, value) in &self.fields {
-            let var_name = format!("{prefix}_{}", key.to_uppercase().replace(' ', "_"));
-            vars.push((var_name, value.clone()));
+            let suffix = key.to_uppercase().replace(' ', "_");
+            vars.push((format!("{prefix}{sep}{suffix}"), value.trim().to_string()));
         }
         vars
     }
@@ -406,6 +407,15 @@ pub enum GrantDuration {
     Permanent,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreateGrantRequest {
+    pub principal: GrantPrincipal,
+    pub connection_id: String,
+    pub vault_item_id: String,
+    pub query: String,
+    pub target: CredentialTarget,
+}
+
 #[derive(Debug, Serialize)]
 pub struct VaultGrantResponse {
     pub id: String,
@@ -454,6 +464,30 @@ mod tests {
         assert!(vars.contains(&("GITHUB_USERNAME".to_string(), "octocat".to_string())));
         assert!(vars.contains(&("GITHUB_PASSWORD".to_string(), "secret123".to_string())));
         assert!(vars.contains(&("GITHUB_API_KEY".to_string(), "ghp_abc123".to_string())));
+    }
+
+    #[test]
+    fn vault_secret_to_env_vars_custom_fields_only() {
+        let secret = VaultSecret {
+            id: "ha1".into(),
+            name: "Home Assistant".into(),
+            username: None,
+            password: None,
+            notes: None,
+            fields: {
+                let mut m = HashMap::new();
+                m.insert("hostname".into(), "https://ha.example.com".into());
+                m.insert("type".into(), "bearer".into());
+                m.insert("credential".into(), "tok_secret_123".into());
+                m
+            },
+        };
+
+        let vars: HashMap<String, String> = secret.to_env_vars("HOME_ASSISTANT").into_iter().collect();
+        assert_eq!(vars.len(), 3);
+        assert_eq!(vars.get("HOME_ASSISTANT_HOSTNAME").map(String::as_str), Some("https://ha.example.com"));
+        assert_eq!(vars.get("HOME_ASSISTANT_TYPE").map(String::as_str), Some("bearer"));
+        assert_eq!(vars.get("HOME_ASSISTANT_CREDENTIAL").map(String::as_str), Some("tok_secret_123"));
     }
 
     #[test]

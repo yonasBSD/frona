@@ -908,6 +908,34 @@ mod tests {
     }
 
     #[test]
+    fn project_target_prefix_includes_all_custom_fields() {
+        let secret = VaultSecret {
+            id: "ha1".into(),
+            name: "Home Assistant".into(),
+            username: None,
+            password: None,
+            notes: None,
+            fields: {
+                let mut m = HashMap::new();
+                m.insert("hostname".into(), "https://ha.example.com".into());
+                m.insert("type".into(), "bearer".into());
+                m.insert("credential".into(), "tok_secret_123".into());
+                m
+            },
+        };
+        let target = CredentialTarget::Prefix {
+            env_var_prefix: "HOME_ASSISTANT".into(),
+        };
+        let vars: HashMap<_, _> = project_target(&secret, &target)
+            .into_iter()
+            .collect();
+        assert_eq!(vars.len(), 3);
+        assert_eq!(vars.get("HOME_ASSISTANT_HOSTNAME").map(String::as_str), Some("https://ha.example.com"));
+        assert_eq!(vars.get("HOME_ASSISTANT_TYPE").map(String::as_str), Some("bearer"));
+        assert_eq!(vars.get("HOME_ASSISTANT_CREDENTIAL").map(String::as_str), Some("tok_secret_123"));
+    }
+
+    #[test]
     fn project_target_single_projects_password_only() {
         let secret = sample_secret();
         let target = CredentialTarget::Single {

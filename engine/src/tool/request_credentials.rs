@@ -46,7 +46,10 @@ impl RequestCredentialsTool {
         let env_var_prefix = arguments
             .get("env_var_prefix")
             .and_then(|v| v.as_str())
-            .map(String::from);
+            .ok_or_else(|| {
+                AppError::Validation("Missing required parameter: env_var_prefix".into())
+            })?
+            .to_string();
 
         let force = arguments
             .get("force")
@@ -72,7 +75,7 @@ impl RequestCredentialsTool {
                     &ctx.chat.id,
                     &binding.connection_id,
                     &binding.vault_item_id,
-                    env_var_prefix.as_deref(),
+                    Some(&env_var_prefix),
                     &query,
                     &reason,
                 )
@@ -102,7 +105,7 @@ impl RequestCredentialsTool {
             .with_tool_data(MessageTool::VaultApproval {
                 query,
                 reason,
-                env_var_prefix,
+                env_var_prefix: Some(env_var_prefix),
                 status: ToolStatus::Pending,
                 response: None,
             })
