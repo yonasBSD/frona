@@ -94,10 +94,11 @@ async fn restore<S: Supervisor>(
     let count = ids.len();
     info!(label, count, "found entities to restore");
     for id in &ids {
+        let name = supervisor.display_name(id).await;
         match supervisor.start(id).await {
-            Ok(()) => info!(label, id = %id, "restored"),
+            Ok(()) => info!(label, name = %name, "restored"),
             Err(e) => {
-                warn!(label, id = %id, error = %e, "failed to restore");
+                warn!(label, name = %name, error = %e, "failed to restore");
                 let _ = supervisor.mark_failed(id, &e.to_string()).await;
                 send_notification(
                     supervisor,
@@ -132,13 +133,12 @@ async fn health_tick<S: Supervisor>(
     };
 
     for id in &dead {
+        let name = supervisor.display_name(id).await;
         let restarts = supervisor.restart_count(id).await;
         if restarts >= config.max_restart_attempts {
             let reason = format!("exceeded {max} restart attempts", max = config.max_restart_attempts);
             let _ = supervisor.mark_failed(id, &reason).await;
-            warn!(label, id = %id, restarts, "exceeded max restarts");
-
-            let name = supervisor.display_name(id).await;
+            warn!(label, name = %name, restarts, "exceeded max restarts");
             send_notification(
                 supervisor,
                 notification_service,
@@ -155,11 +155,11 @@ async fn health_tick<S: Supervisor>(
             continue;
         }
 
-        warn!(label, id = %id, restarts, "process died, restarting");
+        warn!(label, name = %name, restarts, "process died, restarting");
         match supervisor.start(id).await {
-            Ok(()) => info!(label, id = %id, "restarted after crash"),
+            Ok(()) => info!(label, name = %name, "restarted after crash"),
             Err(e) => {
-                warn!(label, id = %id, error = %e, "restart failed");
+                warn!(label, name = %name, error = %e, "restart failed");
             }
         }
     }
@@ -178,7 +178,8 @@ async fn hibernate_tick<S: Supervisor>(
         }
     };
     for id in &idle {
-        info!(label, id = %id, "hibernating idle entity");
+        let name = supervisor.display_name(id).await;
+        info!(label, name = %name, "hibernating idle entity");
         let _ = supervisor.stop(id).await;
         let _ = supervisor.mark_hibernated(id).await;
     }
