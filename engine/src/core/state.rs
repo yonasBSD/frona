@@ -271,7 +271,10 @@ impl AppState {
             Arc::new(SurrealRepo::<crate::tool::mcp::McpServer>::new(db.clone()));
         let mcp_registry: Arc<dyn crate::tool::mcp::McpRegistryClient> =
             Arc::new(crate::tool::mcp::PrebuiltMcpRegistryClient::new(
-                std::path::PathBuf::from(&config.mcp.cache_path).join("registry"),
+                std::path::PathBuf::from(
+                    config.mcp.cache_path.clone()
+                        .unwrap_or_else(|| format!("{}/mcp", config.storage.cache_dir))
+                ).join("registry"),
             ));
         let mcp_installer: Arc<dyn crate::tool::mcp::PackageInstaller> =
             Arc::new(crate::tool::mcp::SandboxedPackageInstaller::new(

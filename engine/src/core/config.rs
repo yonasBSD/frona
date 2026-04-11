@@ -737,7 +737,8 @@ pub struct McpConfig {
     #[schemars(description = "Base path for per-MCP-server workspace directories.")]
     pub workspaces_path: String,
     #[schemars(description = "Path for shared package caches (npm, uv). Defaults to `{workspaces_path}/cache`.")]
-    pub cache_path: String,
+    #[serde(default)]
+    pub cache_path: Option<String>,
     #[schemars(description = "Maximum number of MCP servers a user may have installed.")]
     pub max_servers_per_user: u32,
     #[schemars(description = "Seconds to wait for an MCP server's initialize handshake before failing.")]
@@ -753,7 +754,7 @@ impl Default for McpConfig {
         Self {
             enabled: true,
             workspaces_path: "data/mcp".into(),
-            cache_path: "data/mcp/cache".into(),
+            cache_path: None,
             max_servers_per_user: 32,
             startup_timeout_secs: 30,
             health_check_interval_secs: 10,
@@ -803,8 +804,7 @@ impl Config {
             .set_default("database.path", format!("{data_dir}/db")).unwrap()
             .set_default("storage.workspaces_path", format!("{data_dir}/workspaces")).unwrap()
             .set_default("storage.files_path", format!("{data_dir}/files")).unwrap()
-            .set_default("mcp.workspaces_path", format!("{data_dir}/mcp")).unwrap()
-            .set_default("mcp.cache_path", format!("{data_dir}/mcp/cache")).unwrap();
+            .set_default("mcp.workspaces_path", format!("{data_dir}/mcp")).unwrap();
 
         if let Some(ref content) = yaml_content {
             let expanded = expand_env_vars(content);
