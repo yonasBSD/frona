@@ -216,7 +216,7 @@ function AgentSettings() {
                 onValidChange={setSandboxValid}
               />
             )}
-            {activeSection === "creds" && <CredsSection agentId={agentId} />}
+            {activeSection === "creds" && <CredsSection principalKind="agent" principalId={agentId} />}
           </div>
 
           {/* Save bar */}

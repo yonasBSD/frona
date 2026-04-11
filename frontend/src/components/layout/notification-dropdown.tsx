@@ -8,6 +8,7 @@ import { useNotifications } from "@/lib/notification-context";
 import { useMobile } from "@/lib/use-mobile";
 import { API_URL } from "@/lib/api-client";
 import type { Notification, NotificationLevel } from "@/lib/types";
+import { formatDistanceToNow } from "date-fns";
 
 function levelColor(level: NotificationLevel): string {
   switch (level) {
@@ -36,16 +37,7 @@ function levelDot(level: NotificationLevel): string {
 }
 
 function timeAgo(dateStr: string): string {
-  const seconds = Math.floor(
-    (Date.now() - new Date(dateStr).getTime()) / 1000,
-  );
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
 }
 
 function getNotificationLink(notification: Notification): {

@@ -21,6 +21,7 @@ import { VaultSection } from "@/components/settings/sections/vault-section";
 import { AdvancedSection } from "@/components/settings/sections/advanced-section";
 import { SkillsSection } from "@/components/settings/sections/skills-section";
 import { SandboxSettingsSection } from "@/components/settings/sections/sandbox-section";
+import { McpSection } from "@/components/settings/sections/mcp-section";
 import { AboutSection } from "@/components/settings/sections/about-section";
 import { getConfig, updateConfig } from "@/lib/config-types";
 import type { Config } from "@/lib/config-types";
@@ -31,6 +32,7 @@ const TABS = [
   { id: "providers", label: "Providers", group: "config", saveable: true },
   { id: "models", label: "Models", group: "config", saveable: true },
   { id: "skills", label: "Skills", group: "config", saveable: false },
+  { id: "mcp", label: "MCP Servers", group: "config", saveable: false },
   { id: "search", label: "Search", group: "config", saveable: true },
   { id: "voice", label: "Voice", group: "config", saveable: true },
   { id: "browser", label: "Browser", group: "config", saveable: true },
@@ -261,6 +263,7 @@ export default function SettingsPage() {
               )}
 
               {activeTab === "skills" && <SkillsSection />}
+              {activeTab === "mcp" && <McpSection />}
 
               {config && (
                 <>
