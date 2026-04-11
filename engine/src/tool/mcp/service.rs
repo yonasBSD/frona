@@ -243,7 +243,9 @@ impl McpServerService {
             display_name: req
                 .display_name_override
                 .or(entry.title.clone())
-                .unwrap_or_else(|| entry.name.clone()),
+                .unwrap_or_else(|| {
+                    entry.name.rsplit('/').next().unwrap_or(&entry.name).to_string()
+                }),
             description: Some(entry.description.clone()),
             repository_url: entry.repository.as_ref().and_then(|r| r.url.clone()),
             registry_id: Some(entry.name.clone()),
