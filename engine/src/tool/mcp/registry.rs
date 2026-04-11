@@ -77,28 +77,46 @@ impl PrebuiltMcpRegistryClient {
             AppError::Tool(format!("creating MCP registry cache dir failed: {e}"))
         })?;
 
-        let remote_meta_bytes = self
-            .http
-            .get(&self.metadata_url)
-            .send()
-            .await
-            .map_err(|e| AppError::Tool(format!("fetching MCP registry metadata failed: {e}")))?
-            .error_for_status()
-            .map_err(|e| AppError::Tool(format!("MCP registry metadata HTTP error: {e}")))?
-            .bytes()
-            .await
-            .map_err(|e| {
-                AppError::Tool(format!("reading MCP registry metadata body failed: {e}"))
-            })?;
+        let servers_path = self.servers_path();
+        if let Ok(meta) = fs::metadata(&servers_path)
+            && let Ok(modified) = meta.modified()
+            && modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400)
+        {
+            return Ok(());
+        }
+
+        let remote_meta_bytes = match self.http.get(&self.metadata_url).send().await {
+            Ok(resp) => match resp.error_for_status() {
+                Ok(resp) => resp.bytes().await.ok(),
+                Err(e) => {
+                    tracing::warn!("MCP registry metadata HTTP error: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("MCP registry metadata fetch failed: {e}");
+                None
+            }
+        };
+
+        let Some(remote_meta_bytes) = remote_meta_bytes else {
+            if servers_path.is_file() {
+                return Ok(());
+            }
+            return Err(AppError::Tool(
+                "MCP registry unreachable and no local cache available".into(),
+            ));
+        };
+
         let remote_meta: PrebuiltMetadata = serde_json::from_slice(&remote_meta_bytes)
             .map_err(|e| AppError::Tool(format!("parsing MCP registry metadata failed: {e}")))?;
 
         let local_meta = self.read_local_metadata();
-        let servers_path = self.servers_path();
         if let Some(local) = &local_meta
             && local.content_sha256 == remote_meta.content_sha256
             && servers_path.is_file()
         {
+            fs::File::open(&servers_path).and_then(|f| f.set_modified(std::time::SystemTime::now())).ok();
             return Ok(());
         }
 
