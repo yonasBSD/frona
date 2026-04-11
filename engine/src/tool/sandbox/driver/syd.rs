@@ -132,15 +132,6 @@ impl SandboxDriver for SydDriver {
         cmd.args(args);
         cmd.current_dir(config.working_dir.as_deref().unwrap_or(&config.workspace_dir));
 
-        tracing::debug!(
-            cmd = %format!("syd {} -- {} {}",
-                syd_args.join(" "),
-                program,
-                args.join(" ")),
-            cwd = %config.working_dir.as_deref().unwrap_or(&config.workspace_dir),
-            "sandboxed command"
-        );
-
         Ok(cmd)
     }
 }
