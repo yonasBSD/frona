@@ -52,9 +52,8 @@ fn synthetic_provider_metadata(id: &str) -> Option<(&'static str, &'static str)>
 }
 
 /// Build the full provider+tool catalog for the user. Built-in providers come from the static
-/// catalog; tools are sourced from a synthetic registry built with every configurable
-/// provider id allowed, so each tool definition is observed at least once.
-async fn build_catalog(state: &AppState) -> Vec<ToolProviderWithTools> {
+/// catalog; MCP providers from running and stopped servers; CLI providers from config.
+async fn build_catalog(state: &AppState, user_id: &str) -> Vec<ToolProviderWithTools> {
     let mut all_allowed: Vec<String> = BUILTIN_PROVIDERS
         .iter()
         .map(|s| s.id.to_string())
@@ -115,15 +114,52 @@ async fn build_catalog(state: &AppState) -> Vec<ToolProviderWithTools> {
         });
     }
 
+    // MCP providers: derive from installed servers (running or stopped).
+    if let Ok(servers) = state.mcp_service.list_for_user(user_id).await {
+        for server in servers {
+            let status = if state.mcp_manager.is_running(&server.id).await {
+                ToolProviderStatus::Available
+            } else {
+                ToolProviderStatus::Unavailable {
+                    reason: format!("Server is {}", server.status),
+                }
+            };
+            let tools: Vec<ToolInfo> = server
+                .tool_cache
+                .iter()
+                .map(|t| ToolInfo {
+                    id: format!("mcp__{}__{}", server.slug, t.name),
+                    description: t.description.clone(),
+                    configurable: true,
+                })
+                .collect();
+            providers.push(ToolProviderWithTools {
+                provider: ToolProvider {
+                    id: format!("mcp:{}", server.slug),
+                    display_name: server.display_name.clone(),
+                    description: server.description.clone(),
+                    icon: None,
+                    kind: ToolProviderKind::Mcp {
+                        server_id: server.id.clone(),
+                        repository_url: server.repository_url.clone(),
+                        version: Some(server.package.version.clone()),
+                    },
+                    status,
+                },
+                tools,
+            });
+        }
+    }
+
     providers
 }
 
 /// All providers and their tools available in the system, for the agent settings UI.
 async fn list_tools(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
 ) -> Json<Vec<ToolProviderWithTools>> {
-    Json(build_catalog(&state).await)
+    Json(build_catalog(&state, &auth.user_id).await)
 }
 
 /// Tools currently assigned to a specific agent (flat list of selected tool ids).
