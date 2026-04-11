@@ -180,6 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Method::GET,
                 Method::POST,
                 Method::PUT,
+                Method::PATCH,
                 Method::DELETE,
                 Method::OPTIONS,
             ])
