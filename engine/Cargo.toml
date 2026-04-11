@@ -2,6 +2,7 @@
 name = "frona"
 edition.workspace = true
 version.workspace = true
+default-run = "frona"
 
 [dependencies]
 serde = { workspace = true }
