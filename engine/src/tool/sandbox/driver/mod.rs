@@ -23,6 +23,7 @@ pub const ETC_READ_ALLOWLIST: &[&str] = &[
     // DNS / networking
     "/etc/resolv.conf",
     "/etc/hosts",
+    "/etc/host.conf",
     "/etc/nsswitch.conf",
     "/etc/gai.conf",
     "/etc/protocols",

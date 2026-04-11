@@ -64,6 +64,16 @@ impl SandboxManager {
     ) -> Sandbox {
         let sanitized = agent_id.replace(['/', '\\', ':', '\0'], "_");
         let path = self.base_path.join(&sanitized);
+        self.sandbox_at(path, agent_id, network_access, allowed_network_destinations)
+    }
+
+    pub fn sandbox_at(
+        &self,
+        path: PathBuf,
+        id: &str,
+        network_access: bool,
+        allowed_network_destinations: Vec<String>,
+    ) -> Sandbox {
         Sandbox {
             path,
             driver: Arc::clone(&self.driver),
@@ -73,8 +83,10 @@ impl SandboxManager {
             extra_env_vars: Vec::new(),
             shared_read_paths: self.shared_read_paths.clone(),
             shared_write_paths: Vec::new(),
-            agent_id: agent_id.to_string(),
+            agent_id: id.to_string(),
             resource_manager: Arc::clone(&self.resource_manager),
+            init_venv: true,
+            init_node: true,
         }
     }
 }
@@ -90,6 +102,8 @@ pub struct Sandbox {
     shared_write_paths: Vec<String>,
     agent_id: String,
     resource_manager: Arc<SystemResourceManager>,
+    init_venv: bool,
+    init_node: bool,
 }
 
 impl Sandbox {
@@ -112,6 +126,16 @@ impl Sandbox {
         self.allowed_bind_ports = ports;
         self
     }
+
+    pub fn without_venv(mut self) -> Self {
+        self.init_venv = false;
+        self
+    }
+
+    pub fn without_node(mut self) -> Self {
+        self.init_node = false;
+        self
+    }
 }
 
 impl Sandbox {
@@ -124,6 +148,17 @@ impl Sandbox {
     }
 
     pub fn setup(&self) -> Result<(), AppError> {
+        self.ensure_dir()?;
+        if self.init_venv {
+            self.setup_venv();
+        }
+        if self.init_node {
+            self.setup_node_env();
+        }
+        Ok(())
+    }
+
+    pub fn ensure_dir(&self) -> Result<(), AppError> {
         if !self.path.exists() {
             std::fs::create_dir_all(&self.path).map_err(|e| {
                 AppError::Tool(format!(
@@ -132,8 +167,6 @@ impl Sandbox {
                 ))
             })?;
         }
-        self.setup_venv();
-        self.setup_node_env();
         Ok(())
     }
 
@@ -215,20 +248,9 @@ impl Sandbox {
             ));
         }
 
-        let node_bin = canonical_path.join(".node").join("bin");
-        if canonical_path.join(".node").exists() {
-            if node_bin.exists() {
-                additional_path_dirs.push(node_bin.to_string_lossy().into_owned());
-            }
-            env_vars.push((
-                "NPM_CONFIG_PREFIX".to_string(),
-                canonical_path.join(".node").to_string_lossy().into_owned(),
-            ));
-            env_vars.push((
-                "NODE_PATH".to_string(),
-                canonical_path.join("node_modules").to_string_lossy().into_owned(),
-            ));
-        }
+        let (node_path_dirs, node_env) = node_env_vars(&canonical_path);
+        additional_path_dirs.extend(node_path_dirs);
+        env_vars.extend(node_env);
 
         env_vars.push(("HOME".to_string(), canonical_path.to_string_lossy().into_owned()));
         env_vars.push(("XDG_CONFIG_HOME".to_string(), canonical_path.join(".config").to_string_lossy().into_owned()));
@@ -356,6 +378,24 @@ impl Sandbox {
     }
 }
 
+pub fn node_env_vars(workspace: &Path) -> (Vec<String>, Vec<(String, String)>) {
+    let node_prefix = workspace.join(".node");
+    if !node_prefix.exists() {
+        return (Vec::new(), Vec::new());
+    }
+    let mut path_dirs = Vec::new();
+    let bin = node_prefix.join("bin");
+    if bin.exists() {
+        path_dirs.push(bin.to_string_lossy().into_owned());
+    }
+    let env = vec![
+        ("NPM_CONFIG_PREFIX".into(), node_prefix.to_string_lossy().into_owned()),
+        ("NPM_CONFIG_CACHE".into(), workspace.join(".npm-cache").to_string_lossy().into_owned()),
+        ("NODE_PATH".into(), workspace.join("node_modules").to_string_lossy().into_owned()),
+    ];
+    (path_dirs, env)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,6 +421,8 @@ mod tests {
             shared_write_paths: Vec::new(),
             agent_id: "test".to_string(),
             resource_manager: Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),
+            init_venv: true,
+            init_node: true,
         }
     }
 
@@ -424,6 +466,8 @@ mod tests {
             shared_write_paths: Vec::new(),
             agent_id: "test".to_string(),
             resource_manager: Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),
+            init_venv: true,
+            init_node: true,
         };
         ws.setup().unwrap();
 

@@ -132,6 +132,15 @@ impl SandboxDriver for SydDriver {
         cmd.args(args);
         cmd.current_dir(config.working_dir.as_deref().unwrap_or(&config.workspace_dir));
 
+        tracing::debug!(
+            cmd = %format!("syd {} -- {} {}",
+                syd_args.join(" "),
+                program,
+                args.join(" ")),
+            cwd = %config.working_dir.as_deref().unwrap_or(&config.workspace_dir),
+            "sandboxed command"
+        );
+
         Ok(cmd)
     }
 }
@@ -152,6 +161,14 @@ impl SydArgsBuilder {
                 "-m".into(), "sandbox/write:on".into(),
                 // Allow non-PIE executables (e.g. Node.js)
                 "-m".into(), "trace/allow_unsafe_exec_nopie:1".into(),
+                // Allow ld.so exec indirection (required by Python/uv)
+                "-m".into(), "trace/allow_unsafe_exec_ldso:1".into(),
+                // Syd's lib profile strips env vars whose names contain PASSWORD,
+                // CREDENTIAL, TOKEN, or KEY. We manage secrets ourselves via
+                // vault_env_vars, so disable the filter.
+                "-m".into(), "trace/allow_unsafe_env:1".into(),
+                // uv uses base64-encoded temp filenames in its cache
+                "-m".into(), "trace/allow_unsafe_filename:1".into(),
             ],
         }
     }
