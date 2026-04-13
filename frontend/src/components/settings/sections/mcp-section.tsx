@@ -192,7 +192,7 @@ export function McpSection() {
   return (
     <div className="space-y-4">
       <SectionHeader
-        title="MCP Servers"
+        title="MCP"
         description="Install and manage Model Context Protocol servers"
         icon={CpuChipIcon}
       />
@@ -401,7 +401,7 @@ export function McpSection() {
             </div>
           ) : servers.length === 0 ? (
             <p className="text-sm text-text-tertiary text-center py-8">
-              No MCP servers installed
+              No servers installed
             </p>
           ) : (
             <div className="rounded-xl border border-border bg-surface-secondary divide-y divide-border overflow-hidden">

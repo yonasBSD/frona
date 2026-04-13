@@ -32,7 +32,7 @@ const TABS = [
   { id: "providers", label: "Providers", group: "config", saveable: true },
   { id: "models", label: "Models", group: "config", saveable: true },
   { id: "skills", label: "Skills", group: "config", saveable: false },
-  { id: "mcp", label: "MCP Servers", group: "config", saveable: false },
+  { id: "mcp", label: "MCP", group: "config", saveable: false },
   { id: "search", label: "Search", group: "config", saveable: true },
   { id: "voice", label: "Voice", group: "config", saveable: true },
   { id: "browser", label: "Browser", group: "config", saveable: true },

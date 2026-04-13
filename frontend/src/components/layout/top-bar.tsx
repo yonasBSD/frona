@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Bars3Icon, XMarkIcon, Cog6ToothIcon, ArrowRightStartOnRectangleIcon, CubeIcon, PuzzlePieceIcon, KeyIcon } from "@heroicons/react/24/outline";
+import { Bars3Icon, XMarkIcon, Cog6ToothIcon, ArrowRightStartOnRectangleIcon, CubeIcon, PuzzlePieceIcon, KeyIcon, CpuChipIcon } from "@heroicons/react/24/outline";
 import { useAuth } from "@/lib/auth";
 import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
@@ -127,6 +127,13 @@ export function TopBar() {
                   Skills
                 </button>
                 <button
+                  onClick={() => { router.push("/settings#mcp"); setMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-5 py-3 text-base text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+                >
+                  <CpuChipIcon className="h-5 w-5" />
+                  MCP
+                </button>
+                <button
                   onClick={() => { router.push("/settings#vault"); setMenuOpen(false); }}
                   className="w-full flex items-center gap-3 px-5 py-3 text-base text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
                 >
@@ -233,6 +240,13 @@ export function TopBar() {
               >
                 <PuzzlePieceIcon className="h-4 w-4" />
                 Skills
+              </button>
+              <button
+                onClick={() => { router.push("/settings#mcp"); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+              >
+                <CpuChipIcon className="h-4 w-4" />
+                MCP
               </button>
               <button
                 onClick={() => { router.push("/settings#vault"); setMenuOpen(false); }}
