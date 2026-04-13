@@ -231,6 +231,40 @@ async fn list_grants_empty() {
     assert_eq!(json.as_array().unwrap().len(), 0);
 }
 
+#[tokio::test]
+async fn create_grant_returns_json() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, _) =
+        register_user(&state, "vault-grant", "vaultgrant@example.com", "password123").await;
+
+    let item = create_local_item(&state, &token, "test-item").await;
+    let item_id = item["id"].as_str().unwrap();
+
+    let app = build_app(state);
+    let resp = app
+        .oneshot(auth_post_json(
+            "/api/vaults/grants",
+            &token,
+            serde_json::json!({
+                "principal": {"kind": "agent", "id": "test-agent"},
+                "connection_id": "local",
+                "vault_item_id": item_id,
+                "query": "TEST",
+                "target": {"Prefix": {"env_var_prefix": "TEST"}}
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert!(json["id"].is_string());
+    assert_eq!(json["connection_id"], "local");
+    assert_eq!(json["vault_item_id"], item_id);
+    assert_eq!(json["query"], "TEST");
+    assert_eq!(json["principal"]["kind"], "agent");
+    assert_eq!(json["principal"]["id"], "test-agent");
+}
+
 // ---------------------------------------------------------------------------
 // No-auth coverage
 // ---------------------------------------------------------------------------

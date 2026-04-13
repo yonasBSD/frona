@@ -117,6 +117,29 @@ async fn find_running_only_returns_running() {
 }
 
 #[tokio::test]
+async fn find_running_includes_starting_status() {
+    let db = test_db().await;
+    let repo = SurrealRepo::<McpServer>::new(db);
+
+    repo.create(&make_server("s1", "user-1", "a", McpServerStatus::Running))
+        .await
+        .unwrap();
+    repo.create(&make_server("s2", "user-1", "b", McpServerStatus::Starting))
+        .await
+        .unwrap();
+    repo.create(&make_server("s3", "user-1", "c", McpServerStatus::Installed))
+        .await
+        .unwrap();
+
+    let running = repo.find_running().await.unwrap();
+    assert_eq!(running.len(), 2);
+    let ids: Vec<&str> = running.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"s1"));
+    assert!(ids.contains(&"s2"));
+    assert!(!ids.contains(&"s3"));
+}
+
+#[tokio::test]
 async fn update_status_and_tool_cache() {
     let db = test_db().await;
     let repo = SurrealRepo::<McpServer>::new(db);

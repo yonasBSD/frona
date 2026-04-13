@@ -1216,6 +1216,12 @@ mod tests {
     }
 
     #[test]
+    fn mcp_cache_path_defaults_to_none() {
+        let mcp = McpConfig::default();
+        assert!(mcp.cache_path.is_none());
+    }
+
+    #[test]
     fn strip_defaults_removes_all_defaults() {
         let mut value = serde_json::to_value(Config::default()).unwrap();
         strip_defaults(&mut value);

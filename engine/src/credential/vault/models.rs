@@ -467,6 +467,23 @@ mod tests {
     }
 
     #[test]
+    fn vault_secret_to_env_vars_empty_prefix() {
+        let secret = VaultSecret {
+            id: "1".into(),
+            name: "Test".into(),
+            username: Some("user".into()),
+            password: Some("pass".into()),
+            notes: None,
+            fields: HashMap::new(),
+        };
+
+        let vars = secret.to_env_vars("");
+        assert!(vars.contains(&("USERNAME".to_string(), "user".to_string())));
+        assert!(vars.contains(&("PASSWORD".to_string(), "pass".to_string())));
+        assert_eq!(vars.len(), 2);
+    }
+
+    #[test]
     fn vault_secret_to_env_vars_custom_fields_only() {
         let secret = VaultSecret {
             id: "ha1".into(),
