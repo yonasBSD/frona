@@ -25,7 +25,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   keeper: "Keeper",
 };
 
-interface VaultGrant {
+export interface VaultGrant {
   id: string;
   connection_id: string;
   vault_item_id: string;
@@ -35,7 +35,7 @@ interface VaultGrant {
   created_at: string;
 }
 
-interface VaultConnection {
+export interface VaultConnection {
   id: string;
   name: string;
   provider: string;
@@ -76,11 +76,13 @@ function EnvPreview({ prefix, fields }: { prefix: string; fields: string[] }) {
   );
 }
 
-function AddCredentialForm({
+export function AddCredentialForm({
   connections,
   principalKind,
   principalId,
   existingGrants,
+  targetEnvVar,
+  initialSelection,
   onClose,
   onCreated,
 }: {
@@ -88,18 +90,23 @@ function AddCredentialForm({
   principalKind: string;
   principalId: string;
   existingGrants: VaultGrant[];
+  targetEnvVar?: string;
+  initialSelection?: { connection_id: string; vault_item_id: string };
   onClose: () => void;
   onCreated: (grant: VaultGrant) => void;
 }) {
   const enabledConns = Array.from(connections.values()).filter((c) => c.enabled);
-  const [selectedConnection, setSelectedConnection] = useState(enabledConns[0]?.id ?? "");
+  const [selectedConnection, setSelectedConnection] = useState(initialSelection?.connection_id ?? enabledConns[0]?.id ?? "");
   const [items, setItems] = useState<VaultItem[]>([]);
-  const [selectedItem, setSelectedItem] = useState("");
+  const [selectedItem, setSelectedItem] = useState(initialSelection?.vault_item_id ?? "");
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [envVar, setEnvVar] = useState("");
-  const [usePrefix, setUsePrefix] = useState(true);
+  const [envVarManuallyEdited, setEnvVarManuallyEdited] = useState(false);
+  const [bindingMode, setBindingMode] = useState<"prefix" | "all" | "single">("prefix");
   const [fields, setFields] = useState<string[]>([]);
+  const [loadingFields, setLoadingFields] = useState(false);
+  const [selectedField, setSelectedField] = useState("");
   const [creating, setCreating] = useState(false);
   const [newType, setNewType] = useState<"ApiKey" | "UsernamePassword">("ApiKey");
   const [newName, setNewName] = useState("");
@@ -121,7 +128,24 @@ function AddCredentialForm({
         const results = await api.get<VaultItem[]>(`/api/vaults/${selectedConnection}/items?q=${encodeURIComponent(searchQuery)}`);
         if (!controller.signal.aborted) {
           setItems(results);
-          if (results.length > 0 && !selectedItem) setSelectedItem(results[0].id);
+          if (results.length > 0 && !selectedItem) {
+            const first = results[0];
+            setSelectedItem(first.id);
+            if (!envVarManuallyEdited) setEnvVar(first.name.toUpperCase().replace(/[^A-Z0-9]/g, "_"));
+            setLoadingFields(true);
+            api.get<string[]>(`/api/vaults/${selectedConnection}/items/${first.id}/fields`)
+              .then((f) => {
+                setFields(f);
+                if (f.length > 0) {
+                  setSelectedField(f[0]);
+                  if (!envVarManuallyEdited && bindingMode === "single") {
+                    setEnvVar(`${first.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_${f[0]}`);
+                  }
+                }
+              })
+              .catch(() => setFields([]))
+              .finally(() => setLoadingFields(false));
+          }
         }
       } catch {
         if (!controller.signal.aborted) setItems([]);
@@ -131,6 +155,14 @@ function AddCredentialForm({
     }, 300);
     return () => { controller.abort(); if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [selectedConnection, searchQuery]);
+
+  useEffect(() => {
+    if (initialSelection?.vault_item_id && selectedConnection) {
+      api.get<string[]>(`/api/vaults/${selectedConnection}/items/${initialSelection.vault_item_id}/fields`)
+        .then((f) => { setFields(f); if (f.length > 0) setSelectedField(f[0]); })
+        .catch(() => setFields([]));
+    }
+  }, []);
 
   const createLocalItem = async () => {
     if (!newName.trim()) return;
@@ -152,7 +184,7 @@ function AddCredentialForm({
       const results = await api.get<VaultItem[]>(`/api/vaults/${connId}/items?q=${encodeURIComponent(searchQuery)}`);
       setItems(results);
       api.get<string[]>(`/api/vaults/${connId}/items/${created.id}/fields`)
-        .then(setFields).catch(() => setFields([]));
+        .then((f) => { setFields(f); if (f.length > 0 && !selectedField) setSelectedField(f[0]); }).catch(() => setFields([]));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create credential");
     } finally {
@@ -165,12 +197,17 @@ function AddCredentialForm({
     setSaving(true);
     setError(null);
     try {
+      const mode = targetEnvVar ? "single" : bindingMode;
+      const query = targetEnvVar ?? envVar.trim();
+      const target = mode === "single"
+        ? { Single: { env_var: query, field: selectedField || "Password" } }
+        : { Prefix: { env_var_prefix: mode === "prefix" ? envVar.trim() : "" } };
       const grant = await api.post<VaultGrant>("/api/vaults/grants", {
         principal: { kind: principalKind, id: principalId },
         connection_id: selectedConnection,
         vault_item_id: selectedItem,
-        query: envVar.trim(),
-        target: { Prefix: { env_var_prefix: envVar.trim() } },
+        query,
+        target,
       });
       onCreated(grant);
     } catch (e: unknown) {
@@ -184,7 +221,15 @@ function AddCredentialForm({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative w-full max-w-lg rounded-xl border border-border bg-surface-secondary p-5 shadow-xl mx-4 space-y-3">
-      <SectionHeader title={creating ? "New credential" : "Add credential"} description={creating ? "Create a new credential in the local vault" : "Select a credential from your vault"} icon={KeyIcon} />
+      <SectionHeader
+        title={creating ? "New credential" : "Add credential"}
+        description={creating
+          ? "Create a new credential in the local vault"
+          : targetEnvVar
+            ? `Select a credential for ${targetEnvVar}`
+            : "Select a credential from your vault"}
+        icon={KeyIcon}
+      />
 
       {creating ? (
         <div className="space-y-3">
@@ -303,9 +348,9 @@ function AddCredentialForm({
         {searching ? (
           <p className="text-xs text-text-tertiary py-1">Searching...</p>
         ) : items.length > 0 ? (
-          <div className="space-y-1 max-h-40 overflow-y-auto">
+          <div className="space-y-1 max-h-40 overflow-y-auto rounded-lg border border-border p-1">
             {items.map((item) => {
-              const alreadyGranted = existingGrants.some(
+              const alreadyGranted = !targetEnvVar && existingGrants.some(
                 (g) => g.connection_id === selectedConnection && g.vault_item_id === item.id
               );
               return (
@@ -314,9 +359,22 @@ function AddCredentialForm({
                   disabled={alreadyGranted}
                   onClick={() => {
                     setSelectedItem(item.id);
-                    if (!envVar) setEnvVar(item.name.toUpperCase().replace(/[^A-Z0-9]/g, "_"));
+                    const itemPrefix = item.name.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+                    if (!envVarManuallyEdited) setEnvVar(itemPrefix);
+                    setFields([]);
+                    setSelectedField("");
+                    setLoadingFields(true);
                     api.get<string[]>(`/api/vaults/${selectedConnection}/items/${item.id}/fields`)
-                      .then(setFields).catch(() => setFields([]));
+                      .then((f) => {
+                        setFields(f);
+                        if (f.length > 0) {
+                          setSelectedField(f[0]);
+                          if (!envVarManuallyEdited && bindingMode === "single") {
+                            setEnvVar(`${itemPrefix}_${f[0]}`);
+                          }
+                        }
+                      }).catch(() => setFields([]))
+                      .finally(() => setLoadingFields(false));
                   }}
                   className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
                     alreadyGranted
@@ -338,28 +396,132 @@ function AddCredentialForm({
         )}
       </div>
 
-      {/* Env var prefix */}
-      <div>
-        <label className="flex items-center gap-2 text-xs font-medium text-text-tertiary mb-1 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={usePrefix}
-            onChange={(e) => { setUsePrefix(e.target.checked); if (!e.target.checked) setEnvVar(""); }}
-            className="rounded border-border"
-          />
-          Environment variable prefix
-        </label>
-        {usePrefix && (
-          <input
-            type="text"
-            value={envVar}
-            onChange={(e) => setEnvVar(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
-            placeholder="e.g. GOOGLE_OAUTH"
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
-          />
-        )}
-        <EnvPreview prefix={usePrefix ? envVar : ""} fields={fields} />
-      </div>
+      {/* Target configuration */}
+      {targetEnvVar ? (
+        loadingFields ? (
+          <p className="text-xs text-text-tertiary py-1">Loading fields...</p>
+        ) : fields.length > 0 ? (
+          <div>
+            <label className="block text-xs font-medium text-text-tertiary mb-1">Field</label>
+            <div className="flex flex-wrap gap-1.5">
+              {fields.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setSelectedField(f)}
+                  className={`rounded-full px-3.5 py-1.5 text-sm transition ${
+                    selectedField === f
+                      ? "bg-accent text-surface"
+                      : "bg-surface-tertiary text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  {f.toLowerCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null
+      ) : (
+        <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Binding mode</label>
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              { value: "prefix" as const, label: "With prefix" },
+              { value: "all" as const, label: "All fields" },
+              { value: "single" as const, label: "Single field" },
+            ]).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => {
+                  setBindingMode(opt.value);
+                  setEnvVarManuallyEdited(false);
+                  if (opt.value === "single" && selectedItem && selectedField) {
+                    const itemName = items.find((i) => i.id === selectedItem)?.name ?? "";
+                    setEnvVar(`${itemName}_${selectedField}`.toUpperCase().replace(/[^A-Z0-9_]/g, "_"));
+                  } else if (opt.value === "prefix" && selectedItem) {
+                    const itemName = items.find((i) => i.id === selectedItem)?.name ?? "";
+                    setEnvVar(itemName.toUpperCase().replace(/[^A-Z0-9]/g, "_"));
+                  } else if (opt.value === "all") {
+                    setEnvVar("");
+                  }
+                }}
+                className={`rounded-full px-3.5 py-1.5 text-sm transition ${
+                  bindingMode === opt.value
+                    ? "bg-accent text-surface"
+                    : "bg-surface-tertiary text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {bindingMode === "prefix" && (
+            <div>
+              <input
+                type="text"
+                value={envVar}
+                onChange={(e) => { setEnvVar(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "")); setEnvVarManuallyEdited(true); }}
+                placeholder="e.g. GOOGLE_OAUTH"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
+              />
+              <EnvPreview prefix={envVar} fields={fields} />
+            </div>
+          )}
+
+          {bindingMode === "all" && (
+            loadingFields
+              ? <p className="text-xs text-text-tertiary py-1">Loading fields...</p>
+              : <EnvPreview prefix="" fields={fields} />
+          )}
+
+          {bindingMode === "single" && (
+            <div className="space-y-2">
+              <div>
+                <label className="block text-xs font-medium text-text-tertiary mb-1">Environment variable</label>
+                <input
+                  type="text"
+                  value={envVar}
+                  onChange={(e) => { setEnvVar(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "")); setEnvVarManuallyEdited(true); }}
+                  placeholder="ENV_VAR_NAME"
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
+                />
+              </div>
+              {loadingFields && (
+                <p className="text-xs text-text-tertiary py-1">Loading fields...</p>
+              )}
+              {!loadingFields && fields.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-text-tertiary mb-1">Field</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {fields.map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => {
+                          setSelectedField(f);
+                          if (!envVarManuallyEdited) {
+                            const itemName = items.find((i) => i.id === selectedItem)?.name ?? "";
+                            setEnvVar(`${itemName}_${f}`.toUpperCase().replace(/[^A-Z0-9_]/g, "_"));
+                          }
+                        }}
+                        className={`rounded-full px-3.5 py-1.5 text-sm transition ${
+                          selectedField === f
+                            ? "bg-accent text-surface"
+                            : "bg-surface-tertiary text-text-secondary hover:text-text-primary"
+                        }`}
+                      >
+                        {f.toLowerCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {error && <p className="text-xs text-danger">{error}</p>}
 
@@ -382,7 +544,7 @@ function AddCredentialForm({
         </button>
         <button
           onClick={submit}
-          disabled={!selectedItem || (usePrefix && !envVar.trim()) || saving}
+          disabled={!selectedItem || (bindingMode === "prefix" && !targetEnvVar && !envVar.trim()) || (bindingMode === "single" && !targetEnvVar && (!envVar.trim() || !selectedField)) || saving}
           className="w-24 inline-flex items-center justify-center rounded-lg bg-accent py-2 text-sm font-medium text-surface hover:bg-accent-hover disabled:opacity-50 transition"
         >
           {saving ? "Adding..." : "Add"}
