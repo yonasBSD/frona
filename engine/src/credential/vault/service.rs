@@ -524,7 +524,7 @@ impl VaultService {
             entries.push((
                 "onepassword".to_string(),
                 VaultProviderType::OnePassword,
-                "1Password (config)".to_string(),
+                "1Password".to_string(),
                 VaultConnectionConfig::OnePassword {
                     service_account_token: token.clone(),
                     default_vault_id: self.vault_config.onepassword_vault_id.clone(),
@@ -540,7 +540,7 @@ impl VaultService {
             entries.push((
                 "bitwarden".to_string(),
                 VaultProviderType::Bitwarden,
-                "Bitwarden (config)".to_string(),
+                "Bitwarden".to_string(),
                 VaultConnectionConfig::Bitwarden {
                     client_id: client_id.clone(),
                     client_secret: client_secret.clone(),
@@ -557,7 +557,7 @@ impl VaultService {
             entries.push((
                 "hashicorp".to_string(),
                 VaultProviderType::Hashicorp,
-                "HashiCorp Vault (config)".to_string(),
+                "HashiCorp Vault".to_string(),
                 VaultConnectionConfig::Hashicorp {
                     address: address.clone(),
                     token: token.clone(),
@@ -573,7 +573,7 @@ impl VaultService {
             entries.push((
                 "keepass".to_string(),
                 VaultProviderType::KeePass,
-                "KeePass (config)".to_string(),
+                "KeePass".to_string(),
                 VaultConnectionConfig::KeePass {
                     file_path: path.clone(),
                     master_password: password.clone(),
@@ -585,7 +585,7 @@ impl VaultService {
             entries.push((
                 "keeper".to_string(),
                 VaultProviderType::Keeper,
-                "Keeper (config)".to_string(),
+                "Keeper".to_string(),
                 VaultConnectionConfig::Keeper {
                     app_key: app_key.clone(),
                     server: None,
