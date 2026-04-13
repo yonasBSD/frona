@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeftIcon, CpuChipIcon, PlayIcon, StopIcon, TrashIcon, PlusIcon, InformationCircleIcon, CommandLineIcon, DocumentTextIcon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, CpuChipIcon, PlayIcon, StopIcon, TrashIcon, PlusIcon, InformationCircleIcon, CommandLineIcon, DocumentTextIcon, KeyIcon } from "@heroicons/react/24/outline";
 import { api, API_URL, getAccessToken } from "@/lib/api-client";
-import { SectionHeader } from "@/components/settings/field";
+import { SectionHeader, SectionPanel, Field, TextInput } from "@/components/settings/field";
 import { formatDistanceToNow } from "date-fns";
 import { SandboxSection } from "@/components/agents/configure/sandbox-section";
-import { CredsSection } from "@/components/agents/configure/creds-section";
+import { CredsSection, AddCredentialForm, type VaultGrant, type VaultConnection } from "@/components/agents/configure/creds-section";
 
 interface McpServer {
   id: string;
@@ -44,7 +44,7 @@ interface RegistryEntry {
 }
 
 const SECTIONS = [
-  { id: "about", label: "About" },
+  { id: "general", label: "General" },
   { id: "environment", label: "Environment" },
   { id: "sandbox", label: "Sandbox" },
   { id: "creds", label: "Credentials" },
@@ -78,11 +78,23 @@ function McpServerPage() {
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const sectionParam = searchParams.get("section");
-  const initialSection = SECTIONS.some((s) => s.id === sectionParam) ? (sectionParam as SectionId) : "about";
-  const [activeSection, setActiveSection] = useState<SectionId>(initialSection);
+  const initialSection = SECTIONS.some((s) => s.id === sectionParam) ? (sectionParam as SectionId) : "general";
+  const [activeSection, setActiveSectionState] = useState<SectionId>(initialSection);
+
+  const setActiveSection = useCallback((section: SectionId) => {
+    setActiveSectionState(section);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("section", section);
+    router.replace(`/mcp?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
 
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
   const [allEnvDefs, setAllEnvDefs] = useState<EnvVarDef[]>([]);
+  const [grants, setGrants] = useState<Array<{ query: string; connection_id: string; connection_name: string; vault_item_id: string; item_name: string }>>([]);
+  const [vaultGrants, setVaultGrants] = useState<VaultGrant[]>([]);
+  const [vaultConnections, setVaultConnections] = useState<Map<string, VaultConnection>>(new Map());
+  const [credDialogEnvVar, setCredDialogEnvVar] = useState<string | null>(null);
+  const [credDialogExisting, setCredDialogExisting] = useState<{ connection_id: string; vault_item_id: string } | undefined>(undefined);
   const [sandboxConfig, setSandboxConfig] = useState<{
     network_access: boolean;
     allowed_network_destinations: string[];
@@ -111,6 +123,40 @@ function McpServerPage() {
           }
         } catch { /* ignore */ }
       }
+
+      try {
+        const [allGrants, allConns] = await Promise.all([
+          api.get<VaultGrant[]>("/api/vaults/grants"),
+          api.get<VaultConnection[]>("/api/vaults"),
+        ]);
+        const connMap = new Map(allConns.map((c) => [c.id, c]));
+        setVaultConnections(connMap);
+        const serverVaultGrants = allGrants.filter(
+          (g) => g.principal?.kind === "mcp_server" && g.principal?.id === serverId
+        );
+        setVaultGrants(serverVaultGrants);
+        const matched = allGrants.filter(
+          (g) => g.principal?.kind === "mcp_server" && g.principal?.id === serverId
+        );
+        const resolved = await Promise.all(
+          matched.map(async (g) => {
+            let itemName = g.query;
+            try {
+              const items = await api.get<Array<{ id: string; name: string }>>(`/api/vaults/${g.connection_id}/items?q=${encodeURIComponent(g.query)}`);
+              const found = items.find((i) => i.id === g.vault_item_id);
+              if (found) itemName = found.name;
+            } catch { /* fallback to query */ }
+            return {
+              query: g.query,
+              connection_id: g.connection_id,
+              connection_name: connMap.get(g.connection_id)?.name ?? "Unknown",
+              vault_item_id: g.vault_item_id,
+              item_name: itemName,
+            };
+          })
+        );
+        setGrants(resolved);
+      } catch { /* ignore */ }
     } catch {
       setError("Failed to load server");
     } finally {
@@ -277,7 +323,7 @@ function McpServerPage() {
           className="flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition mb-4"
         >
           <ArrowLeftIcon className="h-4 w-4" />
-          Back to MCP Servers
+          Back to MCP
         </button>
 
         <div className="flex items-center gap-2 mb-4">
@@ -318,7 +364,7 @@ function McpServerPage() {
             <div className="rounded-lg bg-error-bg p-3 text-sm text-error-text">{error}</div>
           )}
 
-          {activeSection === "about" && (
+          {activeSection === "general" && (
             <div className="space-y-6">
               <SectionHeader title="About" description="Server information and controls" icon={InformationCircleIcon} />
               <div className="rounded-xl border border-border bg-surface-secondary divide-y divide-border overflow-hidden">
@@ -401,47 +447,104 @@ function McpServerPage() {
               <div className="space-y-4">
                 <SectionHeader title="Environment" description="Environment variables for this server" icon={CommandLineIcon} />
 
-                {/* Registry-declared vars */}
-                {allEnvDefs.length > 0 && (
-                  <div className="space-y-3">
-                    {allEnvDefs.map((ev) => (
-                      <div key={ev.name}>
-                        <label className="flex items-center gap-1.5 text-xs font-medium text-text-primary mb-1">
-                          {ev.name}
-                          {ev.is_required && <span className="text-red-400">*</span>}
-                          {ev.is_secret && (
-                            <span className="rounded-full bg-yellow-500/15 text-yellow-500 px-1.5 py-0.5 text-[10px] font-medium">secret</span>
-                          )}
-                        </label>
-                        {ev.description && (
-                          <p className="text-xs text-text-tertiary mb-1">{ev.description}</p>
-                        )}
-                        {ev.is_secret ? (
-                          <p className="text-xs text-text-tertiary italic">
-                            Configure this secret in the <button type="button" onClick={() => setActiveSection("creds")} className="text-accent hover:underline">Credentials</button> tab
-                          </p>
-                        ) : (
-                          <input
-                            type="text"
-                            value={envValues[ev.name] ?? ""}
-                            onChange={(e) => {
-                              setEnvValues((prev) => ({ ...prev, [ev.name]: e.target.value }));
-                              setDirty(true);
-                            }}
-                            placeholder={ev.is_required ? "Required" : "Optional"}
-                            className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
-                          />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {allEnvDefs.length > 0 && (() => {
+                  // Group env vars by shared prefix (up to last _ before they diverge)
+                  const findCommonPrefix = (a: string, b: string): string => {
+                    const ap = a.split("_"), bp = b.split("_");
+                    const parts: string[] = [];
+                    for (let i = 0; i < Math.min(ap.length - 1, bp.length - 1); i++) {
+                      if (ap[i] === bp[i]) parts.push(ap[i]);
+                      else break;
+                    }
+                    return parts.join("_");
+                  };
 
-                {/* Custom env vars */}
-                {customKeys.length > 0 && (
-                  <div className="space-y-2">
-                    {customKeys.map((key) => (
-                      <div key={key} className="flex items-center gap-2">
+                  const groups = new Map<string, EnvVarDef[]>();
+                  const assigned = new Set<string>();
+
+                  for (let i = 0; i < allEnvDefs.length; i++) {
+                    if (assigned.has(allEnvDefs[i].name)) continue;
+                    let bestPrefix = "";
+                    const members = [allEnvDefs[i]];
+                    for (let j = i + 1; j < allEnvDefs.length; j++) {
+                      if (assigned.has(allEnvDefs[j].name)) continue;
+                      const cp = findCommonPrefix(allEnvDefs[i].name, allEnvDefs[j].name);
+                      if (cp.length > bestPrefix.length) bestPrefix = cp;
+                    }
+                    if (bestPrefix) {
+                      for (let j = i + 1; j < allEnvDefs.length; j++) {
+                        if (!assigned.has(allEnvDefs[j].name) && allEnvDefs[j].name.startsWith(bestPrefix + "_")) {
+                          members.push(allEnvDefs[j]);
+                        }
+                      }
+                    }
+                    if (members.length > 1) {
+                      for (const m of members) assigned.add(m.name);
+                      groups.set(bestPrefix, members);
+                    }
+                  }
+
+                  const ungrouped = allEnvDefs.filter((ev) => !assigned.has(ev.name));
+                  if (ungrouped.length > 0) groups.set("__ungrouped__", ungrouped);
+
+                  const renderVar = (ev: EnvVarDef) => {
+                    const grant = grants.find((g) => g.query === ev.name || ev.name.startsWith(g.query + "_"));
+                    return (
+                    <div key={ev.name} className="space-y-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-sm font-medium text-text-secondary">
+                          {ev.description || ev.name}
+                        </span>
+                        <span className="rounded-full bg-surface-tertiary px-2 py-0.5 text-[11px] font-mono text-text-tertiary">{ev.name}</span>
+                        {ev.is_required && <span className="text-[11px] text-red-400">required</span>}
+                      </div>
+                      {ev.is_secret ? (
+                        <div className="flex items-center gap-2">
+                          {grant ? (
+                            <span className="text-sm text-text-primary">
+                              {grant.item_name} <span className="text-text-tertiary">({grant.connection_name})</span>
+                            </span>
+                          ) : (
+                            <span className="text-sm text-text-tertiary">Not set</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCredDialogEnvVar(ev.name);
+                              setCredDialogExisting(grant ? { connection_id: grant.connection_id, vault_item_id: grant.vault_item_id } : undefined);
+                            }}
+                            className="text-xs text-accent hover:underline"
+                          >
+                            {grant ? "Change" : "Configure"}
+                          </button>
+                        </div>
+                      ) : (
+                        <input
+                          type="text"
+                          value={envValues[ev.name] ?? ""}
+                          onChange={(e) => {
+                            setEnvValues((prev) => ({ ...prev, [ev.name]: e.target.value }));
+                            setDirty(true);
+                          }}
+                          placeholder={ev.is_required ? "Required" : "Optional"}
+                          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                        />
+                      )}
+                    </div>
+                  );
+                  };
+
+                  return Array.from(groups.entries()).map(([key, items]) => (
+                    <SectionPanel key={key} title={key === "__ungrouped__" ? undefined : key.split("_").map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}>
+                      {items.map(renderVar)}
+                    </SectionPanel>
+                  ));
+                })()}
+
+                <SectionPanel title="Custom Variables">
+                  {customKeys.map((key) => (
+                    <div key={key} className="flex items-start gap-2">
+                      <div className="flex-1 space-y-2">
                         <input
                           type="text"
                           defaultValue={key}
@@ -457,8 +560,8 @@ function McpServerPage() {
                               setDirty(true);
                             }
                           }}
-                          placeholder="KEY"
-                          className="w-1/3 rounded border border-border bg-background px-2.5 py-1.5 text-sm text-text-primary font-mono placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                          placeholder="VARIABLE_NAME"
+                          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-text-primary font-mono placeholder:text-text-tertiary focus:border-accent focus:outline-none"
                         />
                         <input
                           type="text"
@@ -468,34 +571,32 @@ function McpServerPage() {
                             setDirty(true);
                           }}
                           placeholder="Value"
-                          className="flex-1 rounded border border-border bg-background px-2.5 py-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
+                          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
                         />
-                        <button
-                          onClick={() => {
-                            setEnvValues((prev) => { const next = { ...prev }; delete next[key]; return next; });
-                            setDirty(true);
-                          }}
-                          className="p-1 text-text-tertiary hover:text-danger transition"
-                        >
-                          <TrashIcon className="h-4 w-4" />
-                        </button>
                       </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Add new env var */}
-                <button
-                  onClick={() => {
-                    const key = `NEW_VAR_${Object.keys(envValues).length + 1}`;
-                    setEnvValues((prev) => ({ ...prev, [key]: "" }));
-                    setDirty(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-accent-hover transition"
-                >
-                  <PlusIcon className="h-3.5 w-3.5" />
-                  Add environment variable
-                </button>
+                      <button
+                        onClick={() => {
+                          setEnvValues((prev) => { const next = { ...prev }; delete next[key]; return next; });
+                          setDirty(true);
+                        }}
+                        className="mt-2 p-1.5 text-text-tertiary hover:text-danger transition rounded-lg hover:bg-surface-tertiary"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => {
+                      const key = `NEW_VAR_${Object.keys(envValues).length + 1}`;
+                      setEnvValues((prev) => ({ ...prev, [key]: "" }));
+                      setDirty(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-accent-hover transition"
+                  >
+                    <PlusIcon className="h-3.5 w-3.5" />
+                    Add variable
+                  </button>
+                </SectionPanel>
               </div>
             );
           })()}
@@ -553,7 +654,7 @@ function McpServerPage() {
           )}
 
           {/* Save bar */}
-          {activeSection !== "creds" && activeSection !== "about" && activeSection !== "logs" && (
+          {activeSection !== "creds" && activeSection !== "general" && activeSection !== "logs" && (
             <div className="pt-4 border-t border-border flex items-center justify-end gap-2">
               <button
                 onClick={() => { setDirty(false); reload(); }}
@@ -573,6 +674,27 @@ function McpServerPage() {
           )}
         </div>
       </div>
+
+      {credDialogEnvVar && serverId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setCredDialogEnvVar(null)} />
+          <div className="relative w-full max-w-lg rounded-xl border border-border bg-surface-secondary p-5 shadow-xl mx-4 space-y-3">
+            <AddCredentialForm
+              connections={vaultConnections}
+              principalKind="mcp_server"
+              principalId={serverId}
+              existingGrants={vaultGrants}
+              targetEnvVar={credDialogEnvVar}
+              initialSelection={credDialogExisting}
+              onClose={() => setCredDialogEnvVar(null)}
+              onCreated={() => {
+                setCredDialogEnvVar(null);
+                reload();
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
