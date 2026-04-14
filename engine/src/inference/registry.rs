@@ -145,6 +145,15 @@ fn init_provider(
     counter: &InferenceCounter,
 ) -> Result<Arc<dyn ModelProvider>, InferenceError> {
     match name {
+        "openai" if entry.base_url.is_some() => {
+            let key = require_api_key(name, entry)?;
+            let client: openai::CompletionsClient = openai::CompletionsClient::builder()
+                .api_key(&key)
+                .base_url(entry.base_url.as_ref().unwrap())
+                .build()
+                .map_err(|e| InferenceError::ConfigError(format!("{name}: {e}")))?;
+            Ok(Arc::new(RigProvider::new(client, counter.clone())) as Arc<dyn ModelProvider>)
+        }
         "openai" => init_api_key_provider!(name, entry, openai, counter),
         "anthropic" => init_builder_provider!(name, entry, anthropic, counter),
         "ollama" => {
