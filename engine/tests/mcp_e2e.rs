@@ -51,6 +51,8 @@ fn make_server(id: &str, binary: &str, workspace: &str) -> McpServer {
         command: binary.to_string(),
         args: vec![],
         env: BTreeMap::new(),
+        transports: vec![],
+        active_transport: "stdio".into(),
         status: McpServerStatus::Installed,
         tool_cache: vec![],
         workspace_dir: workspace.to_string(),
@@ -71,6 +73,8 @@ fn test_manager(tmp: &std::path::Path) -> Arc<McpManager> {
     Arc::new(McpManager::new(
         sandbox,
         tmp.join("workspaces").to_string_lossy().into_owned(),
+        4100,
+        4200,
     ))
 }
 
@@ -152,9 +156,11 @@ async fn health_check_detects_killed_process() {
     // Kill the child process externally (simulating a crash)
     {
         let mut conns = manager.connections_mut().await;
-        if let Some(conn) = conns.get_mut("s2") {
-            conn.child.kill().await.expect("kill should succeed");
-            let _ = conn.child.wait().await;
+        if let Some(conn) = conns.get_mut("s2")
+            && let Some(ref mut child) = conn.child
+        {
+            child.kill().await.expect("kill should succeed");
+            let _ = child.wait().await;
         }
     }
 

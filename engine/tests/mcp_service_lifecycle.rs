@@ -120,7 +120,7 @@ async fn build_test_harness(
             80.0, 80.0, 90.0, 90.0,
         )),
     ));
-    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces_path));
+    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces_path, 4100, 4200));
     let mcp_repo: Arc<dyn McpServerRepository> =
         Arc::new(SurrealRepo::<McpServer>::new(db.clone()));
     let registry: Arc<dyn McpRegistryClient> = Arc::new(FakeRegistry {
@@ -389,6 +389,7 @@ async fn update_extra_env_replaces_value() {
         ),
         extra_read_paths: None,
         extra_write_paths: None,
+        active_transport: None,
     };
     let result = service.update("user1", &persisted.id, update).await.unwrap();
     assert_eq!(result.server.env.get("LOG_LEVEL").map(String::as_str), Some("debug"));

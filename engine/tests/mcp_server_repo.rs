@@ -34,6 +34,8 @@ fn make_server(id: &str, user_id: &str, slug: &str, status: McpServerStatus) -> 
         command: "npx".to_string(),
         args: vec!["-y".to_string(), "@example/mcp-server".to_string()],
         env: BTreeMap::new(),
+        transports: vec![],
+        active_transport: "stdio".into(),
         status,
         tool_cache: vec![],
         workspace_dir: format!("data/mcp/{id}"),

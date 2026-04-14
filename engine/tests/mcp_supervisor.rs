@@ -39,7 +39,7 @@ async fn build_mcp_supervisor() -> (
             ),
         ),
     ));
-    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces));
+    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces, 4100, 4200));
     let mcp_repo: Arc<dyn McpServerRepository> =
         Arc::new(SurrealRepo::<McpServer>::new(db.clone()));
     let vault = VaultService::new(
@@ -88,6 +88,8 @@ fn make_server(id: &str, user_id: &str, status: McpServerStatus) -> McpServer {
         command: "echo".into(),
         args: vec![],
         env: BTreeMap::new(),
+        transports: vec![],
+        active_transport: "stdio".into(),
         status,
         tool_cache: vec![],
         workspace_dir: "/tmp/test".into(),
