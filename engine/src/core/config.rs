@@ -747,6 +747,12 @@ pub struct McpConfig {
     pub health_check_interval_secs: u64,
     #[schemars(description = "Maximum process restart attempts before marking an MCP server as failed.")]
     pub max_restart_attempts: u32,
+    #[schemars(description = "Default transport for new MCP servers: 'stdio' or 'http'.")]
+    pub default_transport: String,
+    #[schemars(description = "Start of the port range for local HTTP MCP servers.")]
+    pub port_range_start: u16,
+    #[schemars(description = "End of the port range for local HTTP MCP servers (exclusive).")]
+    pub port_range_end: u16,
 }
 
 impl Default for McpConfig {
@@ -759,6 +765,9 @@ impl Default for McpConfig {
             startup_timeout_secs: 30,
             health_check_interval_secs: 10,
             max_restart_attempts: 3,
+            default_transport: "stdio".into(),
+            port_range_start: 4100,
+            port_range_end: 4200,
         }
     }
 }

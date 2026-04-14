@@ -71,6 +71,41 @@ pub struct CachedMcpTool {
     pub input_schema: serde_json::Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+#[surreal(crate = "surrealdb::types")]
+pub enum TransportConfig {
+    Stdio {
+        args: Vec<String>,
+        #[serde(default)]
+        env: BTreeMap<String, String>,
+    },
+    Http {
+        args: Vec<String>,
+        #[serde(default)]
+        env: BTreeMap<String, String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        port_env_var: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+    },
+}
+
+impl TransportConfig {
+    pub fn args(&self) -> &[String] {
+        match self {
+            Self::Stdio { args, .. } | Self::Http { args, .. } => args,
+        }
+    }
+
+    pub fn env(&self) -> &BTreeMap<String, String> {
+        match self {
+            Self::Stdio { env, .. } | Self::Http { env, .. } => env,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]
 #[entity(table = "mcp_server")]
@@ -89,10 +124,12 @@ pub struct McpServer {
     pub package: McpPackage,
     pub command: String,
     pub args: Vec<String>,
-    /// Values prefixed with `$credential:` are resolved from the vault at start time
-    /// and are never persisted in resolved form.
+    /// Per-transport invocation configs (args, env, port, path).
+    #[serde(default)]
+    pub transports: Vec<TransportConfig>,
+    /// Which transport the user has selected: "stdio", "streamable-http", "sse".
+    pub active_transport: String,
     pub env: BTreeMap<String, String>,
-
     pub status: McpServerStatus,
     pub tool_cache: Vec<CachedMcpTool>,
     pub workspace_dir: String,
@@ -145,6 +182,7 @@ pub struct McpServerUpdate {
     pub extra_read_paths: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_write_paths: Option<Vec<String>>,
+    pub active_transport: Option<String>,
 }
 
 /// Returns `"_"` when the input would otherwise produce an empty slug.

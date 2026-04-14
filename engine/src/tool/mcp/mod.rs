@@ -12,7 +12,7 @@ pub use client::{McpClient, McpClientHandler, default_client_info};
 pub use manager::{McpConnection, McpManager};
 pub use models::{
     CachedMcpTool, McpPackage, McpRuntime, McpServer, McpServerInstall, McpServerStatus,
-    McpServerInfo, sanitize_slug,
+    McpServerInfo, TransportConfig, sanitize_slug,
 };
 pub use metadata::{
     Enrichment, PrebuiltMetadata, RegistryEnvVar, RegistryPackage, RegistryServerEntry,
