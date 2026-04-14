@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::core::error::AppError;
 use crate::tool::ToolDefinition;
 use crate::tool::sandbox::{Sandbox, SandboxManager};
 
 use super::client::{McpClient, default_client_info};
-use super::models::{McpServer, McpServerStatus};
+use super::models::{McpServer, McpServerStatus, TransportConfig};
 
 pub struct McpConnection {
     pub server_id: String,
@@ -16,7 +16,8 @@ pub struct McpConnection {
     pub user_id: String,
     pub client: McpClient,
     pub tools: Vec<ToolDefinition>,
-    pub child: tokio::process::Child,
+    pub child: Option<tokio::process::Child>,
+    pub port: Option<u16>,
     pub restart_count: u32,
     pub log_path: Option<std::path::PathBuf>,
 }
@@ -25,18 +26,39 @@ pub struct McpManager {
     connections: Arc<RwLock<HashMap<String, McpConnection>>>,
     sandbox_manager: Arc<SandboxManager>,
     workspaces_path: String,
+    allocated_ports: Arc<Mutex<HashSet<u16>>>,
+    port_range: (u16, u16),
 }
 
 impl McpManager {
     pub fn new(
         sandbox_manager: Arc<SandboxManager>,
         workspaces_path: String,
+        port_range_start: u16,
+        port_range_end: u16,
     ) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             sandbox_manager,
             workspaces_path,
+            allocated_ports: Arc::new(Mutex::new(HashSet::new())),
+            port_range: (port_range_start, port_range_end),
         }
+    }
+
+    async fn allocate_port(&self) -> Result<u16, AppError> {
+        let mut ports = self.allocated_ports.lock().await;
+        for port in self.port_range.0..self.port_range.1 {
+            if !ports.contains(&port) {
+                ports.insert(port);
+                return Ok(port);
+            }
+        }
+        Err(AppError::Tool("No available ports for MCP HTTP server".into()))
+    }
+
+    async fn release_port(&self, port: u16) {
+        self.allocated_ports.lock().await.remove(&port);
     }
 
     pub fn workspaces_path(&self) -> &str {
@@ -77,19 +99,51 @@ impl McpManager {
             .without_node()
     }
 
-    /// Spawn the server inside its run sandbox, perform the MCP `initialize` handshake
-    /// over the child's piped stdio, build namespaced `ToolDefinition`s from the
-    /// server's `tools/list`, and register the live connection keyed by `server.id`.
     pub async fn start(
         &self,
         server: &McpServer,
         resolved_env: BTreeMap<String, String>,
     ) -> Result<Vec<ToolDefinition>, AppError> {
-        let env_pairs: Vec<(String, String)> = resolved_env.into_iter().collect();
+        let active = server.active_transport.as_str();
+        tracing::info!(
+            server_id = %server.id,
+            active_transport = %active,
+            transport_count = server.transports.len(),
+            "starting MCP server"
+        );
+        let config = server.transports.iter().find(|t| match t {
+            TransportConfig::Stdio { .. } => active == "stdio",
+            TransportConfig::Http { .. } => active == "streamable-http" || active == "sse",
+        });
+
+        match config {
+            Some(TransportConfig::Http { url, port_env_var, endpoint_path, args, env }) => {
+                if let Some(url) = url.as_ref().filter(|u| !u.is_empty()) {
+                    self.start_remote_http(server, url.clone()).await
+                } else {
+                    self.start_local_http(server, resolved_env, args, env, port_env_var.as_deref(), endpoint_path.as_deref()).await
+                }
+            }
+            other => self.start_stdio(server, resolved_env, other).await,
+        }
+    }
+
+    async fn start_stdio(
+        &self,
+        server: &McpServer,
+        resolved_env: BTreeMap<String, String>,
+        config: Option<&TransportConfig>,
+    ) -> Result<Vec<ToolDefinition>, AppError> {
+        let mut env_pairs: Vec<(String, String)> = resolved_env.into_iter().collect();
+        if let Some(TransportConfig::Stdio { env, .. }) = config {
+            env_pairs.extend(env.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
         let sandbox = self.build_run_sandbox(server, env_pairs);
         sandbox.setup()?;
 
-        let args_owned: Vec<String> = server.args.clone();
+        let args_owned: Vec<String> = config
+            .and_then(|c| if c.args().is_empty() { None } else { Some(c.args().to_vec()) })
+            .unwrap_or_else(|| server.args.clone());
         let args_refs: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
 
         let log_dir = std::path::Path::new(&server.workspace_dir).join("logs");
@@ -121,7 +175,95 @@ impl McpManager {
             .ok_or_else(|| AppError::Tool("MCP server child stdout missing".into()))?;
 
         let client = McpClient::connect((stdout, stdin), default_client_info()).await?;
+        self.register_connection(server, client, Some(child), None, None).await
+    }
 
+    async fn start_local_http(
+        &self,
+        server: &McpServer,
+        resolved_env: BTreeMap<String, String>,
+        config_args: &[String],
+        config_env: &BTreeMap<String, String>,
+        port_env_var: Option<&str>,
+        endpoint_path: Option<&str>,
+    ) -> Result<Vec<ToolDefinition>, AppError> {
+        let port = self.allocate_port().await?;
+        let port_var = port_env_var.unwrap_or("PORT");
+        let mut env_pairs: Vec<(String, String)> = resolved_env.into_iter().collect();
+        env_pairs.push((port_var.to_string(), port.to_string()));
+        env_pairs.extend(config_env.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+        let sandbox = self.build_run_sandbox(server, env_pairs)
+            .with_bind_ports(vec![port]);
+        sandbox.setup()?;
+
+        let args_owned: Vec<String> = if config_args.is_empty() { server.args.clone() } else { config_args.to_vec() };
+        tracing::info!(
+            command = %server.command,
+            args = ?args_owned,
+            port = port,
+            port_var = %port_var,
+            endpoint_path = ?endpoint_path,
+            "start_local_http spawning"
+        );
+        let args_refs: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+
+        let log_dir = std::path::Path::new(&server.workspace_dir).join("logs");
+        std::fs::create_dir_all(&log_dir).ok();
+        let log_path = log_dir.join("server.log");
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|e| AppError::Tool(format!("opening {}: {e}", log_path.display())))?;
+        let log_file_clone = log_file.try_clone()
+            .map_err(|e| AppError::Tool(format!("cloning log fd: {e}")))?;
+
+        let child = sandbox.spawn(
+            &server.command,
+            &args_refs,
+            Some(&server.workspace_dir),
+            Vec::new(),
+            None,
+            std::process::Stdio::from(log_file),
+            std::process::Stdio::from(log_file_clone),
+        )?;
+
+        let path = endpoint_path.unwrap_or("/mcp");
+        let url = format!("http://127.0.0.1:{port}{path}");
+        if let Err(e) = self.wait_for_ready(port, path, std::time::Duration::from_secs(30)).await {
+            self.release_port(port).await;
+            return Err(e);
+        }
+
+        let transport = rmcp::transport::streamable_http_client::StreamableHttpClientTransport::from_uri(url.as_str());
+        let client = McpClient::connect(transport, default_client_info()).await
+            .inspect_err(|_| {
+                let allocated = self.allocated_ports.clone();
+                tokio::spawn(async move { allocated.lock().await.remove(&port); });
+            })?;
+
+        self.register_connection(server, client, Some(child), Some(port), Some(log_path)).await
+    }
+
+    async fn start_remote_http(
+        &self,
+        server: &McpServer,
+        url: String,
+    ) -> Result<Vec<ToolDefinition>, AppError> {
+        let transport = rmcp::transport::streamable_http_client::StreamableHttpClientTransport::from_uri(url.as_str());
+        let client = McpClient::connect(transport, default_client_info()).await?;
+        self.register_connection(server, client, None, None, None).await
+    }
+
+    async fn register_connection(
+        &self,
+        server: &McpServer,
+        client: McpClient,
+        child: Option<tokio::process::Child>,
+        port: Option<u16>,
+        log_path_override: Option<std::path::PathBuf>,
+    ) -> Result<Vec<ToolDefinition>, AppError> {
         let cached = client.cached_tools().await;
         let tools: Vec<ToolDefinition> = cached
             .into_iter()
@@ -133,6 +275,10 @@ impl McpManager {
             })
             .collect();
 
+        let log_path = log_path_override.unwrap_or_else(|| {
+            std::path::PathBuf::from(&server.workspace_dir).join("logs").join("server.log")
+        });
+
         let connection = McpConnection {
             server_id: server.id.clone(),
             slug: server.slug.clone(),
@@ -140,6 +286,7 @@ impl McpManager {
             client,
             tools: tools.clone(),
             child,
+            port,
             restart_count: 0,
             log_path: Some(log_path),
         };
@@ -152,6 +299,24 @@ impl McpManager {
         Ok(tools)
     }
 
+    async fn wait_for_ready(&self, port: u16, path: &str, timeout: std::time::Duration) -> Result<(), AppError> {
+        let url = format!("http://127.0.0.1:{port}{path}");
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .map_err(|e| AppError::Tool(format!("http client: {e}")))?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if tokio::time::Instant::now() > deadline {
+                return Err(AppError::Tool("MCP HTTP server did not become ready in time".into()));
+            }
+            if client.get(&url).send().await.is_ok() {
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+
     /// Gracefully shut down a running connection. Drops the `McpClient` which tears
     /// down the transport (the child sees EOF on stdin) and then explicitly kills the
     /// child if it hasn't exited on its own.
@@ -160,7 +325,12 @@ impl McpManager {
             return Ok(());
         };
         connection.client.shutdown().await?;
-        let _ = connection.child.kill().await;
+        if let Some(ref mut child) = connection.child {
+            let _ = child.kill().await;
+        }
+        if let Some(port) = connection.port {
+            self.release_port(port).await;
+        }
         Ok(())
     }
 
@@ -217,10 +387,12 @@ impl McpManager {
         let mut dead = Vec::new();
         let mut connections = self.connections.write().await;
         for (id, connection) in connections.iter_mut() {
-            match connection.child.try_wait() {
-                Ok(Some(_)) => dead.push(id.clone()),
-                Ok(None) => {}
-                Err(_) => dead.push(id.clone()),
+            if let Some(ref mut child) = connection.child {
+                match child.try_wait() {
+                    Ok(Some(_)) => dead.push(id.clone()),
+                    Ok(None) => {}
+                    Err(_) => dead.push(id.clone()),
+                }
             }
         }
         dead

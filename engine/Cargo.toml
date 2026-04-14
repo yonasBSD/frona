@@ -61,7 +61,7 @@ tempfile = "3"
 ignore = "0.4.25"
 agent-skills = "0.2"
 notify = "8"
-rmcp = { version = "1", features = ["client", "transport-child-process"] }
+rmcp = { version = "1", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 xz2 = "0.1"
 inventory = "0.3"
 

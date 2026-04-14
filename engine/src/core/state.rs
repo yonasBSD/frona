@@ -266,6 +266,8 @@ impl AppState {
         let mcp_manager = Arc::new(crate::tool::mcp::McpManager::new(
             sandbox_manager.clone(),
             mcp_workspaces,
+            config.mcp.port_range_start,
+            config.mcp.port_range_end,
         ));
         let mcp_repo: Arc<dyn crate::tool::mcp::repository::McpServerRepository> =
             Arc::new(SurrealRepo::<crate::tool::mcp::McpServer>::new(db.clone()));
