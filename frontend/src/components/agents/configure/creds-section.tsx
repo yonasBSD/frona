@@ -199,8 +199,13 @@ export function AddCredentialForm({
     try {
       const mode = targetEnvVar ? "single" : bindingMode;
       const query = targetEnvVar ?? envVar.trim();
+      const toVaultField = (f: string) => {
+        if (f === "PASSWORD") return "Password";
+        if (f === "USERNAME") return "Username";
+        return { Custom: { name: f } };
+      };
       const target = mode === "single"
-        ? { Single: { env_var: query, field: selectedField || "Password" } }
+        ? { Single: { env_var: query, field: toVaultField(selectedField || "PASSWORD") } }
         : { Prefix: { env_var_prefix: mode === "prefix" ? envVar.trim() : "" } };
       const grant = await api.post<VaultGrant>("/api/vaults/grants", {
         principal: { kind: principalKind, id: principalId },

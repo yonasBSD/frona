@@ -20,6 +20,11 @@ interface McpServer {
   command: string;
   args: string[];
   tool_count: number;
+  active_transport: string;
+  transports: Array<
+    { Stdio: { args: string[]; env: Record<string, string> } } |
+    { Http: { args: string[]; env: Record<string, string>; port_env_var: string | null; endpoint_path: string | null; url: string | null } }
+  >;
   env: Record<string, string>;
   extra_read_paths: string[];
   extra_write_paths: string[];
@@ -35,12 +40,14 @@ interface EnvVarDef {
 }
 
 interface RegistryPackage {
+  transport: { type: string };
   environment_variables: EnvVarDef[];
 }
 
 interface RegistryEntry {
   name: string;
   packages: RegistryPackage[];
+  remotes?: Array<{ type: string; url: string }>;
 }
 
 const SECTIONS = [
@@ -89,7 +96,7 @@ function McpServerPage() {
   }, [router, searchParams]);
 
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
-  const [allEnvDefs, setAllEnvDefs] = useState<EnvVarDef[]>([]);
+  const [envDefsByTransport, setEnvDefsByTransport] = useState<Record<string, EnvVarDef[]>>({});
   const [grants, setGrants] = useState<Array<{ query: string; connection_id: string; connection_name: string; vault_item_id: string; item_name: string }>>([]);
   const [vaultGrants, setVaultGrants] = useState<VaultGrant[]>([]);
   const [vaultConnections, setVaultConnections] = useState<Map<string, VaultConnection>>(new Map());
@@ -118,9 +125,12 @@ function McpServerPage() {
           const entry = await api.get<RegistryEntry>(
             `/api/mcp/registry/${encodeURIComponent(s.registry_id)}`
           );
-          if (entry?.packages?.[0]?.environment_variables) {
-            setAllEnvDefs(entry.packages[0].environment_variables);
+          const byTransport: Record<string, EnvVarDef[]> = {};
+          for (const pkg of entry?.packages ?? []) {
+            const t = pkg.transport?.type ?? "stdio";
+            byTransport[t] = pkg.environment_variables ?? [];
           }
+          setEnvDefsByTransport(byTransport);
         } catch { /* ignore */ }
       }
 
@@ -256,10 +266,10 @@ function McpServerPage() {
     setError(null);
     try {
       await api.post(`/api/mcp/servers/${serverId}/start`, {});
-      await reload();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Start failed");
     } finally {
+      await reload();
       setActionLoading(false);
     }
   };
@@ -319,7 +329,7 @@ function McpServerPage() {
         style={{ width: 289 }}
       >
         <button
-          onClick={() => router.push("/settings?tab=mcp")}
+          onClick={() => router.push("/settings#mcp")}
           className="flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition mb-4"
         >
           <ArrowLeftIcon className="h-4 w-4" />
@@ -360,13 +370,21 @@ function McpServerPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto p-8 space-y-6">
-          {error && (
-            <div className="rounded-lg bg-error-bg p-3 text-sm text-error-text">{error}</div>
-          )}
-
           {activeSection === "general" && (
             <div className="space-y-6">
-              <SectionHeader title="About" description="Server information and controls" icon={InformationCircleIcon} />
+              <SectionHeader title="General" description="Server information and controls" icon={InformationCircleIcon} />
+              {error && (
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400 flex items-center justify-between">
+                  <span>{error}</span>
+                  <button
+                    type="button"
+                    onClick={() => { setError(null); setActiveSection("logs"); }}
+                    className="text-xs text-red-300 hover:text-red-200 underline shrink-0 ml-3"
+                  >
+                    View logs
+                  </button>
+                </div>
+              )}
               <div className="rounded-xl border border-border bg-surface-secondary divide-y divide-border overflow-hidden">
                 {server.registry_id && (
                   <div className="px-4 py-3 flex justify-between">
@@ -387,6 +405,28 @@ function McpServerPage() {
                     </a>
                   </div>
                 )}
+                <div className="px-4 py-3 flex justify-between items-center">
+                  <span className="text-sm text-text-tertiary">Transport</span>
+                  {server.transports.length > 1 ? (
+                    <select
+                      value={server.active_transport}
+                      onChange={(e) => {
+                        api.patch(`/api/mcp/servers/${serverId}`, { active_transport: e.target.value })
+                          .then(() => reload())
+                          .catch(() => {});
+                      }}
+                      className="rounded-lg border border-border bg-surface px-2.5 py-1 text-sm text-text-primary"
+                    >
+                      {server.transports.map((t, i) => {
+                        const key = "Stdio" in t ? "stdio" : "streamable-http";
+                        const label = "Stdio" in t ? "STDIO" : "HTTP";
+                        return <option key={i} value={key}>{label}</option>;
+                      })}
+                    </select>
+                  ) : (
+                    <span className="text-sm text-text-primary">{server.active_transport === "stdio" ? "STDIO" : "HTTP"}</span>
+                  )}
+                </div>
                 <div className="px-4 py-3 flex justify-between">
                   <span className="text-sm text-text-tertiary">Command</span>
                   <span className="text-sm text-text-primary font-mono truncate ml-4">{server.command} {server.args.join(" ")}</span>
@@ -441,6 +481,7 @@ function McpServerPage() {
           )}
 
           {activeSection === "environment" && (() => {
+            const allEnvDefs = envDefsByTransport[server.active_transport] ?? envDefsByTransport["stdio"] ?? [];
             const declaredNames = new Set(allEnvDefs.map((e) => e.name));
             const customKeys = Object.keys(envValues).filter((k) => !declaredNames.has(k));
             return (
