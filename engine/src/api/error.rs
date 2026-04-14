@@ -37,7 +37,7 @@ impl IntoResponse for ApiError {
             }
             AppError::Tool(msg) => {
                 tracing::error!("Tool error: {msg}");
-                (StatusCode::INTERNAL_SERVER_ERROR, "Tool execution error".into())
+                (StatusCode::INTERNAL_SERVER_ERROR, msg.clone())
             }
             AppError::Decryption(msg) => {
                 tracing::error!("Decryption error: {msg}");
