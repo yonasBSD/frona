@@ -18,7 +18,7 @@ use super::manager::McpManager;
 use super::metadata::{RegistryPackage, RegistryServerEntry};
 use super::models::{
     CachedMcpTool, CredentialBinding, McpPackage, McpRuntime, McpServer, McpServerInstall,
-    McpServerStatus, McpServerUpdate, sanitize_slug,
+    McpServerStatus, McpServerUpdate, TransportConfig, sanitize_slug,
 };
 use super::registry::McpRegistryClient;
 use super::repository::McpServerRepository;
@@ -191,7 +191,7 @@ impl McpServerService {
         query: &str,
         limit: usize,
     ) -> Result<Vec<RegistryServerEntry>, AppError> {
-        self.registry.search(query, limit).await
+        self.registry.search(query.trim(), limit).await
     }
 
     pub async fn install(
@@ -254,6 +254,28 @@ impl McpServerService {
             command,
             args,
             env: req.extra_env,
+            transports: entry.packages.iter().filter_map(|p| {
+                let pkg_args = build_invocation(p).map(|(_, _, a)| a).ok()?;
+                Some(match p.transport.kind.as_str() {
+                    "streamable-http" | "sse" => TransportConfig::Http {
+                        args: pkg_args,
+                        env: BTreeMap::from([
+                            ("MCP_TRANSPORT_TYPE".into(), "http".into()),
+                        ]),
+                        port_env_var: p.environment_variables.iter()
+                            .find(|v| v.name.ends_with("_PORT") || v.name == "PORT")
+                            .map(|v| v.name.clone()),
+                        endpoint_path: p.transport.url.as_ref()
+                            .and_then(|u| u.rfind('/').map(|i| u[i..].to_string())),
+                        url: None,
+                    },
+                    _ => TransportConfig::Stdio {
+                        args: pkg_args,
+                        env: Default::default(),
+                    },
+                })
+            }).collect(),
+            active_transport: package.transport.kind.clone(),
             status: McpServerStatus::Installed,
             tool_cache: Vec::new(),
             workspace_dir,
@@ -362,6 +384,9 @@ impl McpServerService {
         }
         if let Some(write) = req.extra_write_paths {
             server.extra_write_paths = write;
+        }
+        if let Some(active_transport) = req.active_transport {
+            server.active_transport = active_transport;
         }
         server.updated_at = Utc::now();
         let server = self.repo.update(&server).await?;
