@@ -326,6 +326,7 @@ mod tests {
     fn test_load_embedded_config() {
         let shared_prompts = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
+            .join("..")
             .join("resources")
             .join("prompts");
         let prompts = PromptLoader::new(shared_prompts);

@@ -1,8 +1,8 @@
 target/
 data/
-frontend/node_modules/
-frontend/.next/
-frontend/out/
+web/node_modules/
+web/.next/
+web/out/
 .git/
 .env
 .env.local

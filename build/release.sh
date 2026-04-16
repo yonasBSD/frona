@@ -3,8 +3,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CARGO_TOML="Cargo.toml"
-PKG_JSON="frontend/package.json"
-PKG_LOCK="frontend/package-lock.json"
+PKG_JSON="web/package.json"
+PKG_LOCK="web/package-lock.json"
 IMAGE="ghcr.io/fronalabs/frona"
 
 die() { echo "error: $*" >&2; exit 1; }

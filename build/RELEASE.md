@@ -72,8 +72,8 @@ mise run release stable                   # 0.2.0-RC1 → 0.2.0
 The script updates these files in sync:
 
 - `Cargo.toml` — `version` under `[workspace.package]`
-- `frontend/package.json` — `"version"` field
-- `frontend/package-lock.json` — root `"version"` + `packages[""]` version
+- `web/package.json` — `"version"` field
+- `web/package-lock.json` — root `"version"` + `packages[""]` version
 
 ## Safety Checks
 

@@ -21,11 +21,11 @@ use frona::tool::sandbox::driver::resource_monitor::SystemResourceManager;
 
 fn fake_server_binary() -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/debug/fake-mcp-server");
+        .join("../../target/debug/fake-mcp-server");
     if !path.exists() {
         panic!(
             "fake-mcp-server binary not found at {}. Build it first:\n  \
-             cargo build -p frona --bin fake-mcp-server --features __test-bins",
+             cargo build -p frona-server --bin fake-mcp-server --features __test-bins",
             path.display()
         );
     }

@@ -37,12 +37,12 @@ services:
       - "3001:3001"
       - "3000:3000"
     volumes:
-      - ../engine:/app/engine
+      - ../crates:/app/crates
       - ../Cargo.toml:/app/Cargo.toml
       - ../Cargo.lock:/app/Cargo.lock
       - cargo-cache:/app/target
-      - node-modules:/app/frontend/node_modules
-      - ../frontend:/app/frontend
+      - node-modules:/app/web/node_modules
+      - ../web:/app/web
       - ../resources:/app/resources
       - ../data:/app/data
     environment:

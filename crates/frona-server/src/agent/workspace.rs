@@ -34,6 +34,7 @@ mod tests {
     fn shared_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
+            .join("..")
             .join("resources")
     }
 

@@ -99,6 +99,7 @@ mod tests {
     fn shared_prompts_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
+            .join("..")
             .join("resources")
             .join("prompts")
     }

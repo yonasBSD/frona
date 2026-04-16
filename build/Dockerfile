@@ -4,10 +4,10 @@
 
 # Stage 1: frontend
 FROM node:22-slim AS frontend-builder
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* ./
+WORKDIR /app/web
+COPY web/package.json web/package-lock.json* ./
 RUN npm ci
-COPY frontend/ .
+COPY web/ .
 RUN npm run build
 
 # Stage 2: cargo-chef planner
@@ -19,7 +19,7 @@ RUN --mount=type=bind,source=build/pkgs/builder-rust-cargo.txt,target=/tmp/cargo
   done
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
-COPY engine/ engine/
+COPY crates/ crates/
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 3: backend builder
@@ -37,8 +37,8 @@ WORKDIR /app
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
-COPY engine/ engine/
-RUN cargo build --release -p frona
+COPY crates/ crates/
+RUN cargo build --release -p frona-server
 
 # Stage 4: CLI tools (op, bw, syd)
 FROM debian:bookworm-slim AS cli-tools
@@ -107,9 +107,9 @@ RUN mkdir -p /app /app/target /app/frontend/node_modules /app/data \
     && chown -R frona:frona /app /usr/local/cargo
 USER frona
 WORKDIR /app
-COPY --chown=frona:frona frontend/package.json frontend/package-lock.json* frontend/
-RUN cd frontend && npm install
-CMD ["bash", "-c", "cd frontend && npm install && cd /app && cargo watch --poll -w engine/ -w Cargo.toml -w Cargo.lock --delay 3 -x 'run -p frona' & cd frontend && npm run dev & wait"]
+COPY --chown=frona:frona web/package.json web/package-lock.json* web/
+RUN cd web && npm install
+CMD ["bash", "-c", "cd web && npm install && cd /app && cargo watch --poll -w crates/ -w Cargo.toml -w Cargo.lock --delay 3 -x 'run -p frona-server' & cd web && npm run dev & wait"]
 
 # ============================
 # PROD TARGET (default)
@@ -139,7 +139,7 @@ COPY --from=python-builder /install /usr/local
 # at runtime (syd sandbox blocks writes outside the agent workspace).
 RUN python3 -m compileall -q /usr/local/lib/python3.12
 COPY --chown=frona:frona --from=backend-builder /app/target/release/frona /app/frona
-COPY --chown=frona:frona --from=frontend-builder /app/frontend/out /app/static
+COPY --chown=frona:frona --from=frontend-builder /app/web/out /app/static
 COPY --chown=frona:frona resources /app/share
 
 ENV FRONA_SERVER_STATIC_DIR=/app/static

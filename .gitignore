@@ -8,10 +8,10 @@
 /data/
 
 # Node
-frontend/node_modules/
-frontend/.next/
-frontend/out/
-frontend/tsconfig.tsbuildinfo
+web/node_modules/
+web/.next/
+web/out/
+web/tsconfig.tsbuildinfo
 
 # Environment
 .env

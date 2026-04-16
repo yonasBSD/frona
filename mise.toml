@@ -20,16 +20,16 @@ depends = ["install-frontend", "dev:frontend", "dev:backend"]
 
 [tasks."dev:frontend"]
 description = "Run Next.js dev server"
-dir = "frontend"
+dir = "web"
 run = "npm run dev"
 
 [tasks."dev:backend"]
 description = "Run backend with cargo-watch"
-run = "cargo watch -w engine/ -w Cargo.toml -w Cargo.lock --delay 3 -x 'run -p frona'"
+run = "cargo watch -w crates/ -w Cargo.toml -w Cargo.lock --delay 3 -x 'run -p frona-server'"
 
 [tasks.install-frontend]
 description = "Install frontend dependencies"
-dir = "frontend"
+dir = "web"
 run = "npm install"
 
 [tasks.build]
@@ -38,12 +38,12 @@ depends = ["build:frontend", "build:backend"]
 
 [tasks."build:frontend"]
 description = "Build frontend static export"
-dir = "frontend"
+dir = "web"
 run = "npm ci && npm run build"
 
 [tasks."build:backend"]
 description = "Build backend release binary"
-run = "cargo build --release -p frona"
+run = "cargo build --release -p frona-server"
 
 [tasks.check]
 description = "Cargo check all crates"
@@ -59,7 +59,7 @@ run = "cargo clippy --workspace -- -D warnings"
 
 [tasks."lint:frontend"]
 description = "Run Next.js lint"
-dir = "frontend"
+dir = "web"
 run = "npm run lint"
 
 [tasks.test]
@@ -69,8 +69,8 @@ run = "cargo test --workspace"
 [tasks."test:e2e"]
 description = "Build the fake MCP server and run end-to-end tests"
 run = """
-cargo build -p frona --bin fake-mcp-server --features __test-bins
-cargo test -p frona --test mcp_e2e -- --ignored
+cargo build -p frona-server --bin fake-mcp-server --features __test-bins
+cargo test -p frona-server --test mcp_e2e -- --ignored
 """
 
 [tasks."test:all"]
@@ -113,5 +113,5 @@ run = "build/update-versions.sh"
 description = "Remove build artifacts and generated files"
 run = """
 cargo clean
-rm -rf frontend/.next frontend/node_modules frontend/out
+rm -rf web/.next web/node_modules web/out
 """

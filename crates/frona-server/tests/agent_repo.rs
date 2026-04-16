@@ -141,7 +141,7 @@ async fn test_seed_config_agents_visible_in_find_by_user_id() {
     use frona::core::config::Config;
 
     let db = test_db().await;
-    let shared_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("resources");
+    let shared_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("resources");
     let config = Config {
         storage: frona::core::config::StorageConfig {
             workspaces_path: "/tmp/frona_test_seed_visible".to_string(),
@@ -249,6 +249,7 @@ async fn agent_service_delete_invalidates_cache() {
 async fn agent_service_builtin_agent_ids() {
     let db = test_db().await;
     let shared_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
         .join("..")
         .join("resources")
         .join("agents");

@@ -1848,7 +1848,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "frona"
+name = "frona-derive"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "frona-server"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
@@ -1911,17 +1922,6 @@ dependencies = [
  "vaultrs",
  "xml-rs",
  "xz2",
-]
-
-[[package]]
-name = "frona-derive"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "heck",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]

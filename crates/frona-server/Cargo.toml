@@ -1,8 +1,16 @@
 [package]
-name = "frona"
+name = "frona-server"
 edition.workspace = true
 version.workspace = true
 default-run = "frona"
+
+[lib]
+name = "frona"
+path = "src/lib.rs"
+
+[[bin]]
+name = "frona"
+path = "src/main.rs"
 
 [dependencies]
 serde = { workspace = true }
@@ -31,7 +39,7 @@ tower_governor = "0.8"
 surrealdb = { version = "3.0.0", features = ["kv-rocksdb"] }
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
-frona-derive = { path = "derive" }
+frona-derive = { path = "../frona-derive" }
 rig-core = { workspace = true }
 async-stream = { workspace = true }
 serde-aux = { workspace = true }

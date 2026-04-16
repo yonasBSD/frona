@@ -37,6 +37,7 @@ fn make_memory_service(db: Surreal<Db>) -> MemoryService {
         PromptLoader::new(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
+                .join("..")
                 .join("resources")
                 .join("prompts"),
         ),
