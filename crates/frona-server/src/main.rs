@@ -56,6 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     frona::tool::sandbox::driver::resource_monitor::log_system_resources();
 
+    frona::auth::ephemeral_token::prepare_runtime_dir(&config.auth.runtime_tokens_dir);
+
     let storage = StorageService::new(&config);
 
     let metrics_handle = setup_metrics_recorder();

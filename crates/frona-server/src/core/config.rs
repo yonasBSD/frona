@@ -108,6 +108,10 @@ pub struct AuthConfig {
     pub refresh_token_expiry_secs: u64,
     #[schemars(description = "Presigned URL expiry in seconds.")]
     pub presign_expiry_secs: u64,
+    #[schemars(description = "Ephemeral principal token lifetime in seconds (stateless; injected into sandboxed processes).")]
+    pub ephemeral_token_expiry_secs: u64,
+    #[schemars(description = "Directory for per-invocation ephemeral token files. Created with mode 0700 at startup.")]
+    pub runtime_tokens_dir: PathBuf,
 }
 
 impl Default for AuthConfig {
@@ -117,6 +121,8 @@ impl Default for AuthConfig {
             access_token_expiry_secs: 900,
             refresh_token_expiry_secs: 604800,
             presign_expiry_secs: 86400,
+            ephemeral_token_expiry_secs: 300,
+            runtime_tokens_dir: PathBuf::from("data/runtime/tokens"),
         }
     }
 }
@@ -813,7 +819,8 @@ impl Config {
             .set_default("database.path", format!("{data_dir}/db")).unwrap()
             .set_default("storage.workspaces_path", format!("{data_dir}/workspaces")).unwrap()
             .set_default("storage.files_path", format!("{data_dir}/files")).unwrap()
-            .set_default("mcp.workspaces_path", format!("{data_dir}/mcp")).unwrap();
+            .set_default("mcp.workspaces_path", format!("{data_dir}/mcp")).unwrap()
+            .set_default("auth.runtime_tokens_dir", format!("{data_dir}/runtime/tokens")).unwrap();
 
         if let Some(ref content) = yaml_content {
             let expanded = expand_env_vars(content);
