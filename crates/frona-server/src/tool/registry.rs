@@ -279,6 +279,11 @@ pub async fn build_tool_registry(
                 state.sandbox_manager.clone(),
                 state.skill_service.clone(),
                 state.storage_service.clone(),
+                state.token_service.clone(),
+                state.keypair_service.clone(),
+                state.config.server.public_base_url(),
+                state.config.auth.runtime_tokens_dir.clone(),
+                state.config.auth.ephemeral_token_expiry_secs,
             )),
             &allowed,
         );

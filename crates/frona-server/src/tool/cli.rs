@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -7,7 +8,11 @@ use serde_json::{Map, Value};
 
 use crate::agent::prompt::PromptLoader;
 use crate::agent::skill::service::SkillService;
+use crate::auth::ephemeral_token::EphemeralTokenGuard;
+use crate::auth::token::service::TokenService;
+use crate::core::Principal;
 use crate::core::error::AppError;
+use crate::credential::keypair::service::KeyPairService;
 use crate::storage::StorageService;
 use crate::storage::path::VirtualPath;
 
@@ -38,20 +43,36 @@ pub struct CliTool {
     sandbox_manager: Arc<SandboxManager>,
     skill_service: SkillService,
     storage: StorageService,
+    token_service: TokenService,
+    keypair_service: KeyPairService,
+    api_base_url: String,
+    runtime_tokens_dir: PathBuf,
+    ephemeral_token_expiry_secs: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl CliTool {
     pub fn new(
         config: CliToolConfig,
         sandbox_manager: Arc<SandboxManager>,
         skill_service: SkillService,
         storage: StorageService,
+        token_service: TokenService,
+        keypair_service: KeyPairService,
+        api_base_url: String,
+        runtime_tokens_dir: PathBuf,
+        ephemeral_token_expiry_secs: u64,
     ) -> Self {
         Self {
             config,
             sandbox_manager,
             skill_service,
             storage,
+            token_service,
+            keypair_service,
+            api_base_url,
+            runtime_tokens_dir,
+            ephemeral_token_expiry_secs,
         }
     }
 
@@ -158,14 +179,34 @@ impl AgentTool for CliTool {
             sandbox = sandbox.with_write_paths(ctx.file_paths.clone());
         }
 
+        let token_guard = EphemeralTokenGuard::issue(
+            &self.token_service,
+            &self.keypair_service,
+            &ctx.user,
+            Principal::agent(agent_id),
+            self.ephemeral_token_expiry_secs,
+            &self.runtime_tokens_dir,
+        )
+        .await?;
+
+        sandbox = sandbox.with_read_files(vec![
+            token_guard.path().to_string_lossy().into_owned(),
+        ]);
+
         {
             let mut extra_vars = ctx.vault_env_vars.read().await.clone();
             if let Some(tz) = &ctx.user.timezone {
                 extra_vars.push(("TZ".to_string(), tz.clone()));
             }
-            if !extra_vars.is_empty() {
-                sandbox = sandbox.with_extra_env_vars(extra_vars);
-            }
+            extra_vars.push((
+                "FRONA_TOKEN_FILE".to_string(),
+                token_guard.path().to_string_lossy().into_owned(),
+            ));
+            extra_vars.push((
+                "FRONA_API_URL".to_string(),
+                self.api_base_url.clone(),
+            ));
+            sandbox = sandbox.with_extra_env_vars(extra_vars);
         }
 
         let timeout = defaults.timeout_secs
@@ -306,6 +347,28 @@ pub fn load_cli_tool_configs(prompts: &PromptLoader) -> Vec<CliToolConfig> {
 mod tests {
     use super::*;
 
+    async fn mock_token_services() -> (TokenService, KeyPairService) {
+        use crate::auth::jwt::JwtService;
+        use crate::db::repo::generic::SurrealRepo;
+
+        let db: surrealdb::Surreal<surrealdb::engine::local::Db> =
+            surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(()).await.unwrap();
+        db.use_ns("test").use_db("test").await.unwrap();
+        crate::db::init::setup_schema(&db).await.unwrap();
+
+        let keypair = KeyPairService::new(
+            "test-secret",
+            Arc::new(SurrealRepo::new(db.clone())),
+        );
+        let tokens = TokenService::new(
+            Arc::new(SurrealRepo::new(db.clone())),
+            JwtService::new(),
+            900,
+            604_800,
+        );
+        (tokens, keypair)
+    }
+
     #[test]
     fn test_substitute_placeholders() {
         let mut args = Map::new();
@@ -378,7 +441,18 @@ mod tests {
         let wm = Arc::new(SandboxManager::new("/tmp/test", false, Arc::new(crate::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(60.0, 60.0, 60.0, 60.0))));
         let service = mock_skill_service();
         let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
-        let tool = CliTool::new(config, wm, service, storage);
+        let (tokens, keypair) = mock_token_services().await;
+        let tool = CliTool::new(
+            config,
+            wm,
+            service,
+            storage,
+            tokens,
+            keypair,
+            "http://localhost".into(),
+            std::env::temp_dir().join("frona-cli-def-tokens"),
+            300,
+        );
         let defs = tool.definitions();
 
         assert_eq!(defs.len(), 1);
@@ -463,7 +537,19 @@ mod tests {
         let wm = Arc::new(SandboxManager::new(&tmp, false, Arc::new(crate::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(60.0, 60.0, 60.0, 60.0))));
         let service = mock_skill_service();
         let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
-        let tool = CliTool::new(config, wm, service, storage);
+        let (tokens, keypair) = mock_token_services().await;
+        let runtime_tokens = tmp.join("tokens");
+        let tool = CliTool::new(
+            config,
+            wm,
+            service,
+            storage,
+            tokens,
+            keypair,
+            "http://localhost".into(),
+            runtime_tokens,
+            300,
+        );
         let ctx = mock_context();
 
         let result = tool
