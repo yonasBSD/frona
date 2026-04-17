@@ -9,8 +9,12 @@ use async_trait::async_trait;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::core::error::AppError;
+use crate::auth::UserService;
+use crate::auth::ephemeral_token::EphemeralTokenGuard;
+use crate::auth::token::service::TokenService;
 use crate::core::Principal;
+use crate::core::error::AppError;
+use crate::credential::keypair::service::KeyPairService;
 use crate::credential::vault::models::{BindingScope, CredentialTarget};
 use crate::credential::vault::service::VaultService;
 use crate::tool::ToolDefinition;
@@ -123,6 +127,12 @@ pub struct McpServerService {
     registry: Arc<dyn McpRegistryClient>,
     vault: Arc<VaultService>,
     installer: Arc<dyn PackageInstaller>,
+    token_service: TokenService,
+    keypair_service: KeyPairService,
+    user_service: UserService,
+    api_base_url: String,
+    runtime_tokens_dir: PathBuf,
+    ephemeral_token_expiry_secs: u64,
 }
 
 pub struct StartResult {
@@ -136,6 +146,7 @@ pub struct UpdateResult {
     pub restart_required: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl McpServerService {
     pub fn new(
         repo: Arc<dyn McpServerRepository>,
@@ -143,6 +154,12 @@ impl McpServerService {
         registry: Arc<dyn McpRegistryClient>,
         vault: Arc<VaultService>,
         installer: Arc<dyn PackageInstaller>,
+        token_service: TokenService,
+        keypair_service: KeyPairService,
+        user_service: UserService,
+        api_base_url: String,
+        runtime_tokens_dir: PathBuf,
+        ephemeral_token_expiry_secs: u64,
     ) -> Self {
         Self {
             repo,
@@ -150,6 +167,12 @@ impl McpServerService {
             registry,
             vault,
             installer,
+            token_service,
+            keypair_service,
+            user_service,
+            api_base_url,
+            runtime_tokens_dir,
+            ephemeral_token_expiry_secs,
         }
     }
 
@@ -410,13 +433,39 @@ impl McpServerService {
 
     pub async fn start(&self, user_id: &str, server_id: &str) -> Result<StartResult, AppError> {
         let mut server = self.load_owned(user_id, server_id).await?;
-        let resolved_env = self.resolve_env(&server).await?;
+        let mut resolved_env = self.resolve_env(&server).await?;
+
+        let user = self
+            .user_service
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {user_id}")))?;
+
+        let token_guard = EphemeralTokenGuard::issue(
+            &self.token_service,
+            &self.keypair_service,
+            &user,
+            Principal::mcp_server(&server.id),
+            self.ephemeral_token_expiry_secs,
+            &self.runtime_tokens_dir,
+        )
+        .await?;
+
+        resolved_env.insert(
+            "FRONA_TOKEN_FILE".to_string(),
+            token_guard.path().to_string_lossy().into_owned(),
+        );
+        resolved_env.insert("FRONA_API_URL".to_string(), self.api_base_url.clone());
 
         server.status = McpServerStatus::Starting;
         server.updated_at = Utc::now();
         self.repo.update(&server).await?;
 
-        let tools = match self.manager.start(&server, resolved_env).await {
+        let tools = match self
+            .manager
+            .start_with_token(&server, resolved_env, Some(token_guard))
+            .await
+        {
             Ok(tools) => tools,
             Err(e) => {
                 server.status = McpServerStatus::Failed;

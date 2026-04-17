@@ -83,6 +83,12 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
             mcp_registry,
             std::sync::Arc::new(state.vault_service.clone()),
             noop,
+            state.token_service.clone(),
+            state.keypair_service.clone(),
+            state.user_service.clone(),
+            state.config.server.public_base_url(),
+            state.config.auth.runtime_tokens_dir.clone(),
+            state.config.auth.ephemeral_token_expiry_secs,
         ));
     }
     (state, tmp)

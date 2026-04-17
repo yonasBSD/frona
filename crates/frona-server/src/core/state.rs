@@ -200,11 +200,6 @@ impl AppState {
             config.auth.presign_expiry_secs,
         );
 
-        let voice_provider = create_voice_provider(&config.voice, &voice_base_url, keypair_service.clone());
-        match &voice_provider {
-            Some(p) => tracing::info!(provider = %p.name(), callback_base_url = %voice_base_url, "Voice calling enabled"),
-            None => tracing::info!("Voice calling disabled (no provider configured)"),
-        }
         let jwt_service = JwtService::new();
         let token_repo: SurrealRepo<crate::auth::token::models::ApiToken> =
             SurrealRepo::new(db.clone());
@@ -214,6 +209,17 @@ impl AppState {
             config.auth.access_token_expiry_secs,
             config.auth.refresh_token_expiry_secs,
         );
+
+        let voice_provider = create_voice_provider(
+            &config.voice,
+            &voice_base_url,
+            token_service.clone(),
+            keypair_service.clone(),
+        );
+        match &voice_provider {
+            Some(p) => tracing::info!(provider = %p.name(), callback_base_url = %voice_base_url, "Voice calling enabled"),
+            None => tracing::info!("Voice calling disabled (no provider configured)"),
+        }
 
         let vault_credential_repo: Arc<dyn crate::credential::vault::repository::CredentialRepository> =
             Arc::new(SurrealRepo::<crate::credential::vault::models::Credential>::new(db.clone()));
@@ -288,6 +294,12 @@ impl AppState {
             mcp_registry,
             Arc::new(vault_service.clone()),
             mcp_installer,
+            token_service.clone(),
+            keypair_service.clone(),
+            user_service.clone(),
+            config.server.public_base_url(),
+            config.auth.runtime_tokens_dir.clone(),
+            config.auth.ephemeral_token_expiry_secs,
         ));
 
         Self {

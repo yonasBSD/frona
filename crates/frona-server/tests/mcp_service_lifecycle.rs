@@ -128,12 +128,35 @@ async fn build_test_harness(
         entry: sample_entry(env_vars),
     });
     let installer: Arc<dyn PackageInstaller> = Arc::new(NoopPackageInstaller);
+
+    let keypair_service = frona::credential::keypair::service::KeyPairService::new(
+        "test-secret",
+        Arc::new(SurrealRepo::new(db.clone())),
+    );
+    let token_service = frona::auth::token::service::TokenService::new(
+        Arc::new(SurrealRepo::new(db.clone())),
+        frona::auth::jwt::JwtService::new(),
+        900,
+        604_800,
+    );
+    let user_service = frona::auth::UserService::new(
+        SurrealRepo::new(db.clone()),
+        &Default::default(),
+    );
+    let runtime_tokens_dir = tmp.path().join("runtime-tokens");
+
     let service = McpServerService::new(
         mcp_repo,
         manager,
         registry,
         Arc::new(vault.clone()),
         installer,
+        token_service,
+        keypair_service,
+        user_service,
+        "http://localhost".to_string(),
+        runtime_tokens_dir,
+        300,
     );
 
     (db, vault, service, tmp)

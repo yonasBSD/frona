@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use tokio::sync::{Mutex, RwLock};
 
+use crate::auth::ephemeral_token::EphemeralTokenGuard;
 use crate::core::error::AppError;
 use crate::tool::ToolDefinition;
 use crate::tool::sandbox::{Sandbox, SandboxManager};
@@ -20,6 +21,9 @@ pub struct McpConnection {
     pub port: Option<u16>,
     pub restart_count: u32,
     pub log_path: Option<std::path::PathBuf>,
+    /// Per-server ephemeral auth token. Dropping unlinks the file; held
+    /// here so it lives exactly as long as the MCP process.
+    pub token_guard: Option<EphemeralTokenGuard>,
 }
 
 pub struct McpManager {
@@ -78,12 +82,25 @@ impl McpManager {
         server: &McpServer,
         resolved_env: Vec<(String, String)>,
     ) -> Sandbox {
+        self.build_run_sandbox_with_token(server, resolved_env, None)
+    }
+
+    pub fn build_run_sandbox_with_token(
+        &self,
+        server: &McpServer,
+        resolved_env: Vec<(String, String)>,
+        token_path: Option<&std::path::Path>,
+    ) -> Sandbox {
         let mut env = package_manager_env_vars(&server.workspace_dir);
         env.extend(resolved_env);
-        self.mcp_sandbox(server)
+        let mut sandbox = self.mcp_sandbox(server)
             .with_read_paths(server.extra_read_paths.to_vec())
             .with_write_paths(server.extra_write_paths.to_vec())
-            .with_extra_env_vars(env)
+            .with_extra_env_vars(env);
+        if let Some(path) = token_path {
+            sandbox = sandbox.with_read_files(vec![path.to_string_lossy().into_owned()]);
+        }
+        sandbox
     }
 
     fn mcp_sandbox(&self, server: &McpServer) -> Sandbox {
@@ -104,6 +121,15 @@ impl McpManager {
         server: &McpServer,
         resolved_env: BTreeMap<String, String>,
     ) -> Result<Vec<ToolDefinition>, AppError> {
+        self.start_with_token(server, resolved_env, None).await
+    }
+
+    pub async fn start_with_token(
+        &self,
+        server: &McpServer,
+        resolved_env: BTreeMap<String, String>,
+        token_guard: Option<EphemeralTokenGuard>,
+    ) -> Result<Vec<ToolDefinition>, AppError> {
         let active = server.active_transport.as_str();
         tracing::info!(
             server_id = %server.id,
@@ -121,10 +147,10 @@ impl McpManager {
                 if let Some(url) = url.as_ref().filter(|u| !u.is_empty()) {
                     self.start_remote_http(server, url.clone()).await
                 } else {
-                    self.start_local_http(server, resolved_env, args, env, port_env_var.as_deref(), endpoint_path.as_deref()).await
+                    self.start_local_http(server, resolved_env, args, env, port_env_var.as_deref(), endpoint_path.as_deref(), token_guard).await
                 }
             }
-            other => self.start_stdio(server, resolved_env, other).await,
+            other => self.start_stdio(server, resolved_env, other, token_guard).await,
         }
     }
 
@@ -133,12 +159,17 @@ impl McpManager {
         server: &McpServer,
         resolved_env: BTreeMap<String, String>,
         config: Option<&TransportConfig>,
+        token_guard: Option<EphemeralTokenGuard>,
     ) -> Result<Vec<ToolDefinition>, AppError> {
         let mut env_pairs: Vec<(String, String)> = resolved_env.into_iter().collect();
         if let Some(TransportConfig::Stdio { env, .. }) = config {
             env_pairs.extend(env.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
-        let sandbox = self.build_run_sandbox(server, env_pairs);
+        let sandbox = self.build_run_sandbox_with_token(
+            server,
+            env_pairs,
+            token_guard.as_ref().map(|g| g.path()),
+        );
         sandbox.setup()?;
 
         let args_owned: Vec<String> = config
@@ -175,9 +206,10 @@ impl McpManager {
             .ok_or_else(|| AppError::Tool("MCP server child stdout missing".into()))?;
 
         let client = McpClient::connect((stdout, stdin), default_client_info()).await?;
-        self.register_connection(server, client, Some(child), None, None).await
+        self.register_connection(server, client, Some(child), None, None, token_guard).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn start_local_http(
         &self,
         server: &McpServer,
@@ -186,6 +218,7 @@ impl McpManager {
         config_env: &BTreeMap<String, String>,
         port_env_var: Option<&str>,
         endpoint_path: Option<&str>,
+        token_guard: Option<EphemeralTokenGuard>,
     ) -> Result<Vec<ToolDefinition>, AppError> {
         let port = self.allocate_port().await?;
         let port_var = port_env_var.unwrap_or("PORT");
@@ -193,7 +226,8 @@ impl McpManager {
         env_pairs.push((port_var.to_string(), port.to_string()));
         env_pairs.extend(config_env.iter().map(|(k, v)| (k.clone(), v.clone())));
 
-        let sandbox = self.build_run_sandbox(server, env_pairs)
+        let sandbox = self
+            .build_run_sandbox_with_token(server, env_pairs, token_guard.as_ref().map(|g| g.path()))
             .with_bind_ports(vec![port]);
         sandbox.setup()?;
 
@@ -243,7 +277,7 @@ impl McpManager {
                 tokio::spawn(async move { allocated.lock().await.remove(&port); });
             })?;
 
-        self.register_connection(server, client, Some(child), Some(port), Some(log_path)).await
+        self.register_connection(server, client, Some(child), Some(port), Some(log_path), token_guard).await
     }
 
     async fn start_remote_http(
@@ -253,9 +287,10 @@ impl McpManager {
     ) -> Result<Vec<ToolDefinition>, AppError> {
         let transport = rmcp::transport::streamable_http_client::StreamableHttpClientTransport::from_uri(url.as_str());
         let client = McpClient::connect(transport, default_client_info()).await?;
-        self.register_connection(server, client, None, None, None).await
+        self.register_connection(server, client, None, None, None, None).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn register_connection(
         &self,
         server: &McpServer,
@@ -263,6 +298,7 @@ impl McpManager {
         child: Option<tokio::process::Child>,
         port: Option<u16>,
         log_path_override: Option<std::path::PathBuf>,
+        token_guard: Option<EphemeralTokenGuard>,
     ) -> Result<Vec<ToolDefinition>, AppError> {
         let cached = client.cached_tools().await;
         let tools: Vec<ToolDefinition> = cached
@@ -289,6 +325,7 @@ impl McpManager {
             port,
             restart_count: 0,
             log_path: Some(log_path),
+            token_guard,
         };
 
         self.connections

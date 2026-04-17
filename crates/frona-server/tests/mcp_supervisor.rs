@@ -57,12 +57,32 @@ async fn build_mcp_supervisor() -> (
         tmp.path().join("registry"),
     ));
     let installer: Arc<dyn PackageInstaller> = Arc::new(NoopPackageInstaller);
+    let keypair_service = frona::credential::keypair::service::KeyPairService::new(
+        "test-secret",
+        Arc::new(SurrealRepo::new(db.clone())),
+    );
+    let token_service = frona::auth::token::service::TokenService::new(
+        Arc::new(SurrealRepo::new(db.clone())),
+        frona::auth::jwt::JwtService::new(),
+        900,
+        604_800,
+    );
+    let user_service = frona::auth::UserService::new(
+        SurrealRepo::new(db.clone()),
+        &Default::default(),
+    );
     let service = Arc::new(McpServerService::new(
         mcp_repo.clone(),
         manager.clone(),
         registry,
         Arc::new(vault),
         installer,
+        token_service,
+        keypair_service,
+        user_service,
+        "http://localhost".to_string(),
+        tmp.path().join("runtime-tokens"),
+        300,
     ));
 
     let supervisor = McpSupervisor::new(service, manager);
