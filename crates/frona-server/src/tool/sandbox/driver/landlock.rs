@@ -24,6 +24,7 @@ impl SandboxDriver for LandlockDriver {
             let workspace_dir = config.workspace_dir.clone();
             let network_access = config.network_access;
             let additional_read_paths = config.additional_read_paths.clone();
+            let additional_read_files = config.additional_read_files.clone();
             let additional_write_paths = config.additional_write_paths.clone();
 
             let mut cmd = Command::new(program);
@@ -32,8 +33,14 @@ impl SandboxDriver for LandlockDriver {
 
             unsafe {
                 cmd.pre_exec(move || {
-                    apply_landlock(&workspace_dir, network_access, &additional_read_paths, &additional_write_paths)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    apply_landlock(
+                        &workspace_dir,
+                        network_access,
+                        &additional_read_paths,
+                        &additional_read_files,
+                        &additional_write_paths,
+                    )
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
                 });
             }
 
@@ -51,7 +58,13 @@ impl SandboxDriver for LandlockDriver {
 }
 
 #[cfg(target_os = "linux")]
-fn apply_landlock(workspace_dir: &str, network_access: bool, additional_read_paths: &[String], additional_write_paths: &[String]) -> Result<(), String> {
+fn apply_landlock(
+    workspace_dir: &str,
+    network_access: bool,
+    additional_read_paths: &[String],
+    additional_read_files: &[String],
+    additional_write_paths: &[String],
+) -> Result<(), String> {
     use landlock::{
         Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr,
         RulesetCreatedAttr, ABI,
@@ -103,6 +116,15 @@ fn apply_landlock(workspace_dir: &str, network_access: bool, additional_read_pat
         if let Ok(fd) = PathFd::new(path) {
             ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))
                 .map_err(|e| format!("Landlock add_rule failed for {path}: {e}"))?;
+        }
+    }
+
+    // File-only grants. `PathBeneath` on a regular file scopes read access
+    // to exactly that file — siblings in the parent directory remain hidden.
+    for path in additional_read_files {
+        if let Ok(fd) = PathFd::new(path) {
+            ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))
+                .map_err(|e| format!("Landlock add_rule failed for file {path}: {e}"))?;
         }
     }
 

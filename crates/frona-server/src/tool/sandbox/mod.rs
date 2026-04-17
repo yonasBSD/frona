@@ -82,6 +82,7 @@ impl SandboxManager {
             allowed_bind_ports: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: self.shared_read_paths.clone(),
+            shared_read_files: Vec::new(),
             shared_write_paths: Vec::new(),
             agent_id: id.to_string(),
             resource_manager: Arc::clone(&self.resource_manager),
@@ -99,6 +100,7 @@ pub struct Sandbox {
     allowed_bind_ports: Vec<u16>,
     extra_env_vars: Vec<(String, String)>,
     shared_read_paths: Vec<String>,
+    shared_read_files: Vec<String>,
     shared_write_paths: Vec<String>,
     agent_id: String,
     resource_manager: Arc<SystemResourceManager>,
@@ -114,6 +116,11 @@ impl Sandbox {
 
     pub fn with_read_paths(mut self, paths: Vec<String>) -> Self {
         self.shared_read_paths.extend(paths);
+        self
+    }
+
+    pub fn with_read_files(mut self, files: Vec<String>) -> Self {
+        self.shared_read_files.extend(files);
         self
     }
 
@@ -264,6 +271,7 @@ impl Sandbox {
             allowed_network_destinations: self.allowed_network_destinations.clone(),
             allowed_bind_ports: self.allowed_bind_ports.clone(),
             additional_read_paths: self.shared_read_paths.clone(),
+            additional_read_files: self.shared_read_files.clone(),
             additional_write_paths: self.shared_write_paths.clone(),
             additional_path_dirs,
             env_vars,
@@ -418,6 +426,7 @@ mod tests {
             allowed_bind_ports: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
+            shared_read_files: Vec::new(),
             shared_write_paths: Vec::new(),
             agent_id: "test".to_string(),
             resource_manager: Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),
@@ -463,6 +472,7 @@ mod tests {
             allowed_bind_ports: Vec::new(),
             extra_env_vars: Vec::new(),
             shared_read_paths: Vec::new(),
+            shared_read_files: Vec::new(),
             shared_write_paths: Vec::new(),
             agent_id: "test".to_string(),
             resource_manager: Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),

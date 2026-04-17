@@ -76,6 +76,11 @@ pub struct SandboxConfig {
     pub allowed_network_destinations: Vec<String>,
     pub allowed_bind_ports: Vec<u16>,
     pub additional_read_paths: Vec<String>,
+    /// Individual files (not directories) granted read access. Use this
+    /// instead of `additional_read_paths` when the sandbox should see a
+    /// single file without listing or reading siblings in the same
+    /// directory — e.g. per-invocation ephemeral token files.
+    pub additional_read_files: Vec<String>,
     pub additional_write_paths: Vec<String>,
     pub additional_path_dirs: Vec<String>,
     pub env_vars: Vec<(String, String)>,
@@ -92,6 +97,7 @@ impl Default for SandboxConfig {
             allowed_network_destinations: Vec::new(),
             allowed_bind_ports: Vec::new(),
             additional_read_paths: Vec::new(),
+            additional_read_files: Vec::new(),
             additional_write_paths: Vec::new(),
             additional_path_dirs: Vec::new(),
             env_vars: Vec::new(),

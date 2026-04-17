@@ -183,6 +183,10 @@ impl SandboxDriver for MacosDriver {
             builder = builder.read_subpath(path);
         }
 
+        for path in &config.additional_read_files {
+            builder = builder.read_literal(path);
+        }
+
         for path in &config.additional_write_paths {
             builder = builder.write_subpath(path);
         }

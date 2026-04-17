@@ -194,6 +194,9 @@ impl SydArgsBuilder {
         for path in &config.additional_read_paths {
             self.allow_read(&format!("{path}/***"));
         }
+        for path in &config.additional_read_files {
+            self.allow_read(path);
+        }
 
         // Allow read+stat on each ancestor of the workspace dir so tools
         // (e.g. Node.js realpathSync) can traverse the directory tree.
