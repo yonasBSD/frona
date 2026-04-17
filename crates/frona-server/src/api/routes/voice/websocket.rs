@@ -10,17 +10,17 @@ use crate::agent::execution::run_agent_loop;
 use crate::core::error::AppError;
 use crate::core::state::AppState;
 use crate::inference::InferenceResponse;
-use crate::tool::voice::VoiceSessionClaims;
+use crate::tool::voice::VoiceSessionExtensions;
 
 use super::models::TokenQuery;
-use super::verify_jwt;
+use super::verify_voice_jwt;
 
 pub(crate) async fn twilio_ws_handler(
     State(state): State<AppState>,
     Query(q): Query<TokenQuery>,
     req: Request,
 ) -> Response {
-    let claims: VoiceSessionClaims = match verify_jwt(&state, &q.token).await {
+    let claims = match verify_voice_jwt(&state, &q.token).await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(error = %e, "Voice WS JWT verification failed");
@@ -28,10 +28,25 @@ pub(crate) async fn twilio_ws_handler(
         }
     };
 
-    let chat_id = claims.chat_id.clone();
+    let ext: VoiceSessionExtensions = match claims
+        .extensions
+        .clone()
+        .ok_or_else(|| AppError::Validation("voice session token missing extensions".into()))
+        .and_then(|v| {
+            serde_json::from_value(v)
+                .map_err(|e| AppError::Validation(format!("voice session extensions: {e}")))
+        }) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(error = %e, "Voice WS token extensions invalid");
+            return (StatusCode::BAD_REQUEST, "Invalid voice token payload").into_response();
+        }
+    };
+
+    let chat_id = ext.chat_id.clone();
     let user_id = claims.sub.clone();
-    let contact_id = claims.contact_id.clone();
-    let call_id = claims.call_id.clone();
+    let contact_id = ext.contact_id.clone();
+    let call_id = ext.call_id.clone();
 
     let ws = match WebSocketUpgrade::from_request(req, &state).await {
         Ok(ws) => ws,

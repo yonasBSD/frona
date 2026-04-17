@@ -92,12 +92,12 @@ async fn twilio_ws_invalid_token_returns_403() {
 
 #[tokio::test]
 async fn twilio_callback_valid_token_returns_xml() {
-    use chrono::Utc;
+    use frona::auth::User;
+    use frona::auth::token::models::TokenType;
+    use frona::auth::token::service::CreateTokenRequest;
+    use frona::core::Principal;
     use frona::db::repo::generic::SurrealRepo;
-    use frona::auth::jwt::JwtService;
-    use frona::credential::keypair::service::KeyPairService;
-    use frona::tool::voice::VoiceCallbackClaims;
-    use std::sync::Arc;
+    use frona::tool::voice::VoiceCallbackExtensions;
 
     let db = test_db().await;
     let tmp = tempfile::tempdir().unwrap();
@@ -117,25 +117,6 @@ async fn twilio_callback_valid_token_returns_xml() {
         ..Default::default()
     };
 
-    // Build keypair service with same secret as app state will use
-    let kp_svc = KeyPairService::new(
-        "test-secret",
-        Arc::new(SurrealRepo::new(db.clone())),
-    );
-    let jwt_svc = JwtService::new();
-
-    let (enc_key, kid) = kp_svc.get_signing_key("voice").await.unwrap();
-    let exp = (Utc::now().timestamp() + 300) as usize;
-    let claims = VoiceCallbackClaims {
-        sub: "user-123".to_string(),
-        chat_id: "chat-456".to_string(),
-        exp,
-        welcome_greeting: None,
-        hints: None,
-        contact_id: None,
-    };
-    let token = jwt_svc.sign(&claims, &enc_key, &kid).unwrap();
-
     let storage = StorageService::new(&config);
     let resource_manager = std::sync::Arc::new(
         frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(80.0, 80.0, 90.0, 90.0),
@@ -147,7 +128,48 @@ async fn twilio_callback_valid_token_returns_xml() {
         resource_manager.clone(),
     );
     let metrics = setup_metrics_recorder();
-    let state = AppState::new(db, &config, None, agent_service, storage, metrics, resource_manager);
+    let state = AppState::new(db.clone(), &config, None, agent_service, storage, metrics, resource_manager);
+
+    // Persist the user so the AppState's token_service can round-trip the token
+    // through the ApiToken DB row it creates for access tokens.
+    let user = User {
+        id: "user-123".to_string(),
+        username: "testuser".to_string(),
+        email: "test@example.com".to_string(),
+        name: "Test".to_string(),
+        password_hash: String::new(),
+        timezone: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    let user_repo: SurrealRepo<User> = SurrealRepo::new(db.clone());
+    use frona::core::repository::Repository;
+    user_repo.create(&user).await.unwrap();
+
+    let extensions = serde_json::to_value(VoiceCallbackExtensions {
+        chat_id: "chat-456".to_string(),
+        welcome_greeting: None,
+        hints: None,
+        contact_id: None,
+    })
+    .unwrap();
+    let created = state
+        .token_service
+        .create_token(
+            &state.keypair_service,
+            &user,
+            CreateTokenRequest {
+                token_type: TokenType::Access,
+                principal: Principal::agent("receptionist"),
+                ttl_secs: 300,
+                name: "voice_callback".into(),
+                scopes: Vec::new(),
+                refresh_pair_id: None,
+                extensions: Some(extensions),
+            },
+        )
+        .await
+        .unwrap();
 
     let app = voice::router().with_state(state);
 
@@ -155,7 +177,7 @@ async fn twilio_callback_valid_token_returns_xml() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/api/voice/twilio/callback?token={token}"))
+                .uri(format!("/api/voice/twilio/callback?token={}", created.jwt))
                 .body(Body::empty())
                 .unwrap(),
         )

@@ -6,13 +6,15 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use chrono::Utc;
-use serde::de::DeserializeOwned;
 
-use crate::auth::jwt::JwtService;
-use crate::core::error::{AppError, AuthErrorCode};
+use crate::auth::models::Claims;
+use crate::auth::token::models::TokenType;
+use crate::auth::token::service::CreateTokenRequest;
+use crate::auth::User;
+use crate::core::Principal;
+use crate::core::error::AppError;
 use crate::core::state::AppState;
-use crate::tool::voice::{VoiceCallbackClaims, VoiceSessionClaims};
+use crate::tool::voice::{VoiceCallbackExtensions, VoiceSessionExtensions};
 
 use models::TokenQuery;
 
@@ -67,21 +69,20 @@ pub fn router() -> Router<AppState> {
         .route("/api/voice/twilio/ws", get(websocket::twilio_ws_handler))
 }
 
-pub(super) async fn verify_jwt<T: DeserializeOwned>(state: &AppState, token: &str) -> Result<T, AppError> {
-    let jwt_svc = JwtService::new();
-    let kid = jwt_svc
-        .decode_unverified_header(token)?
-        .kid
-        .ok_or_else(|| AppError::Auth { message: "Token missing kid".into(), code: AuthErrorCode::TokenInvalid })?;
-    let key = state.keypair_service.get_verifying_key(&kid).await?;
-    jwt_svc.verify::<T>(token, &key)
+/// Verify the voice token through the standard `TokenService` — voice tokens
+/// are plain access tokens, so they're DB-backed and respect revocation.
+pub(super) async fn verify_voice_jwt(state: &AppState, token: &str) -> Result<Claims, AppError> {
+    state
+        .token_service
+        .validate(&state.keypair_service, token)
+        .await
 }
 
 async fn twilio_callback(
     State(state): State<AppState>,
     Query(q): Query<TokenQuery>,
 ) -> Response {
-    let claims: VoiceCallbackClaims = match verify_jwt(&state, &q.token).await {
+    let claims = match verify_voice_jwt(&state, &q.token).await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(error = %e, "Voice callback JWT verification failed");
@@ -89,8 +90,24 @@ async fn twilio_callback(
         }
     };
 
+    let ext: VoiceCallbackExtensions = match claims
+        .extensions
+        .clone()
+        .ok_or_else(|| AppError::Validation("voice callback token missing extensions".into()))
+        .and_then(|v| {
+            serde_json::from_value(v)
+                .map_err(|e| AppError::Validation(format!("voice callback extensions: {e}")))
+        }) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(error = %e, "Voice callback token extensions invalid");
+            return (StatusCode::BAD_REQUEST, "Invalid voice token payload").into_response();
+        }
+    };
+
     let user_id = claims.sub.clone();
-    let chat_id = claims.chat_id.clone();
+    let chat_id = ext.chat_id.clone();
+    let agent_id = claims.principal.id.clone();
 
     let call_id = match state.call_service.find_by_chat_id(&chat_id).await {
         Ok(Some(call)) => {
@@ -112,26 +129,47 @@ async fn twilio_callback(
         }
     };
 
-    let owner = format!("user:{user_id}");
-    let expiry_secs = state.config.auth.presign_expiry_secs as i64;
-    let (enc_key, kid) = match state.keypair_service.get_signing_key(&owner).await {
-        Ok(k) => k,
+    let ws_ext = match serde_json::to_value(VoiceSessionExtensions {
+        chat_id: chat_id.clone(),
+        contact_id: ext.contact_id.clone(),
+        call_id: call_id.clone(),
+    }) {
+        Ok(v) => v,
         Err(e) => {
-            tracing::error!(error = %e, "Failed to get signing key for voice session");
+            tracing::error!(error = %e, "Failed to encode voice session extensions");
             return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
         }
     };
 
-    let exp = (Utc::now().timestamp() + expiry_secs) as usize;
-    let ws_claims = VoiceSessionClaims {
-        sub: user_id.clone(),
-        chat_id: chat_id.clone(),
-        exp,
-        contact_id: claims.contact_id.clone(),
-        call_id: call_id.clone(),
+    let user = User {
+        id: user_id.clone(),
+        username: claims.username.clone(),
+        email: claims.email.clone(),
+        name: String::new(),
+        password_hash: String::new(),
+        timezone: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
     };
-    let ws_token = match JwtService::new().sign(&ws_claims, &enc_key, &kid) {
-        Ok(t) => t,
+
+    let created = match state
+        .token_service
+        .create_token(
+            &state.keypair_service,
+            &user,
+            CreateTokenRequest {
+                token_type: TokenType::Access,
+                principal: Principal::agent(&agent_id),
+                ttl_secs: state.config.auth.presign_expiry_secs,
+                name: "voice_session".into(),
+                scopes: Vec::new(),
+                refresh_pair_id: None,
+                extensions: Some(ws_ext),
+            },
+        )
+        .await
+    {
+        Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to sign voice session JWT");
             return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
@@ -144,12 +182,12 @@ async fn twilio_callback(
     let ws_base = base_url
         .replace("https://", "wss://")
         .replace("http://", "ws://");
-    let ws_url = format!("{ws_base}/api/voice/twilio/ws?token={ws_token}");
+    let ws_url = format!("{ws_base}/api/voice/twilio/ws?token={}", created.jwt);
 
     let twiml = build_twiml(
         &ws_url,
-        claims.welcome_greeting.as_deref(),
-        claims.hints.as_deref(),
+        ext.welcome_greeting.as_deref(),
+        ext.hints.as_deref(),
         state.config.voice.twilio_voice_id.as_deref(),
         state.config.voice.twilio_speech_model.as_deref(),
     );

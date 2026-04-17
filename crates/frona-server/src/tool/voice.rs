@@ -1,28 +1,26 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use twilio_async::{TwilioJson, TwilioRequest};
 
 use crate::agent::prompt::PromptLoader;
-use crate::auth::jwt::JwtService;
+use crate::auth::User;
+use crate::auth::token::models::TokenType;
+use crate::auth::token::service::{CreateTokenRequest, TokenService};
 use crate::call::models::CallDirection;
 use crate::call::CallService;
 use crate::contact::ContactService;
+use crate::core::Principal;
 use crate::core::config::VoiceConfig;
 use crate::core::error::AppError;
 use crate::credential::keypair::service::KeyPairService;
 use crate::tool::{AgentTool, InferenceContext, ToolDefinition, ToolOutput, load_tool_definition};
 
-/// Short-lived JWT embedded in the Twilio callback URL.
-/// Owner "voice", signed by the provider.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct VoiceCallbackClaims {
-    pub sub: String,
+pub struct VoiceCallbackExtensions {
     pub chat_id: String,
-    pub exp: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub welcome_greeting: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -31,13 +29,9 @@ pub struct VoiceCallbackClaims {
     pub contact_id: Option<String>,
 }
 
-/// WebSocket session JWT, issued by the callback handler.
-/// Owner "user:{id}", normal presign expiry.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct VoiceSessionClaims {
-    pub sub: String,
+pub struct VoiceSessionExtensions {
     pub chat_id: String,
-    pub exp: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,11 +46,13 @@ pub struct VoiceSessionClaims {
 pub trait VoiceProvider: Send + Sync {
     fn name(&self) -> &str;
     /// Initiate an outbound call. Returns the provider's call identifier (e.g. Twilio SID).
+    #[allow(clippy::too_many_arguments)]
     async fn initiate_call(
         &self,
         to: &str,
         chat_id: &str,
-        user_id: &str,
+        user: &User,
+        agent_id: &str,
         welcome_greeting: Option<&str>,
         hints: Option<&str>,
         contact_id: Option<String>,
@@ -74,7 +70,11 @@ pub struct TwilioProvider {
     pub base_url: String,
     pub voice_id: Option<String>,
     pub speech_model: Option<String>,
+    pub token_service: TokenService,
     pub keypair_service: KeyPairService,
+    /// Callback token TTL in seconds — short enough that a leaked callback URL
+    /// can't be replayed beyond the call setup window.
+    pub callback_ttl_secs: u64,
 }
 
 #[async_trait]
@@ -87,23 +87,41 @@ impl VoiceProvider for TwilioProvider {
         &self,
         to: &str,
         chat_id: &str,
-        user_id: &str,
+        user: &User,
+        agent_id: &str,
         welcome_greeting: Option<&str>,
         hints: Option<&str>,
         contact_id: Option<String>,
     ) -> Result<String, AppError> {
-        let (enc_key, kid) = self.keypair_service.get_signing_key("voice").await?;
-        let exp = (Utc::now().timestamp() + 300) as usize; // 5 min
-        let claims = VoiceCallbackClaims {
-            sub: user_id.to_string(),
+        let extensions = serde_json::to_value(VoiceCallbackExtensions {
             chat_id: chat_id.to_string(),
-            exp,
             welcome_greeting: welcome_greeting.map(str::to_string),
             hints: hints.map(str::to_string),
             contact_id,
-        };
-        let cb_token = JwtService::new().sign(&claims, &enc_key, &kid)?;
-        let callback_url = format!("{}/api/voice/twilio/callback?token={}", self.base_url, cb_token);
+        })
+        .map_err(|e| AppError::Internal(format!("voice callback claims encode: {e}")))?;
+
+        let created = self
+            .token_service
+            .create_token(
+                &self.keypair_service,
+                user,
+                CreateTokenRequest {
+                    token_type: TokenType::Access,
+                    principal: Principal::agent(agent_id),
+                    ttl_secs: self.callback_ttl_secs,
+                    name: "voice_callback".into(),
+                    scopes: Vec::new(),
+                    refresh_pair_id: None,
+                    extensions: Some(extensions),
+                },
+            )
+            .await?;
+
+        let callback_url = format!(
+            "{}/api/voice/twilio/callback?token={}",
+            self.base_url, created.jwt
+        );
 
         let client = twilio_async::Twilio::new(&self.account_sid, &self.auth_token)
             .map_err(|e| AppError::Tool(format!("Twilio client init failed: {e}")))?;
@@ -130,6 +148,7 @@ impl VoiceProvider for TwilioProvider {
 pub fn create_voice_provider(
     config: &VoiceConfig,
     base_url: &str,
+    token_service: TokenService,
     keypair_service: KeyPairService,
 ) -> Option<Arc<dyn VoiceProvider>> {
     let provider = config
@@ -149,7 +168,9 @@ pub fn create_voice_provider(
                 base_url: base_url.to_string(),
                 voice_id: config.twilio_voice_id.clone(),
                 speech_model: config.twilio_speech_model.clone(),
+                token_service,
                 keypair_service,
+                callback_ttl_secs: 300,
             }))
         }
         other => {
@@ -215,7 +236,8 @@ impl AgentTool for VoiceCallTool {
         let sid = provider.initiate_call(
             phone_number,
             chat_id,
-            user_id,
+            &ctx.user,
+            &ctx.agent.id,
             initial_greeting,
             hints,
             Some(contact.id.clone()),
