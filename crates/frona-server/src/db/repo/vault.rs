@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use chrono::Utc;
 
+use crate::core::Principal;
 use crate::core::error::AppError;
 use crate::credential::vault::models::{
-    Credential, GrantPrincipal, PrincipalCredentialBinding, VaultAccessLog, VaultConnection,
-    VaultGrant,
+    Credential, PrincipalCredentialBinding, VaultAccessLog, VaultConnection, VaultGrant,
 };
 use crate::credential::vault::repository::{
     CredentialRepository, PrincipalCredentialBindingRepository, VaultAccessLogRepository,
@@ -144,7 +144,7 @@ impl VaultGrantRepository for SurrealRepo<VaultGrant> {
     async fn find_matching_grant(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
         query: &str,
     ) -> Result<Option<VaultGrant>, AppError> {
         let now = Utc::now();
@@ -179,7 +179,7 @@ impl VaultGrantRepository for SurrealRepo<VaultGrant> {
     async fn find_by_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<Vec<VaultGrant>, AppError> {
         let query = format!(
             "{SELECT_CLAUSE} FROM vault_grant \
@@ -205,7 +205,7 @@ impl VaultGrantRepository for SurrealRepo<VaultGrant> {
     async fn delete_by_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<(), AppError> {
         self.db()
             .query(
@@ -300,7 +300,7 @@ impl PrincipalCredentialBindingRepository for SurrealRepo<PrincipalCredentialBin
     async fn find_for_lookup(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
         query: &str,
         chat_id: Option<&str>,
     ) -> Result<Option<PrincipalCredentialBinding>, AppError> {
@@ -364,7 +364,7 @@ impl PrincipalCredentialBindingRepository for SurrealRepo<PrincipalCredentialBin
     async fn find_for_chat(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
         chat_id: &str,
     ) -> Result<Vec<PrincipalCredentialBinding>, AppError> {
         let now = Utc::now();
@@ -397,7 +397,7 @@ impl PrincipalCredentialBindingRepository for SurrealRepo<PrincipalCredentialBin
     async fn find_for_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<Vec<PrincipalCredentialBinding>, AppError> {
         let now = Utc::now();
         let q = format!(
@@ -426,7 +426,7 @@ impl PrincipalCredentialBindingRepository for SurrealRepo<PrincipalCredentialBin
     async fn delete_by_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<(), AppError> {
         self.db()
             .query(

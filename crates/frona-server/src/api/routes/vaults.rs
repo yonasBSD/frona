@@ -173,8 +173,8 @@ async fn approve_request(
         .unwrap_or_default();
 
     {
-        use crate::credential::vault::models::GrantPrincipal;
-        let principal = GrantPrincipal::Agent(chat.agent_id.clone());
+        use crate::core::Principal;
+        let principal = Principal::agent(chat.agent_id.clone());
 
         let target =
             binding_target_for_approval(req.env_var_prefix.as_deref(), &original_query);

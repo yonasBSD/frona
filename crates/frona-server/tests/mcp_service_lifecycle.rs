@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use frona::core::error::AppError;
+use frona::core::Principal;
 use frona::credential::vault::models::*;
 use frona::credential::vault::service::VaultService;
 use frona::db::init::setup_schema;
@@ -141,7 +142,7 @@ async fn build_test_harness(
 async fn seed_credential_and_grant(
     vault: &VaultService,
     user_id: &str,
-    principal: GrantPrincipal,
+    principal: Principal,
     name: &str,
     password: &str,
 ) -> String {
@@ -303,7 +304,7 @@ async fn uninstall_sweeps_bindings_and_grants() {
         )
         .await
         .unwrap();
-    let principal = GrantPrincipal::McpServer(&persisted.id);
+    let principal = Principal::mcp_server(&persisted.id);
 
     // Post-install, write a grant + binding directly against the server's
     // principal to prove uninstall sweeps them even if they were added later.

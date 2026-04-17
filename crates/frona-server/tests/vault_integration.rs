@@ -1,3 +1,4 @@
+use frona::core::Principal;
 use frona::db::init::setup_schema;
 use frona::db::repo::generic::SurrealRepo;
 use frona::credential::vault::models::*;
@@ -113,7 +114,7 @@ async fn delete_connection_removes_grants() {
 
     svc.create_grant(
         "user1",
-        GrantPrincipal::Agent("agent1"),
+        Principal::agent("agent1"),
         &conn.id,
         "item1",
         "github",
@@ -139,7 +140,7 @@ async fn find_matching_grant_by_query() {
 
     svc.create_grant(
         "user1",
-        GrantPrincipal::Agent("agent1"),
+        Principal::agent("agent1"),
         &conn.id,
         "item1",
         "github",
@@ -150,13 +151,13 @@ async fn find_matching_grant_by_query() {
 
 
     let found = svc
-        .find_matching_grant("user1", &GrantPrincipal::Agent("agent1"), "github")
+        .find_matching_grant("user1", &Principal::agent("agent1"), "github")
         .await
         .unwrap();
     assert!(found.is_some());
 
     let not_found = svc
-        .find_matching_grant("user1", &GrantPrincipal::Agent("agent1"), "gitlab")
+        .find_matching_grant("user1", &Principal::agent("agent1"), "gitlab")
         .await
         .unwrap();
     assert!(not_found.is_none());
@@ -176,7 +177,7 @@ async fn expired_grant_is_cleaned_up() {
         user_id: "user1".into(),
         connection_id: conn.id,
         vault_item_id: "item1".into(),
-        principal: GrantPrincipal::Agent("agent1"),
+        principal: Principal::agent("agent1"),
         query: "old-service".into(),
         expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
         created_at: chrono::Utc::now(),
@@ -184,7 +185,7 @@ async fn expired_grant_is_cleaned_up() {
     grant_repo.create(&expired_grant).await.unwrap();
 
     let result = svc
-        .find_matching_grant("user1", &GrantPrincipal::Agent("agent1"), "old-service")
+        .find_matching_grant("user1", &Principal::agent("agent1"), "old-service")
         .await
         .unwrap();
     assert!(result.is_none(), "Expired grant should not match");
@@ -234,7 +235,7 @@ async fn find_by_principal_returns_only_matching_scope() {
 
     svc.create_grant(
         "user1",
-        GrantPrincipal::Agent("agent1"),
+        Principal::agent("agent1"),
         &conn.id,
         "item_a",
         "github",
@@ -244,7 +245,7 @@ async fn find_by_principal_returns_only_matching_scope() {
     .unwrap();
     svc.create_grant(
         "user1",
-        GrantPrincipal::McpServer("srv1"),
+        Principal::mcp_server("srv1"),
         &conn.id,
         "item_b",
         "gmail",
@@ -254,7 +255,7 @@ async fn find_by_principal_returns_only_matching_scope() {
     .unwrap();
     svc.create_grant(
         "user1",
-        GrantPrincipal::McpServer("srv2"),
+        Principal::mcp_server("srv2"),
         &conn.id,
         "item_c",
         "slack",
@@ -267,21 +268,21 @@ async fn find_by_principal_returns_only_matching_scope() {
         Arc::new(SurrealRepo::<VaultGrant>::new(db.clone()));
 
     let mcp1_grants = grant_repo
-        .find_by_principal("user1", &GrantPrincipal::McpServer("srv1"))
+        .find_by_principal("user1", &Principal::mcp_server("srv1"))
         .await
         .unwrap();
     assert_eq!(mcp1_grants.len(), 1);
     assert_eq!(mcp1_grants[0].vault_item_id, "item_b");
 
     let agent_grants = grant_repo
-        .find_by_principal("user1", &GrantPrincipal::Agent("agent1"))
+        .find_by_principal("user1", &Principal::agent("agent1"))
         .await
         .unwrap();
     assert_eq!(agent_grants.len(), 1);
     assert_eq!(agent_grants[0].vault_item_id, "item_a");
 
     let no_grants = grant_repo
-        .find_by_principal("user1", &GrantPrincipal::McpServer("ghost"))
+        .find_by_principal("user1", &Principal::mcp_server("ghost"))
         .await
         .unwrap();
     assert!(no_grants.is_empty());
@@ -295,7 +296,7 @@ async fn delete_by_principal_sweeps_only_matching_scope() {
 
     svc.create_grant(
         "user1",
-        GrantPrincipal::McpServer("srv1"),
+        Principal::mcp_server("srv1"),
         &conn.id,
         "item_a",
         "github",
@@ -305,7 +306,7 @@ async fn delete_by_principal_sweeps_only_matching_scope() {
     .unwrap();
     svc.create_grant(
         "user1",
-        GrantPrincipal::McpServer("srv1"),
+        Principal::mcp_server("srv1"),
         &conn.id,
         "item_b",
         "gmail",
@@ -315,7 +316,7 @@ async fn delete_by_principal_sweeps_only_matching_scope() {
     .unwrap();
     svc.create_grant(
         "user1",
-        GrantPrincipal::Agent("agent1"),
+        Principal::agent("agent1"),
         &conn.id,
         "item_c",
         "untouched",
@@ -328,7 +329,7 @@ async fn delete_by_principal_sweeps_only_matching_scope() {
         Arc::new(SurrealRepo::<VaultGrant>::new(db.clone()));
 
     grant_repo
-        .delete_by_principal("user1", &GrantPrincipal::McpServer("srv1"))
+        .delete_by_principal("user1", &Principal::mcp_server("srv1"))
         .await
         .unwrap();
 
@@ -345,7 +346,7 @@ async fn revoke_grant() {
     let grant = svc
         .create_grant(
             "user1",
-            GrantPrincipal::Agent("agent1"),
+            Principal::agent("agent1"),
             "conn1",
             "item1",
             "test",
@@ -393,7 +394,7 @@ async fn vault_access_log_crud() {
     let log = svc
         .log_access(
             "user1",
-            GrantPrincipal::Agent("agent1"),
+            Principal::agent("agent1"),
             "chat1",
             "conn1",
             "item1",
@@ -405,7 +406,7 @@ async fn vault_access_log_crud() {
         .unwrap();
 
     assert_eq!(log.user_id, "user1");
-    assert_eq!(log.principal, GrantPrincipal::Agent("agent1"));
+    assert_eq!(log.principal, Principal::agent("agent1"));
     assert_eq!(log.chat_id, "chat1");
     assert_eq!(log.env_var_prefix.as_deref(), Some("GH"));
 
@@ -427,7 +428,7 @@ async fn once_grant_not_created() {
     let result = svc
         .create_grant(
             "user1",
-            GrantPrincipal::Agent("agent1"),
+            Principal::agent("agent1"),
             "conn1",
             "item1",
             "github",
@@ -472,7 +473,7 @@ async fn hydrate_projects_durable_bindings_into_env_vars() {
 
     svc.create_binding(
         "user1",
-        GrantPrincipal::Agent("agent1"),
+        Principal::agent("agent1"),
         "github",
         "local",
         &credential.id,
@@ -514,7 +515,7 @@ async fn hydrate_honors_chat_scope_isolation() {
 
     svc.create_binding(
         "user1",
-        GrantPrincipal::Agent("agent1"),
+        Principal::agent("agent1"),
         "x",
         "local",
         &cred.id,
@@ -547,7 +548,7 @@ async fn binding_lookup_prefers_chat_scope_over_durable() {
     let svc = build_service(&db);
     let conn = create_test_connection(&svc, "user1").await;
 
-    let principal = GrantPrincipal::Agent("agent1");
+    let principal = Principal::agent("agent1");
     svc.create_binding(
         "user1",
         principal.clone(),
@@ -616,7 +617,7 @@ async fn deleting_a_chat_cascades_into_its_chat_scoped_bindings() {
 
     svc.create_binding(
         "user1",
-        GrantPrincipal::Agent("agent1"),
+        Principal::agent("agent1"),
         "github",
         &conn.id,
         "item_chat",
@@ -628,7 +629,7 @@ async fn deleting_a_chat_cascades_into_its_chat_scoped_bindings() {
     .unwrap();
     svc.create_binding(
         "user1",
-        GrantPrincipal::Agent("agent1"),
+        Principal::agent("agent1"),
         "github-durable",
         &conn.id,
         "item_durable",
@@ -640,7 +641,7 @@ async fn deleting_a_chat_cascades_into_its_chat_scoped_bindings() {
     .unwrap();
 
     let before = svc
-        .list_bindings_for_principal("user1", &GrantPrincipal::Agent("agent1"))
+        .list_bindings_for_principal("user1", &Principal::agent("agent1"))
         .await
         .unwrap();
     assert_eq!(before.len(), 2);
@@ -648,7 +649,7 @@ async fn deleting_a_chat_cascades_into_its_chat_scoped_bindings() {
     db.query("DELETE chat:ch1").await.unwrap().check().unwrap();
 
     let after = svc
-        .list_bindings_for_principal("user1", &GrantPrincipal::Agent("agent1"))
+        .list_bindings_for_principal("user1", &Principal::agent("agent1"))
         .await
         .unwrap();
     assert_eq!(
@@ -667,7 +668,7 @@ async fn delete_bindings_for_principal_sweeps_only_matching_principal() {
 
     svc.create_binding(
         "user1",
-        GrantPrincipal::Agent("agent1"),
+        Principal::agent("agent1"),
         "q",
         &conn.id,
         "i1",
@@ -681,7 +682,7 @@ async fn delete_bindings_for_principal_sweeps_only_matching_principal() {
     .unwrap();
     svc.create_binding(
         "user1",
-        GrantPrincipal::McpServer("srv1"),
+        Principal::mcp_server("srv1"),
         "q",
         &conn.id,
         "i2",
@@ -694,18 +695,18 @@ async fn delete_bindings_for_principal_sweeps_only_matching_principal() {
     .await
     .unwrap();
 
-    svc.delete_bindings_for_principal("user1", &GrantPrincipal::McpServer("srv1"))
+    svc.delete_bindings_for_principal("user1", &Principal::mcp_server("srv1"))
         .await
         .unwrap();
 
     let agent_remaining = svc
-        .list_bindings_for_principal("user1", &GrantPrincipal::Agent("agent1"))
+        .list_bindings_for_principal("user1", &Principal::agent("agent1"))
         .await
         .unwrap();
     assert_eq!(agent_remaining.len(), 1);
 
     let mcp_remaining = svc
-        .list_bindings_for_principal("user1", &GrantPrincipal::McpServer("srv1"))
+        .list_bindings_for_principal("user1", &Principal::mcp_server("srv1"))
         .await
         .unwrap();
     assert!(mcp_remaining.is_empty());

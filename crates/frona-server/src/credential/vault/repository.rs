@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
+use crate::core::Principal;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
 
 use super::models::{
-    Credential, GrantPrincipal, PrincipalCredentialBinding, VaultAccessLog, VaultConnection,
-    VaultGrant,
+    Credential, PrincipalCredentialBinding, VaultAccessLog, VaultConnection, VaultGrant,
 };
 
 #[async_trait]
@@ -31,18 +31,18 @@ pub trait VaultGrantRepository: Repository<VaultGrant> {
     async fn find_matching_grant(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
         query: &str,
     ) -> Result<Option<VaultGrant>, AppError>;
     async fn find_by_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<Vec<VaultGrant>, AppError>;
     async fn delete_by_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<(), AppError>;
     async fn delete_by_connection_id(&self, connection_id: &str) -> Result<(), AppError>;
 }
@@ -69,7 +69,7 @@ pub trait PrincipalCredentialBindingRepository:
     async fn find_for_lookup(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
         query: &str,
         chat_id: Option<&str>,
     ) -> Result<Option<PrincipalCredentialBinding>, AppError>;
@@ -79,7 +79,7 @@ pub trait PrincipalCredentialBindingRepository:
     async fn find_for_chat(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
         chat_id: &str,
     ) -> Result<Vec<PrincipalCredentialBinding>, AppError>;
 
@@ -87,13 +87,13 @@ pub trait PrincipalCredentialBindingRepository:
     async fn find_for_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<Vec<PrincipalCredentialBinding>, AppError>;
 
     async fn delete_by_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<(), AppError>;
 
     async fn delete_by_chat(&self, chat_id: &str) -> Result<(), AppError>;

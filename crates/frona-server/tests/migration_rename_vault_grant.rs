@@ -48,7 +48,8 @@ async fn principal_of(db: &Surreal<Db>, id: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn migration_stamps_principal_on_old_rows() {
-    use frona::credential::vault::models::{GrantPrincipal, VaultGrant};
+    use frona::core::Principal;
+    use frona::credential::vault::models::VaultGrant;
     use frona::credential::vault::repository::VaultGrantRepository;
     use frona::db::repo::generic::SurrealRepo;
     use std::sync::Arc;
@@ -75,7 +76,7 @@ async fn migration_stamps_principal_on_old_rows() {
     let grant_repo: Arc<dyn VaultGrantRepository> =
         Arc::new(SurrealRepo::<VaultGrant>::new(db.clone()));
     let agent_grants = grant_repo
-        .find_by_principal("user1", &GrantPrincipal::Agent("agent-foo"))
+        .find_by_principal("user1", &Principal::agent("agent-foo"))
         .await
         .expect("the migrated row must deserialize through VaultGrantRepository");
     assert_eq!(

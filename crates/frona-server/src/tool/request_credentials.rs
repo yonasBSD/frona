@@ -56,7 +56,7 @@ impl RequestCredentialsTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let principal = crate::credential::vault::models::GrantPrincipal::Agent(ctx.agent.id.clone());
+        let principal = crate::core::Principal::agent(ctx.agent.id.clone());
         if !force
             && let Some(binding) = self
                 .vault_service

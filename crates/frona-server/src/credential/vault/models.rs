@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
 use crate::Entity;
+use crate::core::Principal;
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[serde(tag = "type", content = "data")]
@@ -109,55 +110,13 @@ pub enum UpdateLocalItemRequest {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
-#[surreal(crate = "surrealdb::types")]
-pub struct GrantPrincipal {
-    pub kind: GrantPrincipalKind,
-    pub id: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
-#[serde(rename_all = "snake_case")]
-#[surreal(crate = "surrealdb::types", rename_all = "snake_case")]
-pub enum GrantPrincipalKind {
-    Agent,
-    McpServer,
-    App,
-}
-
-impl GrantPrincipal {
-    #[allow(non_snake_case)]
-    pub fn Agent(id: impl Into<String>) -> Self {
-        Self {
-            kind: GrantPrincipalKind::Agent,
-            id: id.into(),
-        }
-    }
-
-    #[allow(non_snake_case)]
-    pub fn McpServer(id: impl Into<String>) -> Self {
-        Self {
-            kind: GrantPrincipalKind::McpServer,
-            id: id.into(),
-        }
-    }
-
-    #[allow(non_snake_case)]
-    pub fn App(id: impl Into<String>) -> Self {
-        Self {
-            kind: GrantPrincipalKind::App,
-            id: id.into(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]
 #[entity(table = "vault_access_log")]
 pub struct VaultAccessLog {
     pub id: String,
     pub user_id: String,
-    pub principal: GrantPrincipal,
+    pub principal: Principal,
     pub chat_id: String,
     pub connection_id: String,
     pub vault_item_id: String,
@@ -244,7 +203,7 @@ pub struct VaultGrant {
     pub user_id: String,
     pub connection_id: String,
     pub vault_item_id: String,
-    pub principal: GrantPrincipal,
+    pub principal: Principal,
     pub query: String,
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -285,7 +244,7 @@ pub enum BindingScope {
 pub struct PrincipalCredentialBinding {
     pub id: String,
     pub user_id: String,
-    pub principal: GrantPrincipal,
+    pub principal: Principal,
     /// Lookup key. For agent chat this is the LLM's request query
     /// (e.g. `"github"`); for MCP it's the env var name (e.g. `"GITHUB_TOKEN"`).
     pub query: String,
@@ -409,7 +368,7 @@ pub enum GrantDuration {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateGrantRequest {
-    pub principal: GrantPrincipal,
+    pub principal: Principal,
     pub connection_id: String,
     pub vault_item_id: String,
     pub query: String,
@@ -421,7 +380,7 @@ pub struct VaultGrantResponse {
     pub id: String,
     pub connection_id: String,
     pub vault_item_id: String,
-    pub principal: GrantPrincipal,
+    pub principal: Principal,
     pub query: String,
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,

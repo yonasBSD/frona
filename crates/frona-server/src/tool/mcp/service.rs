@@ -10,7 +10,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::core::error::AppError;
-use crate::credential::vault::models::{BindingScope, CredentialTarget, GrantPrincipal};
+use crate::core::Principal;
+use crate::credential::vault::models::{BindingScope, CredentialTarget};
 use crate::credential::vault::service::VaultService;
 use crate::tool::ToolDefinition;
 
@@ -298,7 +299,7 @@ impl McpServerService {
         server_id: &str,
         bindings: Vec<CredentialBinding>,
     ) -> Result<(), AppError> {
-        let principal = GrantPrincipal::McpServer(server_id);
+        let principal = Principal::mcp_server(server_id);
         for binding in bindings {
             self.vault
                 .create_binding(
@@ -325,7 +326,7 @@ impl McpServerService {
         server_id: &str,
         bindings: &[CredentialBinding],
     ) -> Result<(), AppError> {
-        let principal = GrantPrincipal::McpServer(server_id);
+        let principal = Principal::mcp_server(server_id);
         for binding in bindings {
             let ok = self
                 .vault
@@ -371,7 +372,7 @@ impl McpServerService {
             }
             self.verify_grants(user_id, &server.id, &credentials).await?;
             self.vault
-                .delete_bindings_for_principal(user_id, &GrantPrincipal::McpServer(&server.id))
+                .delete_bindings_for_principal(user_id, &Principal::mcp_server(&server.id))
                 .await?;
             self.write_bindings(user_id, &server.id, credentials).await?;
         }
@@ -400,7 +401,7 @@ impl McpServerService {
     pub async fn uninstall(&self, user_id: &str, server_id: &str) -> Result<(), AppError> {
         let server = self.load_owned(user_id, server_id).await?;
         let _ = self.manager.stop(server_id).await;
-        let principal = GrantPrincipal::McpServer(&server.id);
+        let principal = Principal::mcp_server(&server.id);
         self.vault.delete_bindings_for_principal(user_id, &principal).await?;
         self.vault.delete_grants_for_principal(user_id, &principal).await?;
         let _ = std::fs::remove_dir_all(PathBuf::from(&server.workspace_dir));
@@ -482,7 +483,7 @@ impl McpServerService {
         server: &McpServer,
     ) -> Result<BTreeMap<String, String>, AppError> {
         let mut out = server.env.clone();
-        let principal = GrantPrincipal::McpServer(&server.id);
+        let principal = Principal::mcp_server(&server.id);
         let bindings = self
             .vault
             .list_bindings_for_principal(&server.user_id, &principal)

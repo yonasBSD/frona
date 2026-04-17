@@ -5,9 +5,11 @@ use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 
+use crate::core::Principal;
 use crate::core::config::VaultConfig;
-use crate::credential::key_rotation::derive_key;
 use crate::core::error::AppError;
+use crate::core::principal::PrincipalKind;
+use crate::credential::key_rotation::derive_key;
 
 use super::models::*;
 use super::provider::{VaultProvider, create_local_provider, create_vault_provider};
@@ -27,6 +29,15 @@ pub struct VaultService {
     vault_config: VaultConfig,
     data_dir: PathBuf,
     files_path: PathBuf,
+}
+
+fn ensure_non_user_principal(principal: &Principal) -> Result<(), AppError> {
+    if matches!(principal.kind, PrincipalKind::User) {
+        return Err(AppError::Validation(
+            "vault grants and bindings cannot target the User principal kind".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl VaultService {
@@ -158,9 +169,10 @@ impl VaultService {
     pub async fn find_matching_grant(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
         query: &str,
     ) -> Result<Option<VaultGrant>, AppError> {
+        ensure_non_user_principal(principal)?;
         let grant = self
             .grant_repo
             .find_matching_grant(user_id, principal, query)
@@ -186,12 +198,13 @@ impl VaultService {
     pub async fn create_grant(
         &self,
         user_id: &str,
-        principal: GrantPrincipal,
+        principal: Principal,
         connection_id: &str,
         vault_item_id: &str,
         query: &str,
         duration: &GrantDuration,
     ) -> Result<VaultGrant, AppError> {
+        ensure_non_user_principal(&principal)?;
         let expires_at = match duration {
             GrantDuration::Once => {
                 return Err(AppError::Validation(
@@ -220,7 +233,7 @@ impl VaultService {
     pub async fn log_access(
         &self,
         user_id: &str,
-        principal: GrantPrincipal,
+        principal: Principal,
         chat_id: &str,
         connection_id: &str,
         vault_item_id: &str,
@@ -228,6 +241,7 @@ impl VaultService {
         query: &str,
         reason: &str,
     ) -> Result<VaultAccessLog, AppError> {
+        ensure_non_user_principal(&principal)?;
         let log = VaultAccessLog {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),
@@ -260,7 +274,7 @@ impl VaultService {
         chat_id: &str,
         agent_id: &str,
     ) -> Result<Vec<(String, String)>, AppError> {
-        let principal = GrantPrincipal::Agent(agent_id);
+        let principal = Principal::agent(agent_id);
         let bindings = self
             .binding_repo
             .find_for_chat(user_id, &principal, chat_id)
@@ -288,10 +302,11 @@ impl VaultService {
     pub async fn has_grant_for_item(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
         connection_id: &str,
         vault_item_id: &str,
     ) -> Result<bool, AppError> {
+        ensure_non_user_principal(principal)?;
         let grants = self
             .grant_repo
             .find_by_principal(user_id, principal)
@@ -304,8 +319,9 @@ impl VaultService {
     pub async fn delete_grants_for_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<(), AppError> {
+        ensure_non_user_principal(principal)?;
         self.grant_repo.delete_by_principal(user_id, principal).await
     }
 
@@ -313,7 +329,7 @@ impl VaultService {
     pub async fn create_binding(
         &self,
         user_id: &str,
-        principal: GrantPrincipal,
+        principal: Principal,
         query: &str,
         connection_id: &str,
         vault_item_id: &str,
@@ -321,6 +337,7 @@ impl VaultService {
         scope: BindingScope,
         expires_at: Option<chrono::DateTime<Utc>>,
     ) -> Result<PrincipalCredentialBinding, AppError> {
+        ensure_non_user_principal(&principal)?;
         let binding = PrincipalCredentialBinding {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),
@@ -339,10 +356,11 @@ impl VaultService {
     pub async fn find_binding(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
         query: &str,
         chat_id: Option<&str>,
     ) -> Result<Option<PrincipalCredentialBinding>, AppError> {
+        ensure_non_user_principal(principal)?;
         self.binding_repo
             .find_for_lookup(user_id, principal, query, chat_id)
             .await
@@ -351,8 +369,9 @@ impl VaultService {
     pub async fn list_bindings_for_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<Vec<PrincipalCredentialBinding>, AppError> {
+        ensure_non_user_principal(principal)?;
         self.binding_repo
             .find_for_principal(user_id, principal)
             .await
@@ -361,8 +380,9 @@ impl VaultService {
     pub async fn delete_bindings_for_principal(
         &self,
         user_id: &str,
-        principal: &GrantPrincipal,
+        principal: &Principal,
     ) -> Result<(), AppError> {
+        ensure_non_user_principal(principal)?;
         self.binding_repo.delete_by_principal(user_id, principal).await
     }
 }
