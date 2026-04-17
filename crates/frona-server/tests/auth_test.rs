@@ -87,8 +87,9 @@ async fn test_keypair_signing_and_verifying() {
         iat: Utc::now().timestamp() as usize,
         token_id: "tok-1".to_string(),
         token_type: "access".to_string(),
-        agent_id: None,
+        principal: frona::core::Principal::user("test-456"),
         scopes: None,
+        extensions: None,
     };
 
     let token = jwt_svc.sign(&claims, &encoding_key, &kid).unwrap();
@@ -204,6 +205,7 @@ async fn test_pat_creation_and_validation() {
                 name: "My API Key".to_string(),
                 expires_in_days: Some(30),
                 scopes: Some(vec!["read".to_string()]),
+                principal: None,
             },
         )
         .await
@@ -250,6 +252,7 @@ async fn test_pat_ownership_check() {
                 name: "Token".to_string(),
                 expires_in_days: None,
                 scopes: None,
+                principal: None,
             },
         )
         .await
@@ -481,7 +484,7 @@ async fn test_expired_token_not_found_by_find_active() {
         user_id: "user-1".to_string(),
         name: "short-lived".to_string(),
         token_type: TokenType::Access,
-        agent_id: None,
+        principal: frona::core::Principal::user("user-1"),
         scopes: vec![],
         prefix: "test...".to_string(),
         expires_at: now + Duration::seconds(1),

@@ -70,8 +70,9 @@ pub struct Claims {
     pub iat: usize,
     pub token_id: String,
     pub token_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
+    pub principal: crate::core::Principal,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub extensions: Option<serde_json::Value>,
 }

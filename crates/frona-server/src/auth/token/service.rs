@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use super::models::{ApiToken, CreatePatRequest, PatListItem, PatResponse, TokenType};
 use super::repository::TokenRepository;
+use crate::auth::User;
 use crate::auth::jwt::JwtService;
 use crate::auth::models::Claims;
-use crate::credential::keypair::service::KeyPairService;
+use crate::core::Principal;
 use crate::core::error::{AppError, AuthErrorCode};
-use crate::auth::User;
+use crate::credential::keypair::service::KeyPairService;
 
 #[derive(Clone)]
 pub struct TokenService {
@@ -16,6 +17,22 @@ pub struct TokenService {
     jwt: JwtService,
     access_expiry_secs: u64,
     refresh_expiry_secs: u64,
+}
+
+pub struct CreateTokenRequest {
+    pub token_type: TokenType,
+    pub principal: Principal,
+    pub ttl_secs: u64,
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub refresh_pair_id: Option<String>,
+    pub extensions: Option<serde_json::Value>,
+}
+
+pub struct CreatedToken {
+    pub jwt: String,
+    pub token_id: String,
+    pub expires_at: DateTime<Utc>,
 }
 
 impl TokenService {
@@ -33,80 +50,106 @@ impl TokenService {
         }
     }
 
+    pub async fn create_token(
+        &self,
+        keypair_svc: &KeyPairService,
+        user: &User,
+        req: CreateTokenRequest,
+    ) -> Result<CreatedToken, AppError> {
+        let now = Utc::now();
+        let expires_at = now + Duration::seconds(req.ttl_secs as i64);
+        let token_id = uuid::Uuid::new_v4().to_string();
+
+        let owner = format!("user:{}", user.id);
+        let (encoding_key, kid) = keypair_svc.get_signing_key(&owner).await?;
+
+        let scopes_claim = if req.scopes.is_empty() {
+            None
+        } else {
+            Some(req.scopes.clone())
+        };
+
+        let claims = Claims {
+            sub: user.id.clone(),
+            username: user.username.clone(),
+            email: user.email.clone(),
+            exp: expires_at.timestamp() as usize,
+            iat: now.timestamp() as usize,
+            token_id: token_id.clone(),
+            token_type: req.token_type.as_str().to_string(),
+            principal: req.principal.clone(),
+            scopes: scopes_claim,
+            extensions: req.extensions,
+        };
+
+        let jwt = self.jwt.sign(&claims, &encoding_key, &kid)?;
+
+        if !req.token_type.is_stateless() {
+            let api_token = ApiToken {
+                id: token_id.clone(),
+                user_id: user.id.clone(),
+                name: req.name,
+                token_type: req.token_type,
+                principal: req.principal,
+                scopes: req.scopes,
+                prefix: token_prefix(&jwt),
+                expires_at,
+                last_used_at: None,
+                refresh_pair_id: req.refresh_pair_id,
+                created_at: now,
+                updated_at: now,
+            };
+            self.repo.create(&api_token).await?;
+        }
+
+        Ok(CreatedToken {
+            jwt,
+            token_id,
+            expires_at,
+        })
+    }
+
     pub async fn create_session_pair(
         &self,
         keypair_svc: &KeyPairService,
         user: &User,
     ) -> Result<(String, String), AppError> {
         let pair_id = uuid::Uuid::new_v4().to_string();
-        let now = Utc::now();
+        let principal = Principal::user(&user.id);
 
-        let owner = format!("user:{}", user.id);
-        let (encoding_key, kid) = keypair_svc.get_signing_key(&owner).await?;
+        let access = self
+            .create_token(
+                keypair_svc,
+                user,
+                CreateTokenRequest {
+                    token_type: TokenType::Access,
+                    principal: principal.clone(),
+                    ttl_secs: self.access_expiry_secs,
+                    name: "session".to_string(),
+                    scopes: vec![],
+                    refresh_pair_id: Some(pair_id.clone()),
+                    extensions: None,
+                },
+            )
+            .await?;
 
-        let access_id = uuid::Uuid::new_v4().to_string();
-        let access_expires = now + Duration::seconds(self.access_expiry_secs as i64);
-        let access_claims = Claims {
-            sub: user.id.clone(),
-            username: user.username.clone(),
-            email: user.email.clone(),
-            exp: access_expires.timestamp() as usize,
-            iat: now.timestamp() as usize,
-            token_id: access_id.clone(),
-            token_type: "access".to_string(),
-            agent_id: None,
-            scopes: None,
-        };
-        let access_jwt = self.jwt.sign(&access_claims, &encoding_key, &kid)?;
+        let refresh = self
+            .create_token(
+                keypair_svc,
+                user,
+                CreateTokenRequest {
+                    token_type: TokenType::Refresh,
+                    principal,
+                    ttl_secs: self.refresh_expiry_secs,
+                    name: "refresh".to_string(),
+                    scopes: vec![],
+                    refresh_pair_id: Some(pair_id),
+                    extensions: None,
+                },
+            )
+            .await?;
 
-        let access_token = ApiToken {
-            id: access_id,
-            user_id: user.id.clone(),
-            name: "session".to_string(),
-            token_type: TokenType::Access,
-            agent_id: None,
-            scopes: vec![],
-            prefix: token_prefix(&access_jwt),
-            expires_at: access_expires,
-            last_used_at: None,
-            refresh_pair_id: Some(pair_id.clone()),
-            created_at: now,
-            updated_at: now,
-        };
-        self.repo.create(&access_token).await?;
-
-        let refresh_id = uuid::Uuid::new_v4().to_string();
-        let refresh_expires = now + Duration::seconds(self.refresh_expiry_secs as i64);
-        let refresh_claims = Claims {
-            sub: user.id.clone(),
-            username: user.username.clone(),
-            email: user.email.clone(),
-            exp: refresh_expires.timestamp() as usize,
-            iat: now.timestamp() as usize,
-            token_id: refresh_id.clone(),
-            token_type: "refresh".to_string(),
-            agent_id: None,
-            scopes: None,
-        };
-        let refresh_jwt = self.jwt.sign(&refresh_claims, &encoding_key, &kid)?;
-
-        let refresh_token = ApiToken {
-            id: refresh_id,
-            user_id: user.id.clone(),
-            name: "refresh".to_string(),
-            token_type: TokenType::Refresh,
-            agent_id: None,
-            scopes: vec![],
-            prefix: token_prefix(&refresh_jwt),
-            expires_at: refresh_expires,
-            last_used_at: None,
-            refresh_pair_id: Some(pair_id),
-            created_at: now,
-            updated_at: now,
-        };
-        self.repo.create(&refresh_token).await?;
-
-        Ok((access_jwt, refresh_jwt))
+        Ok((access.jwt, refresh.jwt))
     }
 
     pub async fn create_access_token(
@@ -115,43 +158,22 @@ impl TokenService {
         user: &User,
         name: &str,
     ) -> Result<String, AppError> {
-        let now = Utc::now();
-
-        let owner = format!("user:{}", user.id);
-        let (encoding_key, kid) = keypair_svc.get_signing_key(&owner).await?;
-
-        let token_id = uuid::Uuid::new_v4().to_string();
-        let expires_at = now + Duration::seconds(self.access_expiry_secs as i64);
-        let claims = Claims {
-            sub: user.id.clone(),
-            username: user.username.clone(),
-            email: user.email.clone(),
-            exp: expires_at.timestamp() as usize,
-            iat: now.timestamp() as usize,
-            token_id: token_id.clone(),
-            token_type: "access".to_string(),
-            agent_id: None,
-            scopes: None,
-        };
-        let jwt = self.jwt.sign(&claims, &encoding_key, &kid)?;
-
-        let api_token = ApiToken {
-            id: token_id,
-            user_id: user.id.clone(),
-            name: name.to_string(),
-            token_type: TokenType::Access,
-            agent_id: None,
-            scopes: vec![],
-            prefix: token_prefix(&jwt),
-            expires_at,
-            last_used_at: None,
-            refresh_pair_id: None,
-            created_at: now,
-            updated_at: now,
-        };
-        self.repo.create(&api_token).await?;
-
-        Ok(jwt)
+        let created = self
+            .create_token(
+                keypair_svc,
+                user,
+                CreateTokenRequest {
+                    token_type: TokenType::Access,
+                    principal: Principal::user(&user.id),
+                    ttl_secs: self.access_expiry_secs,
+                    name: name.to_string(),
+                    scopes: vec![],
+                    refresh_pair_id: None,
+                    extensions: None,
+                },
+            )
+            .await?;
+        Ok(created.jwt)
     }
 
     pub async fn refresh(
@@ -161,8 +183,11 @@ impl TokenService {
     ) -> Result<(String, String, Claims), AppError> {
         let claims = self.validate(keypair_svc, refresh_token_str).await?;
 
-        if claims.token_type != "refresh" {
-            return Err(AppError::Auth { message: "Not a refresh token".into(), code: AuthErrorCode::TokenInvalid });
+        if claims.token_type != TokenType::Refresh.as_str() {
+            return Err(AppError::Auth {
+                message: "Not a refresh token".into(),
+                code: AuthErrorCode::TokenInvalid,
+            });
         }
 
         if let Some(ref pair_id) = self
@@ -195,52 +220,37 @@ impl TokenService {
         user: &User,
         req: CreatePatRequest,
     ) -> Result<PatResponse, AppError> {
-        let now = Utc::now();
         let expires_in_days = req.expires_in_days.unwrap_or(30);
-        let expires_at = now + Duration::days(expires_in_days as i64);
+        let ttl_secs = expires_in_days.saturating_mul(86_400);
         let scopes = req.scopes.unwrap_or_default();
+        let principal = req
+            .principal
+            .unwrap_or_else(|| Principal::user(&user.id));
 
-        let owner = format!("user:{}", user.id);
-        let (encoding_key, kid) = keypair_svc.get_signing_key(&owner).await?;
-
-        let token_id = uuid::Uuid::new_v4().to_string();
-        let claims = Claims {
-            sub: user.id.clone(),
-            username: user.username.clone(),
-            email: user.email.clone(),
-            exp: expires_at.timestamp() as usize,
-            iat: now.timestamp() as usize,
-            token_id: token_id.clone(),
-            token_type: "pat".to_string(),
-            agent_id: None,
-            scopes: Some(scopes.clone()),
-        };
-        let jwt = self.jwt.sign(&claims, &encoding_key, &kid)?;
-
-        let api_token = ApiToken {
-            id: token_id.clone(),
-            user_id: user.id.clone(),
-            name: req.name.clone(),
-            token_type: TokenType::Pat,
-            agent_id: None,
-            scopes: scopes.clone(),
-            prefix: token_prefix(&jwt),
-            expires_at,
-            last_used_at: None,
-            refresh_pair_id: None,
-            created_at: now,
-            updated_at: now,
-        };
-        self.repo.create(&api_token).await?;
+        let created = self
+            .create_token(
+                keypair_svc,
+                user,
+                CreateTokenRequest {
+                    token_type: TokenType::Pat,
+                    principal,
+                    ttl_secs,
+                    name: req.name.clone(),
+                    scopes: scopes.clone(),
+                    refresh_pair_id: None,
+                    extensions: None,
+                },
+            )
+            .await?;
 
         Ok(PatResponse {
-            id: token_id,
+            id: created.token_id,
             name: req.name,
-            prefix: token_prefix(&jwt),
-            token: jwt,
+            prefix: token_prefix(&created.jwt),
+            token: created.jwt,
             scopes,
-            expires_at,
-            created_at: now,
+            expires_at: created.expires_at,
+            created_at: Utc::now(),
         })
     }
 
@@ -250,18 +260,27 @@ impl TokenService {
         token_str: &str,
     ) -> Result<Claims, AppError> {
         let header = self.jwt.decode_unverified_header(token_str)?;
-        let kid = header
-            .kid
-            .ok_or_else(|| AppError::Auth { message: "Token missing kid".into(), code: AuthErrorCode::TokenInvalid })?;
+        let kid = header.kid.ok_or_else(|| AppError::Auth {
+            message: "Token missing kid".into(),
+            code: AuthErrorCode::TokenInvalid,
+        })?;
 
         let decoding_key = keypair_svc.get_verifying_key(&kid).await?;
         let claims = self.jwt.verify::<Claims>(token_str, &decoding_key)?;
+
+        // Stateless tokens (Ephemeral) skip DB revocation checks — signature + exp are authoritative.
+        if claims.token_type == TokenType::Ephemeral.as_str() {
+            return Ok(claims);
+        }
 
         let db_token = self
             .repo
             .find_active_by_id(&claims.token_id)
             .await?
-            .ok_or_else(|| AppError::Auth { message: "Token revoked".into(), code: AuthErrorCode::TokenInvalid })?;
+            .ok_or_else(|| AppError::Auth {
+                message: "Token revoked".into(),
+                code: AuthErrorCode::TokenInvalid,
+            })?;
 
         let _ = self.repo.update_last_used(&db_token.id).await;
 

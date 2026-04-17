@@ -425,8 +425,9 @@ async fn generic_jwt_still_works_with_auth_claims() {
         iat: Utc::now().timestamp() as usize,
         token_id: "tok-1".to_string(),
         token_type: "access".to_string(),
-        agent_id: None,
+        principal: frona::core::Principal::user("uid-99"),
         scopes: None,
+        extensions: None,
     };
 
     let token = jwt_svc.sign(&claims, &enc_key, &kid).unwrap();
