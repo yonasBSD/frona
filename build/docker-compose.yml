@@ -44,6 +44,7 @@ services:
       - node-modules:/app/web/node_modules
       - ../web:/app/web
       - ../resources:/app/resources
+      - ../build:/app/build
       - ../data:/app/data
     environment:
       - ANTHROPIC_API_KEY

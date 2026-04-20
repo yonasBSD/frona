@@ -38,7 +38,7 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
-RUN cargo build --release -p frona-server
+RUN cargo build --release -p frona-server -p frona-cli-mcp
 
 # Stage 4: CLI tools (op, bw, syd)
 FROM debian:bookworm-slim AS cli-tools
@@ -103,13 +103,14 @@ RUN --mount=type=bind,source=build/pkgs/dev-rust-cargo.txt,target=/tmp/cargo.txt
 COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/surreal /usr/local/bin/syd /usr/local/bin/
 
 RUN groupadd -g 1000 frona && useradd -u 1000 -g frona -m -s /bin/bash frona
-RUN mkdir -p /app /app/target /app/frontend/node_modules /app/data \
+RUN mkdir -p /app /app/target /app/frontend/node_modules /app/data /app/bin \
     && chown -R frona:frona /app /usr/local/cargo
+ENV PATH="/app/bin:${PATH}"
 USER frona
 WORKDIR /app
 COPY --chown=frona:frona web/package.json web/package-lock.json* web/
 RUN cd web && npm install
-CMD ["bash", "-c", "cd web && npm install && cd /app && cargo watch --poll -w crates/ -w Cargo.toml -w Cargo.lock --delay 3 -x 'run -p frona-server' & cd web && npm run dev & wait"]
+CMD ["bash", "-c", "cd web && npm install && cd /app && cargo watch --poll -w crates/ -w Cargo.toml -w Cargo.lock --delay 3 -s /app/build/dev-watch.sh & cd web && npm run dev & wait"]
 
 # ============================
 # PROD TARGET (default)
@@ -131,17 +132,19 @@ RUN --mount=type=bind,source=build/pkgs/prod-apt.txt,target=/tmp/packages.txt \
 COPY --from=cli-tools /usr/local/bin/op /usr/local/bin/bw /usr/local/bin/surreal /usr/local/bin/syd /usr/local/bin/
 
 RUN groupadd -g 1000 frona && useradd -u 1000 -g frona -d /app -s /bin/bash frona
-RUN mkdir -p /app /data && chown -R frona:frona /app /data
+RUN mkdir -p /app /app/bin /data && chown -R frona:frona /app /data
 WORKDIR /app
 
 COPY --from=python-builder /install /usr/local
 # Pre-compile .pyc files so Python doesn't need write access to system dirs
 # at runtime (syd sandbox blocks writes outside the agent workspace).
 RUN python3 -m compileall -q /usr/local/lib/python3.12
-COPY --chown=frona:frona --from=backend-builder /app/target/release/frona /app/frona
+COPY --chown=frona:frona --from=backend-builder /app/target/release/frona /app/bin/frona
+COPY --chown=frona:frona --from=backend-builder /app/target/release/mcpctl /app/bin/mcpctl
 COPY --chown=frona:frona --from=frontend-builder /app/web/out /app/static
 COPY --chown=frona:frona resources /app/share
 
+ENV PATH="/app/bin:${PATH}"
 ENV FRONA_SERVER_STATIC_DIR=/app/static
 ENV FRONA_SERVER_DATA_DIR=/app/data
 ENV FRONA_SERVER_PORT=3001
@@ -152,4 +155,4 @@ ENV SURREAL_SYNC_DATA=true
 VOLUME /app/data
 EXPOSE 3001
 USER frona
-CMD ["/app/frona"]
+CMD ["frona"]
