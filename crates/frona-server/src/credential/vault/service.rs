@@ -425,6 +425,9 @@ impl VaultService {
         if grant.user_id != user_id {
             return Err(AppError::Forbidden("Not your grant".into()));
         }
+        self.binding_repo
+            .delete_for_item(user_id, &grant.principal, &grant.connection_id, &grant.vault_item_id)
+            .await?;
         self.grant_repo.delete(grant_id).await
     }
 

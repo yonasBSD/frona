@@ -443,6 +443,32 @@ impl PrincipalCredentialBindingRepository for SurrealRepo<PrincipalCredentialBin
         Ok(())
     }
 
+    async fn delete_for_item(
+        &self,
+        user_id: &str,
+        principal: &Principal,
+        connection_id: &str,
+        vault_item_id: &str,
+    ) -> Result<(), AppError> {
+        self.db()
+            .query(
+                "DELETE FROM principal_credential_binding \
+                 WHERE user_id = $user_id \
+                 AND principal.kind = $principal_kind \
+                 AND principal.id = $principal_id \
+                 AND connection_id = $connection_id \
+                 AND vault_item_id = $vault_item_id",
+            )
+            .bind(("user_id", user_id.to_string()))
+            .bind(("principal_kind", principal.kind))
+            .bind(("principal_id", principal.id.clone()))
+            .bind(("connection_id", connection_id.to_string()))
+            .bind(("vault_item_id", vault_item_id.to_string()))
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     async fn delete_by_chat(&self, chat_id: &str) -> Result<(), AppError> {
         self.db()
             .query(

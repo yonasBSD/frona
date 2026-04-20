@@ -96,5 +96,13 @@ pub trait PrincipalCredentialBindingRepository:
         principal: &Principal,
     ) -> Result<(), AppError>;
 
+    async fn delete_for_item(
+        &self,
+        user_id: &str,
+        principal: &Principal,
+        connection_id: &str,
+        vault_item_id: &str,
+    ) -> Result<(), AppError>;
+
     async fn delete_by_chat(&self, chat_id: &str) -> Result<(), AppError>;
 }
