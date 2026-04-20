@@ -175,6 +175,8 @@ pub struct McpServerInstall {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpServerUpdate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credentials: Option<Vec<CredentialBinding>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_env: Option<BTreeMap<String, String>>,

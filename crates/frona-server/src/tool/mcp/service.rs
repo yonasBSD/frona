@@ -400,6 +400,9 @@ impl McpServerService {
             self.write_bindings(user_id, &server.id, credentials).await?;
         }
 
+        if let Some(description) = req.description {
+            server.description = Some(description);
+        }
         if let Some(extra_env) = req.extra_env {
             server.env = extra_env;
         }

@@ -759,6 +759,8 @@ pub struct McpConfig {
     pub port_range_start: u16,
     #[schemars(description = "End of the port range for local HTTP MCP servers (exclusive).")]
     pub port_range_end: u16,
+    #[schemars(description = "When true, expose MCP tools via the mcpctl CLI bridge instead of individual tool definitions. Reduces LLM context token usage.")]
+    pub bridge_mode: bool,
 }
 
 impl Default for McpConfig {
@@ -774,6 +776,7 @@ impl Default for McpConfig {
             default_transport: "stdio".into(),
             port_range_start: 4100,
             port_range_end: 4200,
+            bridge_mode: true,
         }
     }
 }
