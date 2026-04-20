@@ -409,7 +409,32 @@ impl VaultService {
         user_id: &str,
     ) -> Result<Vec<VaultGrantResponse>, AppError> {
         let grants = self.grant_repo.find_by_user_id(user_id).await?;
-        Ok(grants.into_iter().map(Into::into).collect())
+        let mut responses: Vec<VaultGrantResponse> = grants.into_iter().map(Into::into).collect();
+
+        let mut seen = std::collections::HashSet::new();
+        let mut all_bindings = Vec::new();
+        for r in &responses {
+            let key = format!("{:?}:{}", r.principal.kind, r.principal.id);
+            if seen.insert(key)
+                && let Ok(bindings) = self.binding_repo
+                    .find_for_principal(user_id, &r.principal)
+                    .await
+            {
+                all_bindings.extend(bindings);
+            }
+        }
+
+        for r in &mut responses {
+            if let Some(binding) = all_bindings.iter().find(|b| {
+                b.connection_id == r.connection_id
+                    && b.vault_item_id == r.vault_item_id
+                    && b.query == r.query
+            }) {
+                r.target = Some(binding.target.clone());
+            }
+        }
+
+        Ok(responses)
     }
 
     pub async fn revoke_grant(

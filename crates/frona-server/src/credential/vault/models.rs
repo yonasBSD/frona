@@ -382,6 +382,8 @@ pub struct VaultGrantResponse {
     pub vault_item_id: String,
     pub principal: Principal,
     pub query: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<CredentialTarget>,
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -394,6 +396,7 @@ impl From<VaultGrant> for VaultGrantResponse {
             vault_item_id: g.vault_item_id,
             principal: g.principal,
             query: g.query,
+            target: None,
             expires_at: g.expires_at,
             created_at: g.created_at,
         }
