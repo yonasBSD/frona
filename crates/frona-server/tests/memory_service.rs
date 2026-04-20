@@ -97,7 +97,7 @@ async fn test_build_augmented_prompt_includes_agent_memory() {
         .unwrap();
 
     let prompt = svc
-        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new())
+        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new(), &[])
         .await
         .unwrap();
 
@@ -119,7 +119,7 @@ async fn test_build_augmented_prompt_includes_user_memory() {
         .unwrap();
 
     let prompt = svc
-        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new())
+        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new(), &[])
         .await
         .unwrap();
 
@@ -168,7 +168,7 @@ async fn test_build_augmented_prompt_includes_new_entries_after_compaction() {
     repo.create(&new_entry).await.unwrap();
 
     let prompt = svc
-        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new())
+        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new(), &[])
         .await
         .unwrap();
 
@@ -209,7 +209,7 @@ async fn test_build_augmented_prompt_appends_tools_guide() {
     let svc = make_memory_service(db.clone());
 
     let prompt = svc
-        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new())
+        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new(), &[])
         .await
         .unwrap();
 
@@ -233,7 +233,7 @@ async fn test_build_augmented_prompt_appends_memory_guide() {
     let svc = make_memory_service(db.clone());
 
     let prompt = svc
-        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new())
+        .build_augmented_system_prompt("Base prompt", "agent-1", "user-1", None, &[], &[], &std::collections::BTreeMap::new(), &[])
         .await
         .unwrap();
 

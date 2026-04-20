@@ -62,6 +62,30 @@ impl ChatSessionContext {
             )
             .await;
 
+        let mcp_servers: Vec<(String, String)> = if state.config.mcp.bridge_mode {
+            let servers = state.mcp_service.list_for_user(user_id).await.unwrap_or_default();
+            let allowed_slugs: std::collections::HashSet<String> = agent_config
+                .tools
+                .iter()
+                .filter_map(|id| {
+                    id.strip_prefix("mcp__")
+                        .and_then(|rest| rest.split_once("__"))
+                        .map(|(slug, _)| slug.to_string())
+                })
+                .collect();
+            servers
+                .into_iter()
+                .filter(|s| s.status == crate::tool::mcp::models::McpServerStatus::Running)
+                .filter(|s| allowed_slugs.contains(&s.slug))
+                .map(|s| {
+                    let desc = s.description.unwrap_or_else(|| s.display_name.clone());
+                    (s.slug, desc)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let mut system_prompt = match state
             .memory_service
             .build_augmented_system_prompt(
@@ -72,6 +96,7 @@ impl ChatSessionContext {
                 &skills,
                 &agent_summaries,
                 &agent_config.identity,
+                &mcp_servers,
             )
             .await
         {

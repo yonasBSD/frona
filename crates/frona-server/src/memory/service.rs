@@ -604,6 +604,7 @@ impl MemoryService {
         skills: &[crate::agent::skill::resolver::Skill],
         agent_summaries: &[(String, String)],
         identity: &std::collections::BTreeMap<String, String>,
+        mcp_servers: &[(String, String)],
     ) -> Result<String, AppError> {
         // Prompt is ordered static → almost-static → dynamic to maximise
         // the cacheable prefix for LLM prompt caching.
@@ -640,6 +641,19 @@ impl MemoryService {
             None,
             &skill_items,
         );
+
+        if !mcp_servers.is_empty() {
+            if let Some(mcp_prompt) = self.prompts.read("MCP.md") {
+                result.push_str("\n\n");
+                result.push_str(&mcp_prompt);
+            }
+            append_tagged_section(
+                &mut result,
+                "mcpservers",
+                None,
+                mcp_servers,
+            );
+        }
 
         append_tagged_section(
             &mut result,

@@ -405,15 +405,12 @@ async fn update_extra_env_replaces_value() {
         .unwrap();
 
     let update = McpServerUpdate {
-        credentials: None,
         extra_env: Some(
             [("LOG_LEVEL".to_string(), "debug".to_string())]
                 .into_iter()
                 .collect(),
         ),
-        extra_read_paths: None,
-        extra_write_paths: None,
-        active_transport: None,
+        ..Default::default()
     };
     let result = service.update("user1", &persisted.id, update).await.unwrap();
     assert_eq!(result.server.env.get("LOG_LEVEL").map(String::as_str), Some("debug"));
