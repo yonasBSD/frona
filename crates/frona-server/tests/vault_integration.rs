@@ -711,3 +711,172 @@ async fn delete_bindings_for_principal_sweeps_only_matching_principal() {
         .unwrap();
     assert!(mcp_remaining.is_empty());
 }
+
+#[tokio::test]
+async fn grant_with_prefix_binding_creates_and_revokes_together() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    svc.sync_config_connections().await.unwrap();
+
+    let cred = svc
+        .create_credential("user1", CreateLocalItemRequest::UsernamePassword {
+            name: "GitHub".into(),
+            username: "octocat".into(),
+            password: "ghp_xxx".into(),
+        })
+        .await
+        .unwrap();
+
+    let principal = Principal::mcp_server("srv1");
+    let grant = svc
+        .create_grant("user1", principal.clone(), "local", &cred.id, "GITHUB", &GrantDuration::Permanent)
+        .await
+        .unwrap();
+    svc.create_binding(
+        "user1", principal.clone(), "GITHUB", "local", &cred.id,
+        CredentialTarget::Prefix { env_var_prefix: "GITHUB".into() },
+        BindingScope::Durable, None,
+    ).await.unwrap();
+
+    let bindings = svc.list_bindings_for_principal("user1", &principal).await.unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert!(matches!(bindings[0].target, CredentialTarget::Prefix { .. }));
+
+    let grants = svc.list_grants("user1").await.unwrap();
+    assert_eq!(grants.len(), 1);
+    assert!(grants[0].target.is_some());
+
+    svc.revoke_grant("user1", &grant.id).await.unwrap();
+
+    let grants_after = svc.list_grants("user1").await.unwrap();
+    assert!(grants_after.is_empty());
+    let bindings_after = svc.list_bindings_for_principal("user1", &principal).await.unwrap();
+    assert!(bindings_after.is_empty(), "revoking grant must also remove its binding");
+}
+
+#[tokio::test]
+async fn grant_with_single_field_binding_creates_and_revokes_together() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    svc.sync_config_connections().await.unwrap();
+
+    let cred = svc
+        .create_credential("user1", CreateLocalItemRequest::UsernamePassword {
+            name: "HA Token".into(),
+            username: "admin".into(),
+            password: "secret_token".into(),
+        })
+        .await
+        .unwrap();
+
+    let principal = Principal::mcp_server("ha-mcp");
+    let grant = svc
+        .create_grant("user1", principal.clone(), "local", &cred.id, "HA_TOKEN", &GrantDuration::Permanent)
+        .await
+        .unwrap();
+    svc.create_binding(
+        "user1", principal.clone(), "HA_TOKEN", "local", &cred.id,
+        CredentialTarget::Single { env_var: "HA_TOKEN".into(), field: VaultField::Password },
+        BindingScope::Durable, None,
+    ).await.unwrap();
+
+    let bindings = svc.list_bindings_for_principal("user1", &principal).await.unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert!(matches!(bindings[0].target, CredentialTarget::Single { .. }));
+
+    let grants = svc.list_grants("user1").await.unwrap();
+    assert_eq!(grants.len(), 1);
+    match &grants[0].target {
+        Some(CredentialTarget::Single { env_var, .. }) => assert_eq!(env_var, "HA_TOKEN"),
+        other => panic!("expected Single target, got {other:?}"),
+    }
+
+    svc.revoke_grant("user1", &grant.id).await.unwrap();
+
+    assert!(svc.list_grants("user1").await.unwrap().is_empty());
+    assert!(
+        svc.list_bindings_for_principal("user1", &principal).await.unwrap().is_empty(),
+        "revoking grant must also remove single-field binding"
+    );
+}
+
+#[tokio::test]
+async fn grant_with_custom_field_binding() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    svc.sync_config_connections().await.unwrap();
+
+    let cred = svc
+        .create_credential("user1", CreateLocalItemRequest::ApiKey {
+            name: "Home Assistant".into(),
+            api_key: "ha_long_lived_token".into(),
+        })
+        .await
+        .unwrap();
+
+    let principal = Principal::mcp_server("ha-srv");
+    let grant = svc
+        .create_grant("user1", principal.clone(), "local", &cred.id, "HA_TOKEN", &GrantDuration::Permanent)
+        .await
+        .unwrap();
+    svc.create_binding(
+        "user1", principal.clone(), "HA_TOKEN", "local", &cred.id,
+        CredentialTarget::Single { env_var: "HA_TOKEN".into(), field: VaultField::Custom { name: "API_KEY".into() } },
+        BindingScope::Durable, None,
+    ).await.unwrap();
+
+    let grants = svc.list_grants("user1").await.unwrap();
+    assert_eq!(grants.len(), 1);
+    match &grants[0].target {
+        Some(CredentialTarget::Single { field: VaultField::Custom { name }, .. }) => assert_eq!(name, "API_KEY"),
+        other => panic!("expected Single with Custom field, got {other:?}"),
+    }
+
+    svc.revoke_grant("user1", &grant.id).await.unwrap();
+    assert!(svc.list_bindings_for_principal("user1", &principal).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn revoke_grant_only_removes_matching_binding() {
+    let db = setup_db().await;
+    let svc = build_service(&db);
+    svc.sync_config_connections().await.unwrap();
+
+    let cred1 = svc
+        .create_credential("user1", CreateLocalItemRequest::ApiKey { name: "Sonarr".into(), api_key: "sonarr_key".into() })
+        .await.unwrap();
+    let cred2 = svc
+        .create_credential("user1", CreateLocalItemRequest::ApiKey { name: "Radarr".into(), api_key: "radarr_key".into() })
+        .await.unwrap();
+
+    let principal = Principal::mcp_server("arr-srv");
+    let grant1 = svc
+        .create_grant("user1", principal.clone(), "local", &cred1.id, "SONARR_API_KEY", &GrantDuration::Permanent)
+        .await.unwrap();
+    svc.create_binding(
+        "user1", principal.clone(), "SONARR_API_KEY", "local", &cred1.id,
+        CredentialTarget::Single { env_var: "SONARR_API_KEY".into(), field: VaultField::Custom { name: "API_KEY".into() } },
+        BindingScope::Durable, None,
+    ).await.unwrap();
+
+    let _grant2 = svc
+        .create_grant("user1", principal.clone(), "local", &cred2.id, "RADARR_API_KEY", &GrantDuration::Permanent)
+        .await.unwrap();
+    svc.create_binding(
+        "user1", principal.clone(), "RADARR_API_KEY", "local", &cred2.id,
+        CredentialTarget::Single { env_var: "RADARR_API_KEY".into(), field: VaultField::Custom { name: "API_KEY".into() } },
+        BindingScope::Durable, None,
+    ).await.unwrap();
+
+    assert_eq!(svc.list_bindings_for_principal("user1", &principal).await.unwrap().len(), 2);
+
+    svc.revoke_grant("user1", &grant1.id).await.unwrap();
+
+    let remaining_grants = svc.list_grants("user1").await.unwrap();
+    assert_eq!(remaining_grants.len(), 1);
+    assert_eq!(remaining_grants[0].query, "RADARR_API_KEY");
+
+    let remaining_bindings = svc.list_bindings_for_principal("user1", &principal).await.unwrap();
+    assert_eq!(remaining_bindings.len(), 1, "only sonarr binding should be removed");
+    assert_eq!(remaining_bindings[0].query, "RADARR_API_KEY");
+}
