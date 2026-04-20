@@ -31,6 +31,7 @@ export interface VaultGrant {
   vault_item_id: string;
   principal: { kind: string; id: string };
   query: string;
+  target?: { Single?: { env_var: string; field: unknown }; Prefix?: { env_var_prefix: string } };
   expires_at: string | null;
   created_at: string;
 }
@@ -76,6 +77,17 @@ function EnvPreview({ prefix, fields }: { prefix: string; fields: string[] }) {
   );
 }
 
+export interface PendingCredential {
+  principal: { kind: string; id: string };
+  connection_id: string;
+  vault_item_id: string;
+  query: string;
+  target: unknown;
+  item_name: string;
+  connection_name: string;
+  fields: string[];
+}
+
 export function AddCredentialForm({
   connections,
   principalKind,
@@ -85,6 +97,7 @@ export function AddCredentialForm({
   initialSelection,
   onClose,
   onCreated,
+  deferred,
 }: {
   connections: Map<string, VaultConnection>;
   principalKind: string;
@@ -94,6 +107,7 @@ export function AddCredentialForm({
   initialSelection?: { connection_id: string; vault_item_id: string };
   onClose: () => void;
   onCreated: (grant: VaultGrant) => void;
+  deferred?: (pending: PendingCredential) => void;
 }) {
   const enabledConns = Array.from(connections.values()).filter((c) => c.enabled);
   const [selectedConnection, setSelectedConnection] = useState(initialSelection?.connection_id ?? enabledConns[0]?.id ?? "");
@@ -207,13 +221,26 @@ export function AddCredentialForm({
       const target = mode === "single"
         ? { Single: { env_var: query, field: toVaultField(selectedField || "PASSWORD") } }
         : { Prefix: { env_var_prefix: mode === "prefix" ? envVar.trim() : "" } };
-      const grant = await api.post<VaultGrant>("/api/vaults/grants", {
+      const payload = {
         principal: { kind: principalKind, id: principalId },
         connection_id: selectedConnection,
         vault_item_id: selectedItem,
         query,
         target,
-      });
+      };
+      if (deferred) {
+        const item = items.find((i) => i.id === selectedItem);
+        const conn = connections.get(selectedConnection);
+        deferred({
+          ...payload,
+          item_name: item?.name ?? query,
+          connection_name: conn?.name ?? "Unknown",
+          fields: [...fields],
+        });
+        onClose();
+        return;
+      }
+      const grant = await api.post<VaultGrant>("/api/vaults/grants", payload);
       onCreated(grant);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create grant");
