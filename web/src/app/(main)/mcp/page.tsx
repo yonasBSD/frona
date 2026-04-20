@@ -51,7 +51,8 @@ interface RegistryEntry {
 }
 
 const SECTIONS = [
-  { id: "general", label: "General" },
+  { id: "status", label: "Status" },
+  { id: "prompt", label: "Prompt" },
   { id: "environment", label: "Environment" },
   { id: "sandbox", label: "Sandbox" },
   { id: "creds", label: "Credentials" },
@@ -85,7 +86,7 @@ function McpServerPage() {
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const sectionParam = searchParams.get("section");
-  const initialSection = SECTIONS.some((s) => s.id === sectionParam) ? (sectionParam as SectionId) : "general";
+  const initialSection = SECTIONS.some((s) => s.id === sectionParam) ? (sectionParam as SectionId) : "status";
   const [activeSection, setActiveSectionState] = useState<SectionId>(initialSection);
 
   const setActiveSection = useCallback((section: SectionId) => {
@@ -95,6 +96,7 @@ function McpServerPage() {
     router.replace(`/mcp?${params.toString()}`, { scroll: false });
   }, [router, searchParams]);
 
+  const [description, setDescription] = useState("");
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
   const [envDefsByTransport, setEnvDefsByTransport] = useState<Record<string, EnvVarDef[]>>({});
   const [grants, setGrants] = useState<Array<{ query: string; connection_id: string; connection_name: string; vault_item_id: string; item_name: string }>>([]);
@@ -113,6 +115,7 @@ function McpServerPage() {
     try {
       const s = await api.get<McpServer>(`/api/mcp/servers/${serverId}`);
       setServer(s);
+      setDescription(s.description ?? "");
       setEnvValues(s.env ?? {});
       setSandboxConfig({
         network_access: true,
@@ -248,6 +251,7 @@ function McpServerPage() {
         if (v.trim()) extra_env[k] = v.trim();
       }
       await api.patch(`/api/mcp/servers/${serverId}`, {
+        description: description !== (server.description ?? "") ? description : undefined,
         extra_env: Object.keys(extra_env).length > 0 ? extra_env : undefined,
         extra_read_paths: sandboxConfig?.shared_paths,
         extra_write_paths: [],
@@ -370,9 +374,9 @@ function McpServerPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto p-8 space-y-6">
-          {activeSection === "general" && (
+          {activeSection === "status" && (
             <div className="space-y-6">
-              <SectionHeader title="General" description="Server information and controls" icon={InformationCircleIcon} />
+              <SectionHeader title="Status" description="Server information and controls" icon={InformationCircleIcon} />
               {error && (
                 <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400 flex items-center justify-between">
                   <span>{error}</span>
@@ -477,6 +481,23 @@ function McpServerPage() {
                   Uninstall
                 </button>
               </div>
+            </div>
+          )}
+
+          {activeSection === "prompt" && (
+            <div className="flex flex-col h-full">
+              <SectionHeader title="Prompt" description="Controls how agents discover and interact with this server" icon={DocumentTextIcon} />
+              <SectionPanel className="flex-1 flex flex-col">
+                <p className="text-sm text-text-tertiary">
+                  This description is shown to agents in their system prompt. Write it to help agents identify when to use this MCP server.
+                </p>
+                <textarea
+                  value={description}
+                  onChange={(e) => { setDescription(e.target.value); setDirty(true); }}
+                  placeholder="Describe what this server does and when agents should use it..."
+                  className="flex-1 min-h-[200px] w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary font-mono placeholder:text-text-tertiary focus:border-accent focus:outline-none resize-none"
+                />
+              </SectionPanel>
             </div>
           )}
 
@@ -695,7 +716,7 @@ function McpServerPage() {
           )}
 
           {/* Save bar */}
-          {activeSection !== "creds" && activeSection !== "general" && activeSection !== "logs" && (
+          {activeSection !== "creds" && activeSection !== "logs" && activeSection !== "status" && (
             <div className="pt-4 border-t border-border flex items-center justify-end gap-2">
               <button
                 onClick={() => { setDirty(false); reload(); }}
