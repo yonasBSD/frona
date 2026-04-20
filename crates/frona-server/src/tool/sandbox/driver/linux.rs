@@ -2,6 +2,7 @@ pub const SYSTEM_READ_DIRS: &[&str] = &[
     "/usr", "/lib", "/lib64", "/bin", "/sbin",
     "/usr/local/lib", "/usr/local/share",
     "/usr/share/locale", "/usr/share/zoneinfo",
+    "/app/bin",
 ];
 
 pub const PROC_READ_PATHS: &[&str] = &[
