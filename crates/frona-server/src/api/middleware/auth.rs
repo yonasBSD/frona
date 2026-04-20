@@ -6,6 +6,56 @@ use crate::core::error::{AppError, AuthErrorCode};
 use crate::core::principal::{Principal, PrincipalKind};
 use crate::core::state::AppState;
 
+/// Authenticated principal — accepts any principal kind (User, Agent, McpServer, App).
+/// Use this for endpoints that need to serve both users and non-user callers (e.g. bridge APIs).
+pub struct AuthPrincipal {
+    pub user_id: String,
+    pub username: String,
+    pub email: String,
+    pub token_id: String,
+    pub token_type: String,
+    pub principal: Principal,
+    pub scopes: Option<Vec<String>>,
+    pub extensions: Option<serde_json::Value>,
+}
+
+impl AuthPrincipal {
+    pub fn agent_id(&self) -> Option<&str> {
+        match self.principal.kind {
+            PrincipalKind::Agent => Some(&self.principal.id),
+            _ => None,
+        }
+    }
+}
+
+impl FromRequestParts<AppState> for AuthPrincipal {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let token = extract_token(parts)?;
+        let claims = state
+            .token_service
+            .validate(&state.keypair_service, token)
+            .await?;
+
+        Ok(AuthPrincipal {
+            user_id: claims.sub,
+            username: claims.username,
+            email: claims.email,
+            token_id: claims.token_id,
+            token_type: claims.token_type,
+            principal: claims.principal,
+            scopes: claims.scopes,
+            extensions: claims.extensions,
+        })
+    }
+}
+
+/// Authenticated user — rejects non-User principals.
+/// This is the default extractor for all user-facing API endpoints.
 pub struct AuthUser {
     pub user_id: String,
     pub username: String,
@@ -31,13 +81,6 @@ impl AuthUser {
             .as_ref()
             .is_some_and(|s| s.iter().any(|sc| sc == scope))
     }
-
-    pub fn agent_id(&self) -> Option<&str> {
-        match self.principal.kind {
-            PrincipalKind::Agent => Some(&self.principal.id),
-            _ => None,
-        }
-    }
 }
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -52,6 +95,12 @@ impl FromRequestParts<AppState> for AuthUser {
             .token_service
             .validate(&state.keypair_service, token)
             .await?;
+
+        if claims.principal.kind != PrincipalKind::User {
+            return Err(ApiError(AppError::Forbidden(
+                "This endpoint requires a user principal".into(),
+            )));
+        }
 
         Ok(AuthUser {
             user_id: claims.sub,
