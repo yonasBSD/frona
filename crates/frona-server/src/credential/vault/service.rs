@@ -394,7 +394,8 @@ pub fn project_target(secret: &VaultSecret, target: &CredentialTarget) -> Vec<(S
             let value = match field {
                 VaultField::Password => secret.password.clone(),
                 VaultField::Username => secret.username.clone(),
-                VaultField::Custom { name } => secret.fields.get(name).cloned(),
+                VaultField::Custom { name } => secret.fields.get(name).cloned()
+                    .or_else(|| secret.fields.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone())),
             };
             value.map(|v| vec![(env_var.clone(), v)]).unwrap_or_default()
         }
