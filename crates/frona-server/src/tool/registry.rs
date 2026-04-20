@@ -289,7 +289,7 @@ pub async fn build_tool_registry(
         );
     }
 
-    {
+    if !state.config.mcp.bridge_mode {
         let mut mcp_allowlist: HashMap<String, HashSet<String>> = HashMap::new();
         for id in &allowed {
             if let Some(rest) = id.strip_prefix("mcp__")
