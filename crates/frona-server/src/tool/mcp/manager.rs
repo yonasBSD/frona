@@ -406,8 +406,14 @@ impl McpManager {
         filter_tools_for_user(&views, user_id, allowlist)
     }
 
-    /// Reverse lookup: given a namespaced `mcp__{slug}__{tool}` id, return the server
-    /// id that owns it (if any running connection currently exposes that tool).
+    pub async fn find_by_slug(&self, user_id: &str, slug: &str) -> Option<String> {
+        let connections = self.connections.read().await;
+        connections
+            .values()
+            .find(|c| c.user_id == user_id && c.slug == slug)
+            .map(|c| c.server_id.clone())
+    }
+
     pub async fn server_for_tool(&self, namespaced_name: &str) -> Option<String> {
         let connections = self.connections.read().await;
         for connection in connections.values() {

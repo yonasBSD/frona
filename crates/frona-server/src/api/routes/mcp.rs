@@ -8,12 +8,15 @@ use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 
 use crate::api::error::ApiError;
-use crate::api::middleware::auth::AuthUser;
+use crate::api::middleware::auth::{AuthPrincipal, AuthUser};
 use crate::core::state::AppState;
-use crate::tool::mcp::models::{McpServerInstall, McpServerUpdate};
+use crate::tool::mcp::models::{McpServerInstall, McpServerStatus, McpServerUpdate};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/mcp/bridge/servers", get(bridge_list_servers))
+        .route("/api/mcp/bridge/servers/{slug}", get(bridge_server_tools))
+        .route("/api/mcp/bridge/{slug}/call/{tool_name}", post(bridge_call_tool))
         .route("/api/mcp/servers", get(list_servers).post(install_server))
         .route(
             "/api/mcp/servers/{id}",
@@ -286,4 +289,151 @@ async fn search_registry(
         .search_registry(&query.q, query.limit)
         .await?;
     Ok(Json(results))
+}
+
+// --- Bridge endpoints (accept User + Agent principals) ---
+
+fn allowed_mcp_slugs(tools: &[String]) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+    let mut map: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+    for id in tools {
+        if let Some(rest) = id.strip_prefix("mcp__")
+            && let Some((slug, tool)) = rest.split_once("__")
+        {
+            map.entry(slug.to_string()).or_default().insert(tool.to_string());
+        }
+    }
+    map
+}
+
+async fn bridge_list_servers(
+    auth: AuthPrincipal,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<frona_api_types::mcp::BridgeServerInfo>>, ApiError> {
+    let servers = state.mcp_service.list_for_user(&auth.user_id).await?;
+    let running: Vec<_> = servers
+        .into_iter()
+        .filter(|s| s.status == McpServerStatus::Running)
+        .collect();
+
+    let slug_filter = if let Some(agent_id) = auth.agent_id() {
+        let agent = state.agent_service.get(&auth.user_id, agent_id).await?;
+        Some(allowed_mcp_slugs(&agent.tools))
+    } else {
+        None
+    };
+
+    let result = running
+        .into_iter()
+        .filter(|s| {
+            slug_filter.as_ref().is_none_or(|f| f.contains_key(&s.slug))
+        })
+        .map(|s| {
+            let tool_count = match &slug_filter {
+                Some(f) => f.get(&s.slug).map(|t| t.len()).unwrap_or(0),
+                None => s.tool_cache.len(),
+            };
+            frona_api_types::mcp::BridgeServerInfo {
+                slug: s.slug,
+                display_name: s.display_name,
+                description: s.description,
+                tool_count,
+            }
+        })
+        .collect();
+
+    Ok(Json(result))
+}
+
+async fn bridge_server_tools(
+    auth: AuthPrincipal,
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<frona_api_types::mcp::BridgeServerDetail>, ApiError> {
+    let servers = state.mcp_service.list_for_user(&auth.user_id).await?;
+    let server = servers
+        .into_iter()
+        .find(|s| s.slug == slug && s.status == McpServerStatus::Running)
+        .ok_or_else(|| {
+            ApiError::from(crate::core::error::AppError::NotFound(format!(
+                "MCP server '{slug}'"
+            )))
+        })?;
+
+    let allowed_tools = if let Some(agent_id) = auth.agent_id() {
+        let agent = state.agent_service.get(&auth.user_id, agent_id).await?;
+        let map = allowed_mcp_slugs(&agent.tools);
+        map.get(&slug).cloned()
+    } else {
+        None
+    };
+
+    let tools = server
+        .tool_cache
+        .into_iter()
+        .filter(|t| {
+            allowed_tools
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(&t.name))
+        })
+        .map(|t| frona_api_types::mcp::BridgeToolInfo {
+            name: t.name,
+            description: t.description,
+            input_schema: t.input_schema,
+        })
+        .collect();
+
+    Ok(Json(frona_api_types::mcp::BridgeServerDetail {
+        slug: server.slug,
+        display_name: server.display_name,
+        description: server.description,
+        tools,
+    }))
+}
+
+async fn bridge_call_tool(
+    auth: AuthPrincipal,
+    State(state): State<AppState>,
+    Path((slug, tool_name)): Path<(String, String)>,
+    Json(req): Json<frona_api_types::mcp::BridgeCallRequest>,
+) -> Result<Json<frona_api_types::mcp::BridgeCallResponse>, ApiError> {
+    if let Some(agent_id) = auth.agent_id() {
+        let agent = state.agent_service.get(&auth.user_id, agent_id).await?;
+        let expected = format!("mcp__{slug}__{tool_name}");
+        if !agent.tools.contains(&expected) {
+            return Err(ApiError::from(crate::core::error::AppError::Forbidden(
+                format!("Agent does not have access to tool '{tool_name}' on server '{slug}'"),
+            )));
+        }
+    }
+
+    let server_id = state
+        .mcp_manager
+        .find_by_slug(&auth.user_id, &slug)
+        .await
+        .ok_or_else(|| {
+            ApiError::from(crate::core::error::AppError::NotFound(format!(
+                "Running MCP server '{slug}'"
+            )))
+        })?;
+
+    let result = state
+        .mcp_manager
+        .call(&server_id, &tool_name, req.arguments)
+        .await?;
+
+    let is_error = result.is_error.unwrap_or(false);
+    let content = result
+        .content
+        .iter()
+        .filter_map(|c| match &c.raw {
+            rmcp::model::RawContent::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok(Json(frona_api_types::mcp::BridgeCallResponse {
+        content,
+        is_error,
+    }))
 }
