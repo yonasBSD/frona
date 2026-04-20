@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeftIcon, CpuChipIcon, PlayIcon, StopIcon, TrashIcon, PlusIcon, InformationCircleIcon, CommandLineIcon, DocumentTextIcon, KeyIcon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, CpuChipIcon, PlayIcon, StopIcon, TrashIcon, PlusIcon, InformationCircleIcon, CommandLineIcon, DocumentTextIcon, KeyIcon, Cog6ToothIcon } from "@heroicons/react/24/outline";
 import { api, API_URL, getAccessToken } from "@/lib/api-client";
 import { SectionHeader, SectionPanel, Field, TextInput } from "@/components/settings/field";
 import { formatDistanceToNow } from "date-fns";
 import { SandboxSection } from "@/components/agents/configure/sandbox-section";
-import { CredsSection, AddCredentialForm, type VaultGrant, type VaultConnection } from "@/components/agents/configure/creds-section";
+import { AddCredentialForm, type VaultGrant, type VaultConnection, type PendingCredential } from "@/components/agents/configure/creds-section";
 
 interface McpServer {
   id: string;
@@ -53,9 +53,8 @@ interface RegistryEntry {
 const SECTIONS = [
   { id: "status", label: "Status" },
   { id: "prompt", label: "Prompt" },
-  { id: "environment", label: "Environment" },
+  { id: "config", label: "Config" },
   { id: "sandbox", label: "Sandbox" },
-  { id: "creds", label: "Credentials" },
   { id: "logs", label: "Logs" },
 ] as const;
 
@@ -99,10 +98,14 @@ function McpServerPage() {
   const [description, setDescription] = useState("");
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
   const [envDefsByTransport, setEnvDefsByTransport] = useState<Record<string, EnvVarDef[]>>({});
-  const [grants, setGrants] = useState<Array<{ query: string; connection_id: string; connection_name: string; vault_item_id: string; item_name: string }>>([]);
+  const [grants, setGrants] = useState<Array<{ id: string; query: string; connection_id: string; connection_name: string; vault_item_id: string; item_name: string; fields: string[]; target?: { Single?: { env_var: string }; Prefix?: { env_var_prefix: string } } }>>([]);
   const [vaultGrants, setVaultGrants] = useState<VaultGrant[]>([]);
   const [vaultConnections, setVaultConnections] = useState<Map<string, VaultConnection>>(new Map());
   const [credDialogEnvVar, setCredDialogEnvVar] = useState<string | null>(null);
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [credMenuVar, setCredMenuVar] = useState<string | null>(null);
+  const [pendingCreds, setPendingCreds] = useState<PendingCredential[]>([]);
+  const [deletedGrantIds, setDeletedGrantIds] = useState<Set<string>>(new Set());
   const [credDialogExisting, setCredDialogExisting] = useState<{ connection_id: string; vault_item_id: string } | undefined>(undefined);
   const [sandboxConfig, setSandboxConfig] = useState<{
     network_access: boolean;
@@ -114,6 +117,59 @@ function McpServerPage() {
     if (!serverId) return;
     try {
       const s = await api.get<McpServer>(`/api/mcp/servers/${serverId}`);
+
+      let byTransport: Record<string, EnvVarDef[]> = {};
+      if (s.registry_id) {
+        try {
+          const entry = await api.get<RegistryEntry>(
+            `/api/mcp/registry/${encodeURIComponent(s.registry_id)}`
+          );
+          for (const pkg of entry?.packages ?? []) {
+            const t = pkg.transport?.type ?? "stdio";
+            byTransport[t] = pkg.environment_variables ?? [];
+          }
+        } catch { /* ignore */ }
+      }
+
+      let resolvedGrants: typeof grants = [];
+      let resolvedVaultGrants: VaultGrant[] = [];
+      let connMap = new Map<string, VaultConnection>();
+      try {
+        const [allGrants, allConns] = await Promise.all([
+          api.get<VaultGrant[]>("/api/vaults/grants"),
+          api.get<VaultConnection[]>("/api/vaults"),
+        ]);
+        connMap = new Map(allConns.map((c) => [c.id, c]));
+        resolvedVaultGrants = allGrants.filter(
+          (g) => g.principal?.kind === "mcp_server" && g.principal?.id === serverId
+        );
+        resolvedGrants = await Promise.all(
+          resolvedVaultGrants.map(async (g) => {
+            let itemName = g.query;
+            let fields: string[] = [];
+            try {
+              const [items, f] = await Promise.all([
+                api.get<Array<{ id: string; name: string }>>(`/api/vaults/${g.connection_id}/items?q=`),
+                api.get<string[]>(`/api/vaults/${g.connection_id}/items/${g.vault_item_id}/fields`),
+              ]);
+              const found = items.find((i) => i.id === g.vault_item_id);
+              if (found) itemName = found.name;
+              fields = f;
+            } catch { /* fallback to query */ }
+            return {
+              id: g.id,
+              query: g.query,
+              connection_id: g.connection_id,
+              connection_name: connMap.get(g.connection_id)?.name ?? "Unknown",
+              vault_item_id: g.vault_item_id,
+              item_name: itemName,
+              fields,
+              target: g.target as { Single?: { env_var: string }; Prefix?: { env_var_prefix: string } } | undefined,
+            };
+          })
+        );
+      } catch { /* ignore */ }
+
       setServer(s);
       setDescription(s.description ?? "");
       setEnvValues(s.env ?? {});
@@ -122,54 +178,10 @@ function McpServerPage() {
         allowed_network_destinations: [],
         shared_paths: [...s.extra_read_paths, ...s.extra_write_paths],
       });
-
-      if (s.registry_id) {
-        try {
-          const entry = await api.get<RegistryEntry>(
-            `/api/mcp/registry/${encodeURIComponent(s.registry_id)}`
-          );
-          const byTransport: Record<string, EnvVarDef[]> = {};
-          for (const pkg of entry?.packages ?? []) {
-            const t = pkg.transport?.type ?? "stdio";
-            byTransport[t] = pkg.environment_variables ?? [];
-          }
-          setEnvDefsByTransport(byTransport);
-        } catch { /* ignore */ }
-      }
-
-      try {
-        const [allGrants, allConns] = await Promise.all([
-          api.get<VaultGrant[]>("/api/vaults/grants"),
-          api.get<VaultConnection[]>("/api/vaults"),
-        ]);
-        const connMap = new Map(allConns.map((c) => [c.id, c]));
-        setVaultConnections(connMap);
-        const serverVaultGrants = allGrants.filter(
-          (g) => g.principal?.kind === "mcp_server" && g.principal?.id === serverId
-        );
-        setVaultGrants(serverVaultGrants);
-        const matched = allGrants.filter(
-          (g) => g.principal?.kind === "mcp_server" && g.principal?.id === serverId
-        );
-        const resolved = await Promise.all(
-          matched.map(async (g) => {
-            let itemName = g.query;
-            try {
-              const items = await api.get<Array<{ id: string; name: string }>>(`/api/vaults/${g.connection_id}/items?q=${encodeURIComponent(g.query)}`);
-              const found = items.find((i) => i.id === g.vault_item_id);
-              if (found) itemName = found.name;
-            } catch { /* fallback to query */ }
-            return {
-              query: g.query,
-              connection_id: g.connection_id,
-              connection_name: connMap.get(g.connection_id)?.name ?? "Unknown",
-              vault_item_id: g.vault_item_id,
-              item_name: itemName,
-            };
-          })
-        );
-        setGrants(resolved);
-      } catch { /* ignore */ }
+      setEnvDefsByTransport(byTransport);
+      setVaultConnections(connMap);
+      setVaultGrants(resolvedVaultGrants);
+      setGrants(resolvedGrants);
     } catch {
       setError("Failed to load server");
     } finally {
@@ -256,8 +268,16 @@ function McpServerPage() {
         extra_read_paths: sandboxConfig?.shared_paths,
         extra_write_paths: [],
       });
-      setDirty(false);
+      for (const id of deletedGrantIds) {
+        await api.delete(`/api/vaults/grants/${id}`);
+      }
+      for (const cred of pendingCreds) {
+        await api.post("/api/vaults/grants", cred);
+      }
       await reload();
+      setPendingCreds([]);
+      setDeletedGrantIds(new Set());
+      setDirty(false);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -501,16 +521,23 @@ function McpServerPage() {
             </div>
           )}
 
-          {activeSection === "environment" && (() => {
+          {activeSection === "config" && (() => {
             const allEnvDefs = envDefsByTransport[server.active_transport] ?? envDefsByTransport["stdio"] ?? [];
             const declaredNames = new Set(allEnvDefs.map((e) => e.name));
             const customKeys = Object.keys(envValues).filter((k) => !declaredNames.has(k));
+            const activeGrants = grants.filter((g) => !deletedGrantIds.has(g.id));
+            const credOnlyKeys = activeGrants
+              .filter((g) => !declaredNames.has(g.query) && !customKeys.includes(g.query))
+              .map((g) => g.query);
+            const pendingKeys = pendingCreds
+              .map((p) => p.query)
+              .filter((q) => !declaredNames.has(q) && !customKeys.includes(q) && !credOnlyKeys.includes(q));
+            const allCustomKeys = [...customKeys, ...credOnlyKeys, ...pendingKeys];
             return (
               <div className="space-y-4">
-                <SectionHeader title="Environment" description="Environment variables for this server" icon={CommandLineIcon} />
+                <SectionHeader title="Config" description="Environment variables and credentials for this server" icon={Cog6ToothIcon} />
 
                 {allEnvDefs.length > 0 && (() => {
-                  // Group env vars by shared prefix (up to last _ before they diverge)
                   const findCommonPrefix = (a: string, b: string): string => {
                     const ap = a.split("_"), bp = b.split("_");
                     const parts: string[] = [];
@@ -550,7 +577,13 @@ function McpServerPage() {
                   if (ungrouped.length > 0) groups.set("__ungrouped__", ungrouped);
 
                   const renderVar = (ev: EnvVarDef) => {
-                    const grant = grants.find((g) => g.query === ev.name || ev.name.startsWith(g.query + "_"));
+                    const grant = activeGrants.find((g) => g.query === ev.name || ev.name.startsWith(g.query + "_"));
+                    const pending = !grant && pendingCreds.find((p) => p.query === ev.name || ev.name.startsWith(p.query + "_"));
+                    const hasCred = !!grant || !!pending;
+                    const itemName = grant?.item_name ?? (pending && pending.item_name) ?? "";
+                    const connName = grant?.connection_name ?? (pending && pending.connection_name) ?? "";
+                    const credConnId = grant?.connection_id ?? (pending && pending.connection_id);
+                    const credItemId = grant?.vault_item_id ?? (pending && pending.vault_item_id);
                     return (
                     <div key={ev.name} className="space-y-1">
                       <div className="flex items-center gap-2 mb-2">
@@ -561,25 +594,62 @@ function McpServerPage() {
                         {ev.is_required && <span className="text-[11px] text-red-400">required</span>}
                       </div>
                       {ev.is_secret ? (
-                        <div className="flex items-center gap-2">
-                          {grant ? (
-                            <span className="text-sm text-text-primary">
-                              {grant.item_name} <span className="text-text-tertiary">({grant.connection_name})</span>
-                            </span>
-                          ) : (
-                            <span className="text-sm text-text-tertiary">Not set</span>
-                          )}
+                        hasCred ? (
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setCredMenuVar((prev) => prev === ev.name ? null : ev.name)}
+                              className="flex items-center gap-1.5 text-sm text-text-primary hover:text-accent transition cursor-pointer"
+                            >
+                              <KeyIcon className="h-3.5 w-3.5 text-text-tertiary" />
+                              {itemName} <span className="text-text-tertiary">({connName})</span>
+                            </button>
+                            {credMenuVar === ev.name && (
+                              <>
+                                <div className="fixed inset-0 z-10" onClick={() => setCredMenuVar(null)} />
+                                <div className="absolute left-0 top-full mt-1 z-20 rounded-lg border border-border bg-surface-secondary shadow-lg py-1 min-w-[140px]">
+                                  <button
+                                    onClick={() => {
+                                      setCredDialogEnvVar(ev.name);
+                                      setCredDialogExisting(credConnId && credItemId ? { connection_id: credConnId, vault_item_id: credItemId } : undefined);
+                                      setCredMenuVar(null);
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-sm text-text-primary hover:bg-surface-tertiary transition flex items-center gap-2"
+                                  >
+                                    <KeyIcon className="h-4 w-4 text-text-tertiary" />
+                                    Change
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      if (grant) {
+                                        setDeletedGrantIds((prev) => new Set(prev).add(grant.id));
+                                        setDirty(true);
+                                      } else {
+                                        setPendingCreds((prev) => prev.filter((p) => p.query !== ev.name && !ev.name.startsWith(p.query + "_")));
+                                      }
+                                      setCredMenuVar(null);
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-sm text-danger hover:bg-surface-tertiary transition flex items-center gap-2"
+                                  >
+                                    <TrashIcon className="h-4 w-4" />
+                                    Remove
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        ) : (
                           <button
                             type="button"
                             onClick={() => {
                               setCredDialogEnvVar(ev.name);
-                              setCredDialogExisting(grant ? { connection_id: grant.connection_id, vault_item_id: grant.vault_item_id } : undefined);
+                              setCredDialogExisting(undefined);
                             }}
-                            className="text-xs text-accent hover:underline"
+                            className="text-sm transition cursor-pointer"
                           >
-                            {grant ? "Change" : "Configure"}
+                            <span className="text-text-tertiary">Not set — </span><span className="text-accent hover:underline">Configure</span>
                           </button>
-                        </div>
+                        )
                       ) : (
                         <input
                           type="text"
@@ -604,15 +674,21 @@ function McpServerPage() {
                 })()}
 
                 <SectionPanel title="Custom Variables">
-                  {customKeys.map((key) => (
-                    <div key={key} className="flex items-start gap-2">
+                  <div className="divide-y divide-border -my-1">
+                  {allCustomKeys.map((key) => {
+                    const grant = activeGrants.find((g) => g.query === key);
+                    const pending = !grant && pendingCreds.find((p) => p.query === key);
+                    const isCred = !!grant || !!pending;
+                    return (
+                    <div key={key} className="flex items-start gap-2 py-3">
                       <div className="flex-1 space-y-2">
                         <input
                           type="text"
                           defaultValue={key}
                           onBlur={(e) => {
                             const newKey = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "");
-                            if (newKey && newKey !== key) {
+                            if (newKey && newKey !== key && !declaredNames.has(newKey)) {
+                              if (grant) return;
                               setEnvValues((prev) => {
                                 const next = { ...prev };
                                 next[newKey] = next[key] ?? "";
@@ -622,42 +698,129 @@ function McpServerPage() {
                               setDirty(true);
                             }
                           }}
+                          disabled={!!grant}
                           placeholder="VARIABLE_NAME"
-                          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-text-primary font-mono placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-text-primary font-mono placeholder:text-text-tertiary focus:border-accent focus:outline-none disabled:opacity-60"
                         />
-                        <input
-                          type="text"
-                          value={envValues[key] ?? ""}
-                          onChange={(e) => {
-                            setEnvValues((prev) => ({ ...prev, [key]: e.target.value }));
-                            setDirty(true);
-                          }}
-                          placeholder="Value"
-                          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
-                        />
+                        {(() => {
+                          if (isCred) {
+                            const itemName = grant?.item_name ?? (pending && pending.item_name) ?? key;
+                            const connName = grant?.connection_name ?? (pending && pending.connection_name) ?? "";
+                            const credFields = grant?.fields ?? (pending && pending.fields) ?? [];
+                            const credConnId = grant?.connection_id ?? (pending && pending.connection_id);
+                            const credItemId = grant?.vault_item_id ?? (pending && pending.vault_item_id);
+                            const target = grant?.target ?? (pending?.target as { Single?: { env_var: string }; Prefix?: { env_var_prefix: string } } | undefined);
+                            let envVarLabels: string[];
+                            if (target?.Single) {
+                              envVarLabels = [target.Single.env_var];
+                            } else {
+                              envVarLabels = credFields.map((f) => `${key}${key ? "_" : ""}${f}`);
+                            }
+                            return (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <KeyIcon className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                                  <span className="text-sm text-text-primary truncate">
+                                    {itemName} <span className="text-text-tertiary">({connName})</span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCredDialogEnvVar(key);
+                                      setCredDialogExisting(credConnId && credItemId ? { connection_id: credConnId, vault_item_id: credItemId } : undefined);
+                                    }}
+                                    className="text-xs text-accent hover:underline shrink-0"
+                                  >
+                                    Change
+                                  </button>
+                                </div>
+                                {envVarLabels.length > 0 && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {envVarLabels.map((label) => (
+                                      <span key={label} className="rounded-full border border-border bg-surface-tertiary px-2 py-0.5 font-mono text-[11px] text-text-tertiary">
+                                        {label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            <input
+                              type="text"
+                              value={envValues[key] ?? ""}
+                              onChange={(e) => {
+                                setEnvValues((prev) => ({ ...prev, [key]: e.target.value }));
+                                setDirty(true);
+                              }}
+                              placeholder="Value"
+                              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
+                            />
+                          );
+                        })()}
                       </div>
                       <button
                         onClick={() => {
-                          setEnvValues((prev) => { const next = { ...prev }; delete next[key]; return next; });
-                          setDirty(true);
+                          if (grant) {
+                            setDeletedGrantIds((prev) => new Set(prev).add(grant.id));
+                            setDirty(true);
+                          } else if (pending) {
+                            setPendingCreds((prev) => prev.filter((p) => p.query !== key));
+                          } else {
+                            setEnvValues((prev) => { const next = { ...prev }; delete next[key]; return next; });
+                            setDirty(true);
+                          }
                         }}
                         className="mt-2 p-1.5 text-text-tertiary hover:text-danger transition rounded-lg hover:bg-surface-tertiary"
                       >
                         <TrashIcon className="h-4 w-4" />
                       </button>
                     </div>
-                  ))}
-                  <button
-                    onClick={() => {
-                      const key = `NEW_VAR_${Object.keys(envValues).length + 1}`;
-                      setEnvValues((prev) => ({ ...prev, [key]: "" }));
-                      setDirty(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-accent-hover transition"
-                  >
-                    <PlusIcon className="h-3.5 w-3.5" />
-                    Add variable
-                  </button>
+                    );
+                  })}
+                  </div>
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowAddMenu((v) => !v)}
+                      className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-accent-hover transition"
+                    >
+                      <PlusIcon className="h-3.5 w-3.5" />
+                      Add
+                    </button>
+                    {showAddMenu && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setShowAddMenu(false)} />
+                        <div className="absolute left-0 bottom-full mb-1 z-20 rounded-lg border border-border bg-surface-secondary shadow-lg py-1 min-w-[160px]">
+                          <button
+                            onClick={() => {
+                              let n = 1;
+                              let key = `NEW_VAR_${n}`;
+                              while (envValues[key] !== undefined || declaredNames.has(key)) { n++; key = `NEW_VAR_${n}`; }
+                              setEnvValues((prev) => ({ ...prev, [key]: "" }));
+                              setDirty(true);
+                              setShowAddMenu(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm text-text-primary hover:bg-surface-tertiary transition flex items-center gap-2"
+                          >
+                            <CommandLineIcon className="h-4 w-4 text-text-tertiary" />
+                            Variable
+                          </button>
+                          <button
+                            onClick={() => {
+                              setCredDialogEnvVar("");
+                              setCredDialogExisting(undefined);
+                              setShowAddMenu(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm text-text-primary hover:bg-surface-tertiary transition flex items-center gap-2"
+                          >
+                            <KeyIcon className="h-4 w-4 text-text-tertiary" />
+                            Credential
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </SectionPanel>
               </div>
             );
@@ -668,10 +831,6 @@ function McpServerPage() {
               sandbox={sandboxConfig}
               onChange={(v) => { setSandboxConfig(v); setDirty(true); }}
             />
-          )}
-
-          {activeSection === "creds" && (
-            <CredsSection principalKind="mcp_server" principalId={serverId} />
           )}
 
           {activeSection === "logs" && (
@@ -716,10 +875,10 @@ function McpServerPage() {
           )}
 
           {/* Save bar */}
-          {activeSection !== "creds" && activeSection !== "logs" && activeSection !== "status" && (
+          {activeSection !== "logs" && activeSection !== "status" && (
             <div className="pt-4 border-t border-border flex items-center justify-end gap-2">
               <button
-                onClick={() => { setDirty(false); reload(); }}
+                onClick={() => { setDirty(false); setPendingCreds([]); setDeletedGrantIds(new Set()); reload(); }}
                 disabled={!dirty}
                 className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-tertiary disabled:opacity-50 transition"
               >
@@ -737,7 +896,7 @@ function McpServerPage() {
         </div>
       </div>
 
-      {credDialogEnvVar && serverId && (
+      {credDialogEnvVar != null && serverId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/50" onClick={() => setCredDialogEnvVar(null)} />
           <div className="relative w-full max-w-lg rounded-xl border border-border bg-surface-secondary p-5 shadow-xl mx-4 space-y-3">
@@ -746,12 +905,16 @@ function McpServerPage() {
               principalKind="mcp_server"
               principalId={serverId}
               existingGrants={vaultGrants}
-              targetEnvVar={credDialogEnvVar}
+              targetEnvVar={credDialogEnvVar || undefined}
               initialSelection={credDialogExisting}
               onClose={() => setCredDialogEnvVar(null)}
               onCreated={() => {
                 setCredDialogEnvVar(null);
                 reload();
+              }}
+              deferred={(pending) => {
+                setPendingCreds((prev) => [...prev, pending]);
+                setDirty(true);
               }}
             />
           </div>
