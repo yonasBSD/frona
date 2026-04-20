@@ -56,12 +56,7 @@ impl PackageInstaller for SandboxedPackageInstaller {
             }
             McpRuntime::Pypi => {
                 let pkg = format!("{}=={}", server.package.name, server.package.version);
-                ("uvx", vec![
-                    "--from".to_string(),
-                    pkg,
-                    server.package.name.clone(),
-                    "--help".to_string(),
-                ])
+                ("uv", vec!["tool".to_string(), "install".to_string(), pkg])
             }
             McpRuntime::Binary => return Ok(()),
         };
