@@ -184,7 +184,7 @@ export function AddCredentialForm({
       const results = await api.get<VaultItem[]>(`/api/vaults/${connId}/items?q=${encodeURIComponent(searchQuery)}`);
       setItems(results);
       api.get<string[]>(`/api/vaults/${connId}/items/${created.id}/fields`)
-        .then((f) => { setFields(f); if (f.length > 0 && !selectedField) setSelectedField(f[0]); }).catch(() => setFields([]));
+        .then((f) => { setFields(f); if (f.length > 0) setSelectedField(f[0]); }).catch(() => setFields([]));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create credential");
     } finally {
