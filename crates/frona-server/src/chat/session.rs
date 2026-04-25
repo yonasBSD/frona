@@ -53,24 +53,34 @@ impl ChatSessionContext {
             .list(&chat.agent_id, agent_config.skills.as_deref())
             .await;
 
+        let agent = state
+            .agent_service
+            .find_by_id(&chat.agent_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
+
+        let mut tool_registry = state
+            .tool_manager
+            .build_agent_registry(user_id, &agent, &state.policy_service)
+            .await;
+
+        let allowed_tool_groups = tool_registry.tool_groups();
+
         let agent_summaries =
             crate::tool::registry::build_agent_summaries(
                 state,
                 user_id,
                 &chat.agent_id,
-                &agent_config.tools,
             )
             .await;
 
         let mcp_servers: Vec<(String, String)> = if state.config.mcp.bridge_mode {
             let servers = state.mcp_service.list_for_user(user_id).await.unwrap_or_default();
-            let allowed_slugs: std::collections::HashSet<String> = agent_config
-                .tools
+            let allowed_slugs: std::collections::HashSet<String> = allowed_tool_groups
                 .iter()
                 .filter_map(|id| {
-                    id.strip_prefix("mcp__")
-                        .and_then(|rest| rest.split_once("__"))
-                        .map(|(slug, _)| slug.to_string())
+                    id.strip_prefix("mcp:")
+                        .map(|slug| slug.to_string())
                 })
                 .collect();
             servers
@@ -189,19 +199,14 @@ impl ChatSessionContext {
             .await?
             .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
-        let tool_registry = crate::tool::registry::build_tool_registry(
-            state,
-            &chat.agent_id,
-            user_id,
-            &agent_config.tools,
-            is_task,
-        )
-        .await;
-        let agent = state
-            .agent_service
-            .find_by_id(&chat.agent_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
+        if is_task {
+            tool_registry.register(std::sync::Arc::new(
+                crate::tool::task_control::TaskControlTool::new(
+                    state.config.storage.workspaces_path.clone().into(),
+                    state.prompts.clone(),
+                ),
+            ));
+        }
         let mut file_paths = Vec::new();
         for msg in &stored_messages {
             for att in &msg.attachments {

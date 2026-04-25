@@ -49,7 +49,6 @@ fn make_agent(id: &str, user_id: &str, heartbeat_interval: Option<u64>, next_hea
         description: "test agent".to_string(),
         model_group: "primary".to_string(),
         enabled: true,
-        tools: vec![],
         skills: None,
         sandbox_config: None,
         max_concurrent_tasks: None,

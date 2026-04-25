@@ -30,7 +30,6 @@ fn test_agent(user_id: &str) -> Agent {
         description: "A test agent".to_string(),
         model_group: "primary".to_string(),
         enabled: true,
-        tools: vec!["browser".to_string()],
         skills: None,
         sandbox_config: None,
         max_concurrent_tasks: None,

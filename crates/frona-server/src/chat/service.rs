@@ -20,7 +20,6 @@ use rig::completion::Message as RigMessage;
 pub struct AgentConfig {
     pub system_prompt: String,
     pub model_group: String,
-    pub tools: Vec<String>,
     pub skills: Option<Vec<String>>,
     pub sandbox_config: Option<crate::agent::models::SandboxSettings>,
     pub identity: std::collections::BTreeMap<String, String>,
@@ -783,12 +782,7 @@ impl ChatService {
         let ws = self.storage_service.agent_workspace(agent_id);
 
         if let Ok(Some(agent)) = self.agent_service.find_by_id(agent_id).await {
-            tracing::debug!(agent_id, ?agent.tools, user_id = ?agent.user_id, "Resolved agent from DB");
-            let tools = if agent.tools.is_empty() {
-                crate::tool::configurable_tools().to_vec()
-            } else {
-                agent.tools
-            };
+            tracing::debug!(agent_id, user_id = ?agent.user_id, "Resolved agent from DB");
 
             let raw_prompt = if let Some(ref prompt) = agent.prompt {
                 if !prompt.is_empty() {
@@ -810,7 +804,6 @@ impl ChatService {
             return Ok(AgentConfig {
                 system_prompt,
                 model_group: agent.model_group,
-                tools,
                 skills: agent.skills,
                 sandbox_config: agent.sandbox_config,
                 identity: agent.identity,
@@ -825,14 +818,9 @@ impl ChatService {
             .cloned()
             .unwrap_or_else(|| "primary".to_string());
 
-        let tools = parsed.metadata.get("tools")
-            .map(|t| t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-            .unwrap_or_else(|| crate::tool::configurable_tools().to_vec());
-
         Ok(AgentConfig {
             system_prompt: parsed.template,
             model_group,
-            tools,
             skills: None,
             sandbox_config: None,
             identity: std::collections::BTreeMap::new(),

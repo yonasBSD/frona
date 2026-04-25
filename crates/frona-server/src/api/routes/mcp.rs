@@ -293,10 +293,10 @@ async fn search_registry(
 
 // --- Bridge endpoints (accept User + Agent principals) ---
 
-fn allowed_mcp_slugs(tools: &[String]) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+fn allowed_mcp_tools(defs: &[crate::tool::ToolDefinition]) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
     let mut map: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
-    for id in tools {
-        if let Some(rest) = id.strip_prefix("mcp__")
+    for def in defs {
+        if let Some(rest) = def.id.strip_prefix("mcp__")
             && let Some((slug, tool)) = rest.split_once("__")
         {
             map.entry(slug.to_string()).or_default().insert(tool.to_string());
@@ -317,7 +317,8 @@ async fn bridge_list_servers(
 
     let slug_filter = if let Some(agent_id) = auth.agent_id() {
         let agent = state.agent_service.get(&auth.user_id, agent_id).await?;
-        Some(allowed_mcp_slugs(&agent.tools))
+        let registry = state.tool_manager.build_agent_registry(&auth.user_id, &agent, &state.policy_service).await;
+        Some(allowed_mcp_tools(registry.definitions()))
     } else {
         None
     };
@@ -328,10 +329,7 @@ async fn bridge_list_servers(
             slug_filter.as_ref().is_none_or(|f| f.contains_key(&s.slug))
         })
         .map(|s| {
-            let tool_count = match &slug_filter {
-                Some(f) => f.get(&s.slug).map(|t| t.len()).unwrap_or(0),
-                None => s.tool_cache.len(),
-            };
+            let tool_count = s.tool_cache.len();
             frona_api_types::mcp::BridgeServerInfo {
                 slug: s.slug,
                 display_name: s.display_name,
@@ -361,7 +359,8 @@ async fn bridge_server_tools(
 
     let allowed_tools = if let Some(agent_id) = auth.agent_id() {
         let agent = state.agent_service.get(&auth.user_id, agent_id).await?;
-        let map = allowed_mcp_slugs(&agent.tools);
+        let registry = state.tool_manager.build_agent_registry(&auth.user_id, &agent, &state.policy_service).await;
+        let map = allowed_mcp_tools(registry.definitions());
         map.get(&slug).cloned()
     } else {
         None
@@ -398,8 +397,9 @@ async fn bridge_call_tool(
 ) -> Result<Json<frona_api_types::mcp::BridgeCallResponse>, ApiError> {
     if let Some(agent_id) = auth.agent_id() {
         let agent = state.agent_service.get(&auth.user_id, agent_id).await?;
+        let registry = state.tool_manager.build_agent_registry(&auth.user_id, &agent, &state.policy_service).await;
         let expected = format!("mcp__{slug}__{tool_name}");
-        if !agent.tools.contains(&expected) {
+        if !registry.definitions().iter().any(|d| d.id == expected) {
             return Err(ApiError::from(crate::core::error::AppError::Forbidden(
                 format!("Agent does not have access to tool '{tool_name}' on server '{slug}'"),
             )));

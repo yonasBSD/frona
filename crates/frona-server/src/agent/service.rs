@@ -7,10 +7,9 @@ use crate::core::config::CacheConfig;
 use crate::db::repo::agents::SurrealAgentRepo;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
-use crate::tool::configurable_tools;
 use crate::tool::sandbox::driver::resource_monitor::SystemResourceManager;
 
-use super::models::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};
+use super::models::{CreateAgentRequest, UpdateAgentRequest};
 use super::models::Agent;
 use super::repository::AgentRepository;
 
@@ -71,7 +70,7 @@ impl AgentService {
         &self,
         user_id: &str,
         req: CreateAgentRequest,
-    ) -> Result<AgentResponse, AppError> {
+    ) -> Result<Agent, AppError> {
         let id = if let Some(custom_id) = req.id {
             let custom_id = custom_id.to_lowercase();
             if !custom_id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') || custom_id.is_empty() {
@@ -86,7 +85,6 @@ impl AgentService {
         };
 
         let now = chrono::Utc::now();
-        let tools = req.tools.unwrap_or_else(|| configurable_tools().to_vec());
 
         let agent = Agent {
             id,
@@ -95,7 +93,6 @@ impl AgentService {
             description: req.description,
             model_group: req.model_group.unwrap_or_else(|| "primary".to_string()),
             enabled: true,
-            tools,
             skills: req.skills,
             sandbox_config: req.sandbox_config,
             max_concurrent_tasks: None,
@@ -111,7 +108,7 @@ impl AgentService {
 
         let agent = self.repo.create(&agent).await?;
         self.push_agent_limits(&agent.id, &agent);
-        Ok(agent.into())
+        Ok(agent)
     }
 
     pub async fn find_by_id(&self, agent_id: &str) -> Result<Option<Agent>, AppError> {
@@ -129,7 +126,7 @@ impl AgentService {
         &self,
         user_id: &str,
         agent_id: &str,
-    ) -> Result<AgentResponse, AppError> {
+    ) -> Result<Agent, AppError> {
         let agent = self
             .repo
             .find_by_id(agent_id)
@@ -140,15 +137,14 @@ impl AgentService {
             return Err(AppError::Forbidden("Not your agent".into()));
         }
 
-        Ok(agent.into())
+        Ok(agent)
     }
 
     pub async fn list(
         &self,
         user_id: &str,
-    ) -> Result<Vec<AgentResponse>, AppError> {
-        let agents = self.repo.find_by_user_id(user_id).await?;
-        Ok(agents.into_iter().map(Into::into).collect())
+    ) -> Result<Vec<Agent>, AppError> {
+        self.repo.find_by_user_id(user_id).await
     }
 
     pub async fn heartbeat_chat_ids(&self, user_id: &str) -> Vec<String> {
@@ -166,7 +162,7 @@ impl AgentService {
         user_id: &str,
         agent_id: &str,
         req: UpdateAgentRequest,
-    ) -> Result<AgentResponse, AppError> {
+    ) -> Result<Agent, AppError> {
         let mut agent = self
             .repo
             .find_by_id(agent_id)
@@ -190,9 +186,6 @@ impl AgentService {
         }
         if let Some(enabled) = req.enabled {
             agent.enabled = enabled;
-        }
-        if let Some(tools) = req.tools {
-            agent.tools = tools;
         }
         if let Some(skills) = req.skills {
             if skills.len() == 1 && skills[0] == "*" {
@@ -221,7 +214,7 @@ impl AgentService {
         let agent = self.repo.update(&agent).await?;
         self.push_agent_limits(agent_id, &agent);
         self.cache.invalidate(agent_id).await;
-        Ok(agent.into())
+        Ok(agent)
     }
 
     pub async fn find_by_name(

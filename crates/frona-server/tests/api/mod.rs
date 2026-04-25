@@ -83,6 +83,7 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
             mcp_registry,
             std::sync::Arc::new(state.vault_service.clone()),
             noop,
+            state.tool_manager.clone(),
             state.token_service.clone(),
             state.keypair_service.clone(),
             state.user_service.clone(),
@@ -91,6 +92,8 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
             state.config.auth.ephemeral_token_expiry_secs,
         ));
     }
+    state.init_task_executor();
+    state.tool_manager.init(&state);
     (state, tmp)
 }
 

@@ -93,6 +93,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.skill_service.start_watcher();
 
     state.init_task_executor();
+    state.tool_manager.init(&state);
+    state.policy_service.sync_base_policies().await?;
     if let Some(executor) = state.task_executor() {
         let executor = executor.clone();
         tokio::spawn(async move {
@@ -211,6 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::browser::router())
         .merge(routes::navigation::router())
         .merge(routes::notifications::router())
+        .merge(routes::policies::router())
         .merge(routes::skills::router())
         .merge(routes::tools::router())
         .merge(routes::files::router())

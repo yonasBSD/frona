@@ -11,6 +11,8 @@ use crate::agent::task::models::CreateTaskRequest;
 use crate::agent::task::service::TaskService;
 use crate::chat::broadcast::BroadcastService;
 use crate::core::error::AppError;
+use crate::policy::models::PolicyAction;
+use crate::policy::service::PolicyService;
 use frona_derive::agent_tool;
 
 use super::{InferenceContext, ToolOutput};
@@ -34,6 +36,7 @@ pub struct TaskTool {
     agent_service: AgentService,
     task_executor: Arc<TaskExecutor>,
     broadcast_service: BroadcastService,
+    policy_service: PolicyService,
     prompts: PromptLoader,
 }
 
@@ -43,6 +46,7 @@ impl TaskTool {
         agent_service: AgentService,
         task_executor: Arc<TaskExecutor>,
         broadcast_service: BroadcastService,
+        policy_service: PolicyService,
         prompts: PromptLoader,
     ) -> Self {
         Self {
@@ -50,6 +54,7 @@ impl TaskTool {
             agent_service,
             task_executor,
             broadcast_service,
+            policy_service,
             prompts,
         }
     }
@@ -102,6 +107,25 @@ impl TaskTool {
             }
             None => (ctx.agent.clone(), true),
         };
+
+        if !is_self {
+            let decision = self
+                .policy_service
+                .authorize(
+                    user_id,
+                    &ctx.agent,
+                    PolicyAction::DelegateTask {
+                        target_agent_id: target_agent.id.clone(),
+                    },
+                )
+                .await?;
+            if decision.is_denied() {
+                return Ok(ToolOutput::error(format!(
+                    "Authorization denied: agent '{}' is not permitted to delegate tasks to '{}'.",
+                    ctx.agent.name, target_agent.name
+                )));
+            }
+        }
 
         if is_self && process_result {
             return Err(AppError::Validation(

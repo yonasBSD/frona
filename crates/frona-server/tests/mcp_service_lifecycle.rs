@@ -145,12 +145,15 @@ async fn build_test_harness(
     );
     let runtime_tokens_dir = tmp.path().join("runtime-tokens");
 
+    let tool_manager = Arc::new(frona::tool::manager::ToolManager::new(false));
+
     let service = McpServerService::new(
         mcp_repo,
         manager,
         registry,
         Arc::new(vault.clone()),
         installer,
+        tool_manager,
         token_service,
         keypair_service,
         user_service,

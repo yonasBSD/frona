@@ -10,7 +10,6 @@ use crate::tool::provider::{
     BUILTIN_PROVIDERS, ToolProvider, ToolProviderKind, ToolProviderStatus, builtin_providers,
     is_configurable_builtin,
 };
-use crate::tool::registry::build_tool_registry;
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
@@ -62,10 +61,10 @@ async fn build_catalog(state: &AppState, user_id: &str) -> Vec<ToolProviderWithT
         all_allowed.push(cli_provider_id(cli));
         all_allowed.push(cli.name.clone());
     }
-    let registry = build_tool_registry(state, "", "", &all_allowed, false).await;
+    let all_defs = state.tool_manager.definitions(user_id).await;
 
     let mut by_provider: BTreeMap<String, Vec<ToolInfo>> = BTreeMap::new();
-    for def in &registry.definitions {
+    for def in &all_defs {
         let configurable = is_configurable_builtin(&def.provider_id)
             || state
                 .cli_tools_config
@@ -168,10 +167,11 @@ async fn agent_tools(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<ToolInfo>>, ApiError> {
-    let agent = state.agent_service.get(&auth.user_id, &id).await?;
-    let registry = build_tool_registry(&state, &id, &auth.user_id, &agent.tools, false).await;
+    let agent = state.agent_service.get(&auth.user_id, &id).await
+        .map_err(ApiError)?;
+    let registry = state.tool_manager.build_agent_registry(&auth.user_id, &agent, &state.policy_service).await;
     let infos: Vec<ToolInfo> = registry
-        .definitions
+        .definitions()
         .iter()
         .map(|d| ToolInfo {
             id: d.id.clone(),

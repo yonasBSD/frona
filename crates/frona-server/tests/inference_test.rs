@@ -25,7 +25,7 @@ async fn test_tool_loop_simple_text_response() {
     )]));
     let registry = test_registry_with_provider("mock", provider.clone());
     let model_group = test_model_group();
-    let tool_registry = AgentToolRegistry::new();
+    let tool_registry = AgentToolRegistry::empty();
     let (event_sender, mut sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
     let ctx = mock_context();
@@ -78,7 +78,7 @@ async fn test_tool_loop_single_tool_call() {
     ]));
     let registry = test_registry_with_provider("mock", provider.clone());
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockInternalTool::new(
         "search",
         vec!["search results here".into()],
@@ -142,7 +142,7 @@ async fn test_tool_loop_multi_turn() {
     ]));
     let registry = test_registry_with_provider("mock", provider.clone());
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockInternalTool::new(
         "step_one",
         vec!["step one done".into()],
@@ -190,7 +190,7 @@ async fn test_tool_loop_external_tool_returns_pending() {
     ])]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockExternalTool::new("ext_tool")));
     let (event_sender, _sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
@@ -233,7 +233,7 @@ async fn test_tool_loop_mixed_internal_external() {
     ])]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockInternalTool::new(
         "internal",
         vec!["internal done".into()],
@@ -284,7 +284,7 @@ async fn test_tool_loop_multiple_external_tools_in_same_turn() {
     ])]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockExternalTool::new("ext1")));
     tool_registry.register(Arc::new(MockExternalTool::new("ext2")));
     tool_registry.register(Arc::new(MockExternalTool::new("ext3")));
@@ -332,7 +332,7 @@ async fn test_tool_loop_mixed_internal_and_multiple_external() {
     ])]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockInternalTool::new(
         "internal",
         vec!["internal result".into()],
@@ -380,7 +380,7 @@ async fn test_tool_loop_cancellation_before_inference() {
     )]));
     let registry = test_registry_with_provider("mock", provider.clone());
     let model_group = test_model_group();
-    let tool_registry = AgentToolRegistry::new();
+    let tool_registry = AgentToolRegistry::empty();
     let (event_sender, _sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
     cancel.cancel();
@@ -420,7 +420,7 @@ async fn test_tool_loop_rate_limit_retry() {
     ]));
     let registry = test_registry_with_provider("mock", provider.clone());
     let model_group = test_model_group();
-    let tool_registry = AgentToolRegistry::new();
+    let tool_registry = AgentToolRegistry::empty();
     let (event_sender, mut sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
     let ctx = mock_context();
@@ -474,7 +474,7 @@ async fn test_tool_loop_rate_limit_exhausted() {
     let provider = Arc::new(MockModelProvider::new(responses));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let tool_registry = AgentToolRegistry::new();
+    let tool_registry = AgentToolRegistry::empty();
     let (event_sender, _sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
     let ctx = mock_context();
@@ -519,7 +519,7 @@ async fn test_tool_loop_tool_call_failure() {
     ]));
     let registry = test_registry_with_provider("mock", provider.clone());
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockFailingTool::new("bad_tool")));
     let (event_sender, mut sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
@@ -566,7 +566,7 @@ async fn test_tool_loop_provider_error() {
     )]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let tool_registry = AgentToolRegistry::new();
+    let tool_registry = AgentToolRegistry::empty();
     let (event_sender, _sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
     let ctx = mock_context();
@@ -919,7 +919,7 @@ async fn test_streaming_tokens_arrive_individually() {
     ));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let tool_registry = AgentToolRegistry::new();
+    let tool_registry = AgentToolRegistry::empty();
     let (event_sender, mut sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
     let ctx = mock_context();
@@ -938,7 +938,7 @@ async fn test_streaming_tokens_arrive_individually() {
             &ctx,
             &metrics,
             &chat_service,
-            "test-msg",
+                "test-msg",
         )
         .await
     });
@@ -1024,7 +1024,7 @@ async fn test_tool_loop_reasoning_in_completed_outcome() {
     ]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let tool_registry = AgentToolRegistry::new();
+    let tool_registry = AgentToolRegistry::empty();
     let (event_sender, mut sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
     let ctx = mock_context();
@@ -1087,7 +1087,7 @@ async fn test_tool_loop_reasoning_with_tool_calls() {
     ]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockInternalTool::new(
         "search",
         vec!["search results".into()],
@@ -1139,7 +1139,7 @@ async fn test_tool_loop_no_reasoning_when_absent() {
     )]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let tool_registry = AgentToolRegistry::new();
+    let tool_registry = AgentToolRegistry::empty();
     let (event_sender, mut sse_rx, _broadcast) = test_event_sender().await;
     let cancel = CancellationToken::new();
     let ctx = mock_context();
@@ -1189,7 +1189,7 @@ async fn test_tool_result_sse_includes_summary() {
     ]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockInternalTool::new(
         "lookup",
         vec!["detailed result data here".into()],
@@ -1254,7 +1254,7 @@ async fn test_tool_loop_deduplicates_attachments() {
     ])]));
     let registry = test_registry_with_provider("mock", provider);
     let model_group = test_model_group();
-    let mut tool_registry = AgentToolRegistry::new();
+    let mut tool_registry = AgentToolRegistry::empty();
     tool_registry.register(Arc::new(MockAttachmentTool::new("produce_file", attachment.clone())));
     tool_registry.register(Arc::new(MockAttachmentTool::new("complete_task", attachment)));
     let (event_sender, _sse_rx, _broadcast) = test_event_sender().await;

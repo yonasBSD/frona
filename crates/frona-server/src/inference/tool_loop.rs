@@ -96,12 +96,20 @@ pub fn extract_reasoning(contents: &[AssistantContent]) -> Option<Reasoning> {
     })
 }
 
-fn to_rig_tool_definitions(defs: &[ToolDefinition]) -> Vec<RigToolDefinition> {
+fn to_rig_tool_definitions(defs: &[ToolDefinition], exclude_mcp: bool) -> Vec<RigToolDefinition> {
     defs.iter()
-        .map(|d| RigToolDefinition {
-            name: d.id.clone(),
-            description: d.description.clone(),
-            parameters: d.parameters.clone(),
+        .filter(|d| !exclude_mcp || !d.id.starts_with("mcp__"))
+        .map(|d| {
+            let description = if d.provider_id.is_empty() {
+                d.description.clone()
+            } else {
+                format!("{}\n\nTool group: {}", d.description, d.provider_id)
+            };
+            RigToolDefinition {
+                name: d.id.clone(),
+                description,
+                parameters: d.parameters.clone(),
+            }
         })
         .collect()
 }
@@ -372,8 +380,8 @@ pub async fn run_tool_loop(
     chat_service: &crate::chat::service::ChatService,
     message_id: &str,
 ) -> Result<ToolLoopOutcome, AppError> {
-    let tool_defs = &tool_registry.definitions;
-    let rig_tools = to_rig_tool_definitions(tool_defs);
+    let tool_defs = tool_registry.definitions();
+    let rig_tools = to_rig_tool_definitions(tool_defs, tool_registry.mcp_bridge_mode());
 
     let mut all_attachments: Vec<crate::storage::Attachment> = Vec::new();
     let mut current_system_prompt = system_prompt.to_string();

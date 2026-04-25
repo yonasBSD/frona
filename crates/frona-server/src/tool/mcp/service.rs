@@ -122,6 +122,7 @@ pub struct McpServerService {
     registry: Arc<dyn McpRegistryClient>,
     vault: Arc<VaultService>,
     installer: Arc<dyn PackageInstaller>,
+    tool_manager: Arc<crate::tool::manager::ToolManager>,
     token_service: TokenService,
     keypair_service: KeyPairService,
     user_service: UserService,
@@ -149,6 +150,7 @@ impl McpServerService {
         registry: Arc<dyn McpRegistryClient>,
         vault: Arc<VaultService>,
         installer: Arc<dyn PackageInstaller>,
+        tool_manager: Arc<crate::tool::manager::ToolManager>,
         token_service: TokenService,
         keypair_service: KeyPairService,
         user_service: UserService,
@@ -162,6 +164,7 @@ impl McpServerService {
             registry,
             vault,
             installer,
+            tool_manager,
             token_service,
             keypair_service,
             user_service,
@@ -485,6 +488,16 @@ impl McpServerService {
             })
             .collect();
         self.repo.update(&server).await?;
+
+        if !tools.is_empty() {
+            let mcp_tool = Arc::new(super::mcp_tool::McpTool::new(
+                self.manager.clone(),
+                &server.slug,
+                tools.clone(),
+            ));
+            self.tool_manager.register_user_tool(user_id, mcp_tool).await;
+        }
+
         Ok(StartResult { tools })
     }
 
@@ -494,6 +507,10 @@ impl McpServerService {
         server.status = McpServerStatus::Stopped;
         server.updated_at = Utc::now();
         self.repo.update(&server).await?;
+
+        let owner_name = format!("mcp__{}", server.slug);
+        self.tool_manager.deregister_user_tool(user_id, &owner_name).await;
+
         Ok(())
     }
 

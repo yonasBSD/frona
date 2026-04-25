@@ -480,7 +480,6 @@ mod tests {
                 description: String::new(),
                 model_group: "primary".into(),
                 enabled: true,
-                tools: vec![],
                 skills: None,
                 sandbox_config: None,
                 max_concurrent_tasks: None,

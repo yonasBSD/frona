@@ -158,7 +158,6 @@ async fn seed_agent(db: &Surreal<Db>) {
         description: String::new(),
         model_group: "primary".to_string(),
         enabled: true,
-        tools: vec![],
         skills: None,
         sandbox_config: None,
         max_concurrent_tasks: None,

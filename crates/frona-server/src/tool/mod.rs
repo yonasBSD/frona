@@ -1,6 +1,8 @@
 pub mod browser;
+pub mod manager;
 pub mod cli;
 pub mod create_agent;
+pub mod manage_policy;
 pub mod heartbeat;
 pub mod manage_service;
 pub mod notify_human;
@@ -19,8 +21,6 @@ pub mod mcp;
 pub mod provider;
 pub mod sandbox;
 
-use std::sync::OnceLock;
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -30,25 +30,6 @@ use crate::core::error::AppError;
 pub use crate::inference::request::InferenceContext;
 
 use crate::agent::prompt::PromptLoader;
-use self::cli::CliToolConfig;
-
-static CONFIGURABLE_TOOLS: OnceLock<Vec<String>> = OnceLock::new();
-
-pub fn init_configurable_tools(cli_tools: &[CliToolConfig]) {
-    let mut names: Vec<String> = cli_tools.iter().map(|t| t.name.clone()).collect();
-    names.push("browser".to_string());
-    names.push("web_fetch".to_string());
-    names.push("search".to_string());
-    names.push("task".to_string());
-    names.push("heartbeat".to_string());
-    names.push("credentials".to_string());
-    names.push("app".to_string());
-    let _ = CONFIGURABLE_TOOLS.set(names);
-}
-
-pub fn configurable_tools() -> &'static [String] {
-    CONFIGURABLE_TOOLS.get().map(|v| v.as_slice()).unwrap_or(&[])
-}
 
 /// Parse a `run_at` argument that can be a unix timestamp (number or string) or ISO 8601 datetime.
 /// Returns an error if the value is in the past.

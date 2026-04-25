@@ -5,7 +5,7 @@ use axum::extract::{Multipart, Path, State};
 use axum::routing::{get, put};
 use axum::{Json, Router};
 use crate::agent::config::parse_frontmatter;
-use crate::agent::models::{AgentResponse, CreateAgentRequest, UpdateAgentRequest};
+use crate::agent::models::{Agent, AgentResponse, CreateAgentRequest, UpdateAgentRequest};
 use crate::chat::broadcast::{BroadcastEvent, BroadcastEventKind};
 use crate::inference::tool_loop::InferenceEventKind;
 
@@ -25,6 +25,15 @@ pub fn router() -> Router<AppState> {
         .route("/api/agents/{id}/avatar", put(upload_avatar))
 }
 
+async fn sync_agent_tools(
+    state: &AppState,
+    user_id: &str,
+    agent_id: &str,
+    selected_tools: &[String],
+) -> Result<(), crate::core::error::AppError> {
+    state.policy_service.sync_agent_tools(user_id, agent_id, selected_tools).await
+}
+
 fn resolve_default_prompt(state: &AppState, agent_id: &str) -> String {
     state
         .storage_service
@@ -34,12 +43,29 @@ fn resolve_default_prompt(state: &AppState, agent_id: &str) -> String {
         .unwrap_or_default()
 }
 
+async fn to_response(state: &AppState, user_id: &str, agent: Agent) -> Result<AgentResponse, AppError> {
+    let registry = state
+        .tool_manager
+        .build_agent_registry(user_id, &agent, &state.policy_service)
+        .await;
+    let tools: Vec<String> = registry.definitions().iter().map(|d| d.id.clone()).collect();
+    Ok(AgentResponse::from_agent(agent, tools))
+}
+
 async fn create_agent(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(req): Json<CreateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let response = state.agent_service.create(&auth.user_id, req).await?;
+    let tools = req.tools.clone();
+    let agent = state.agent_service.create(&auth.user_id, req).await?;
+
+    if let Some(tool_list) = tools {
+        sync_agent_tools(&state, &auth.user_id, &agent.id, &tool_list).await?;
+    }
+
+    let mut response = to_response(&state, &auth.user_id, agent).await?;
+    response.default_prompt = resolve_default_prompt(&state, &response.id);
     Ok(Json(response))
 }
 
@@ -47,10 +73,7 @@ async fn list_agents(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AgentResponse>>, ApiError> {
-    let mut agents = state.agent_service.list(&auth.user_id).await?;
-    agents.retain(|agent| {
-        !agent.is_shared || agent.tools.iter().all(|t| crate::tool::is_tool_available(&state, t))
-    });
+    let agents = state.agent_service.list(&auth.user_id).await?;
 
     let count_map: HashMap<String, u64> = state
         .db
@@ -67,14 +90,24 @@ async fn list_agents(
         })
         .collect();
 
-    for agent in &mut agents {
-        if let Some(&count) = count_map.get(agent.id.as_str()) {
-            agent.chat_count = count;
+    let mut responses = Vec::new();
+    for agent in agents {
+        let id = agent.id.clone();
+        let is_shared = agent.user_id.is_none();
+        let mut response = to_response(&state, &auth.user_id, agent).await?;
+
+        if is_shared && response.tools.iter().any(|t| !crate::tool::is_tool_available(&state, t)) {
+            continue;
         }
-        agent.default_prompt = resolve_default_prompt(&state, &agent.id);
+
+        if let Some(&count) = count_map.get(id.as_str()) {
+            response.chat_count = count;
+        }
+        response.default_prompt = resolve_default_prompt(&state, &id);
+        responses.push(response);
     }
 
-    Ok(Json(agents))
+    Ok(Json(responses))
 }
 
 async fn get_agent(
@@ -82,9 +115,10 @@ async fn get_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let mut agent = state.agent_service.get(&auth.user_id, &id).await?;
-    agent.default_prompt = resolve_default_prompt(&state, &id);
-    Ok(Json(agent))
+    let agent = state.agent_service.get(&auth.user_id, &id).await?;
+    let mut response = to_response(&state, &auth.user_id, agent).await?;
+    response.default_prompt = resolve_default_prompt(&state, &id);
+    Ok(Json(response))
 }
 
 async fn update_agent(
@@ -93,8 +127,15 @@ async fn update_agent(
     Path(id): Path<String>,
     Json(req): Json<UpdateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let mut agent = state.agent_service.update(&auth.user_id, &id, req).await?;
-    agent.default_prompt = resolve_default_prompt(&state, &id);
+    let tools = req.tools.clone();
+    let agent = state.agent_service.update(&auth.user_id, &id, req).await?;
+
+    if let Some(tool_list) = tools {
+        sync_agent_tools(&state, &auth.user_id, &id, &tool_list).await?;
+    }
+
+    let mut response = to_response(&state, &auth.user_id, agent).await?;
+    response.default_prompt = resolve_default_prompt(&state, &id);
 
     state.broadcast_service.send(BroadcastEvent {
         user_id: auth.user_id,
@@ -102,11 +143,11 @@ async fn update_agent(
         kind: BroadcastEventKind::Inference(InferenceEventKind::EntityUpdated {
             table: "agent".to_string(),
             record_id: id,
-            fields: serde_json::to_value(&agent).unwrap_or_default(),
+            fields: serde_json::to_value(&response).unwrap_or_default(),
         }),
     });
 
-    Ok(Json(agent))
+    Ok(Json(response))
 }
 
 async fn delete_agent(
@@ -115,6 +156,10 @@ async fn delete_agent(
     Path(id): Path<String>,
 ) -> Result<(), ApiError> {
     state.agent_service.delete(&auth.user_id, &id).await?;
+    state
+        .policy_service
+        .delete_agent_policies(&auth.user_id, &id)
+        .await?;
     Ok(())
 }
 
@@ -184,4 +229,3 @@ async fn upload_avatar(
     let url = format!("/api/files/agent/{id}/{avatar_filename}");
     Ok(Json(serde_json::json!({ "url": url })))
 }
-

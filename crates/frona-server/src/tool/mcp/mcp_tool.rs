@@ -10,13 +10,15 @@ use super::manager::McpManager;
 
 pub struct McpTool {
     manager: Arc<McpManager>,
+    owner_name: String,
     cached_definitions: Vec<ToolDefinition>,
 }
 
 impl McpTool {
-    pub fn new(manager: Arc<McpManager>, definitions: Vec<ToolDefinition>) -> Self {
+    pub fn new(manager: Arc<McpManager>, slug: &str, definitions: Vec<ToolDefinition>) -> Self {
         Self {
             manager,
+            owner_name: format!("mcp__{slug}"),
             cached_definitions: definitions,
         }
     }
@@ -25,7 +27,7 @@ impl McpTool {
 #[async_trait]
 impl AgentTool for McpTool {
     fn name(&self) -> &str {
-        "mcp"
+        &self.owner_name
     }
 
     fn definitions(&self) -> Vec<ToolDefinition> {

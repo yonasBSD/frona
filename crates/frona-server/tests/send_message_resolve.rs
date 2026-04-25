@@ -58,7 +58,6 @@ fn test_agent(id: &str, user_id: &str, heartbeat_chat_id: Option<&str>) -> Agent
         description: String::new(),
         model_group: "primary".to_string(),
         enabled: true,
-        tools: vec![],
         skills: None,
         sandbox_config: None,
         max_concurrent_tasks: None,

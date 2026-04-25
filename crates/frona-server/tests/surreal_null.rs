@@ -25,7 +25,6 @@ fn test_agent(user_id: Option<&str>) -> Agent {
         description: "A test agent".to_string(),
         model_group: "primary".to_string(),
         enabled: true,
-        tools: vec![],
         skills: None,
         sandbox_config: None,
         max_concurrent_tasks: None,

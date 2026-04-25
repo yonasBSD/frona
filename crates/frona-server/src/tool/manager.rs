@@ -1,0 +1,326 @@
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
+
+use tokio::sync::RwLock;
+
+use async_trait::async_trait;
+use serde_json::Value;
+
+use crate::agent::models::Agent;
+use crate::core::error::AppError;
+use crate::core::state::AppState;
+use crate::policy::models::PolicyAction;
+use crate::policy::service::PolicyService;
+
+use super::registry::AgentToolRegistry;
+use super::{AgentTool, InferenceContext, ToolDefinition, ToolOutput};
+
+struct UserToolRegistry {
+    tools: HashMap<String, Arc<dyn AgentTool>>,
+}
+
+impl UserToolRegistry {
+    fn new(builtins: &[Arc<dyn AgentTool>]) -> Self {
+        let mut tools = HashMap::new();
+        for tool in builtins {
+            tools.insert(tool.name().to_string(), tool.clone());
+        }
+        Self { tools }
+    }
+
+    fn register(&mut self, tool: Arc<dyn AgentTool>) {
+        self.tools.insert(tool.name().to_string(), tool);
+    }
+
+    fn deregister(&mut self, owner_name: &str) {
+        self.tools.remove(owner_name);
+    }
+
+    fn definitions(&self) -> Vec<(String, ToolDefinition)> {
+        let mut result = Vec::new();
+        for (owner_name, tool) in &self.tools {
+            for def in tool.definitions() {
+                result.push((owner_name.clone(), def));
+            }
+        }
+        result
+    }
+
+    fn tool_groups(&self) -> Vec<String> {
+        let mut groups: HashSet<String> = HashSet::new();
+        for tool in self.tools.values() {
+            for def in tool.definitions() {
+                if !def.provider_id.is_empty() {
+                    groups.insert(def.provider_id);
+                }
+            }
+        }
+        let mut sorted: Vec<String> = groups.into_iter().collect();
+        sorted.sort();
+        sorted
+    }
+}
+
+struct AuthorizedTool {
+    inner: Arc<dyn AgentTool>,
+    policy_service: PolicyService,
+}
+
+#[async_trait]
+impl AgentTool for AuthorizedTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        self.inner.definitions()
+    }
+
+    async fn execute(
+        &self,
+        tool_name: &str,
+        arguments: Value,
+        ctx: &InferenceContext,
+    ) -> Result<ToolOutput, AppError> {
+        let tool_group = self
+            .definitions()
+            .iter()
+            .find(|d| d.id == tool_name)
+            .map(|d| d.provider_id.clone())
+            .unwrap_or_default();
+
+        let decision = self
+            .policy_service
+            .authorize(
+                &ctx.user.id,
+                &ctx.agent,
+                PolicyAction::InvokeTool {
+                    tool_name: tool_name.to_string(),
+                    tool_group,
+                },
+            )
+            .await?;
+
+        if decision.is_denied() {
+            return Ok(ToolOutput::error(format!(
+                "Authorization denied: agent '{}' is not permitted to use tool '{}'.",
+                ctx.agent.name, tool_name
+            )));
+        }
+
+        self.inner.execute(tool_name, arguments, ctx).await
+    }
+}
+
+pub struct ToolManager {
+    builtins: OnceLock<Vec<Arc<dyn AgentTool>>>,
+    user_registries: RwLock<HashMap<String, UserToolRegistry>>,
+    mcp_bridge_mode: bool,
+}
+
+impl ToolManager {
+    pub fn new(mcp_bridge_mode: bool) -> Self {
+        Self {
+            builtins: OnceLock::new(),
+            user_registries: RwLock::new(HashMap::new()),
+            mcp_bridge_mode,
+        }
+    }
+
+    pub fn init(&self, state: &AppState) {
+        let tools = create_builtin_tools(state);
+        let _ = self.builtins.set(tools);
+    }
+
+    fn builtins(&self) -> &[Arc<dyn AgentTool>] {
+        self.builtins.get().map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    pub async fn register_user_tool(&self, user_id: &str, tool: Arc<dyn AgentTool>) {
+        let mut registries = self.user_registries.write().await;
+        let registry = registries
+            .entry(user_id.to_string())
+            .or_insert_with(|| UserToolRegistry::new(self.builtins()));
+        registry.register(tool);
+    }
+
+    pub async fn deregister_user_tool(&self, user_id: &str, owner_name: &str) {
+        let mut registries = self.user_registries.write().await;
+        if let Some(registry) = registries.get_mut(user_id) {
+            registry.deregister(owner_name);
+        }
+    }
+
+    pub async fn tool_groups(&self, user_id: &str) -> Vec<String> {
+        let registries = self.user_registries.read().await;
+        if let Some(registry) = registries.get(user_id) {
+            registry.tool_groups()
+        } else {
+            let temp = UserToolRegistry::new(self.builtins());
+            temp.tool_groups()
+        }
+    }
+
+    pub async fn build_agent_registry(
+        &self,
+        user_id: &str,
+        agent: &Agent,
+        policy_service: &PolicyService,
+    ) -> AgentToolRegistry {
+        let agent_id = &agent.id;
+        let all_defs = {
+            let mut registries = self.user_registries.write().await;
+            let registry = registries
+                .entry(user_id.to_string())
+                .or_insert_with(|| UserToolRegistry::new(self.builtins()));
+            registry.definitions()
+        };
+
+        let mut tools: HashMap<String, Arc<dyn AgentTool>> = HashMap::new();
+        let mut tool_name_to_owner: HashMap<String, String> = HashMap::new();
+        let mut definitions: Vec<ToolDefinition> = Vec::new();
+
+        for (owner_name, mut def) in all_defs {
+            let decision = policy_service
+                .authorize(
+                    user_id,
+                    agent,
+                    PolicyAction::InvokeTool {
+                        tool_name: def.id.clone(),
+                        tool_group: def.provider_id.clone(),
+                    },
+                )
+                .await;
+
+            if let Err(ref e) = decision {
+                tracing::warn!(tool = %def.id, error = %e, "Policy authorization error, skipping tool");
+                continue;
+            }
+            if !decision.is_ok_and(|d| d.allowed) {
+                continue;
+            }
+
+            if let Some(props) = def
+                .parameters
+                .as_object_mut()
+                .and_then(|obj| obj.get_mut("properties"))
+                .and_then(|p| p.as_object_mut())
+            {
+                props.insert(
+                    "description".to_string(),
+                    serde_json::json!({
+                        "type": "string",
+                        "description": "A short, specific description of what this tool call will accomplish (e.g. 'Checking the API status', 'Searching for weather data'). Shown to the user as a status indicator."
+                    }),
+                );
+            }
+
+            if !tools.contains_key(&owner_name) {
+                let registries = self.user_registries.read().await;
+                if let Some(registry) = registries.get(user_id)
+                    && let Some(tool) = registry.tools.get(&owner_name)
+                {
+                    let wrapped: Arc<dyn AgentTool> = Arc::new(AuthorizedTool {
+                        inner: tool.clone(),
+                        policy_service: policy_service.clone(),
+                    });
+                    tools.insert(owner_name.clone(), wrapped);
+                }
+            }
+
+            tool_name_to_owner.insert(def.id.clone(), owner_name);
+            definitions.push(def);
+        }
+
+        let tool_names: Vec<&str> = definitions.iter().map(|d| d.id.as_str()).collect();
+        tracing::debug!(?tool_names, agent_id, user_id, "Agent tool registry built");
+
+        AgentToolRegistry::new(tools, tool_name_to_owner, definitions, self.mcp_bridge_mode)
+    }
+
+    pub async fn definitions(&self, user_id: &str) -> Vec<ToolDefinition> {
+        let registries = self.user_registries.read().await;
+        if let Some(registry) = registries.get(user_id) {
+            registry.definitions().into_iter().map(|(_, def)| def).collect()
+        } else {
+            let temp = UserToolRegistry::new(self.builtins());
+            temp.definitions().into_iter().map(|(_, def)| def).collect()
+        }
+    }
+}
+
+fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
+    use super::browser::tool::BrowserTool;
+    use super::cli::CliTool;
+    use super::heartbeat::HeartbeatTool;
+    use super::memory::{StoreAgentMemoryTool, StoreUserMemoryTool};
+    use super::notify_human::NotifyHumanTool;
+    use super::produce_file::ProduceFileTool;
+    use super::request_credentials::RequestCredentialsTool;
+    use super::task::TaskTool;
+    use super::update_identity::UpdateIdentityTool;
+    use super::web_fetch::WebFetchTool;
+    use super::web_search::WebSearchTool;
+
+    let prompts = state.prompts.clone();
+
+    let mut tools: Vec<Arc<dyn AgentTool>> = vec![
+        Arc::new(NotifyHumanTool::new(state.vault_service.clone(), prompts.clone())),
+        Arc::new(super::send_message::SendMessageTool::new(
+            state.chat_service.clone(), state.notification_service.clone(),
+            state.broadcast_service.clone(), state.agent_service.clone(),
+            state.task_service.clone(), prompts.clone(),
+        )),
+        Arc::new(ProduceFileTool::new(
+            std::path::PathBuf::from(&state.config.storage.workspaces_path), prompts.clone(),
+        )),
+        Arc::new(UpdateIdentityTool::new(state.db.clone(), prompts.clone())),
+        Arc::new(StoreAgentMemoryTool::new(
+            state.memory_service.clone(), state.compaction_model_group(), prompts.clone(),
+        )),
+        Arc::new(StoreUserMemoryTool::new(
+            state.memory_service.clone(), state.compaction_model_group(), prompts.clone(),
+        )),
+        Arc::new(BrowserTool::new(state.browser_session_manager.clone(), state.vault_service.clone())),
+        Arc::new(WebFetchTool::new(state.browser_session_manager.clone(), prompts.clone())),
+        Arc::new(WebSearchTool::new(state.search_provider.clone(), prompts.clone())),
+        Arc::new(HeartbeatTool::new(state.agent_service.clone(), state.storage_service.clone(), prompts.clone())),
+        Arc::new(RequestCredentialsTool::new(state.vault_service.clone(), prompts.clone())),
+        Arc::new(super::manage_service::ManageServiceTool::new(
+            state.app_service.clone(), prompts.clone(),
+            state.notification_service.clone(), state.broadcast_service.clone(),
+        )),
+        Arc::new(super::create_agent::CreateAgentTool::new(
+            state.agent_service.clone(), state.storage_service.clone(),
+            state.broadcast_service.clone(), prompts.clone(),
+        )),
+        Arc::new(super::manage_policy::ManagePolicyTool::new(state.policy_service.clone(), prompts.clone())),
+    ];
+
+    if let Some(executor) = state.task_executor() {
+        tools.push(Arc::new(TaskTool::new(
+            state.task_service.clone(), state.agent_service.clone(), executor,
+            state.broadcast_service.clone(), state.policy_service.clone(), prompts.clone(),
+        )));
+    }
+
+    if state.voice_provider.is_some() {
+        tools.push(Arc::new(super::voice::VoiceCallTool {
+            provider: state.voice_provider.clone(), prompts: prompts.clone(),
+            contact_service: state.contact_service.clone(), call_service: state.call_service.clone(),
+        }));
+        tools.push(Arc::new(super::voice::SendDtmfTool { prompts: prompts.clone() }));
+        tools.push(Arc::new(super::voice::HangupCallTool { prompts: prompts.clone() }));
+    }
+
+    for tool_config in state.cli_tools_config.iter() {
+        tools.push(Arc::new(CliTool::new(
+            tool_config.clone(), state.sandbox_manager.clone(), state.skill_service.clone(),
+            state.storage_service.clone(), state.token_service.clone(), state.keypair_service.clone(),
+            state.config.server.public_base_url(), state.config.auth.runtime_tokens_dir.clone(),
+            state.config.auth.ephemeral_token_expiry_secs,
+        )));
+    }
+
+    tools
+}

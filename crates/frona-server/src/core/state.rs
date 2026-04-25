@@ -31,6 +31,8 @@ use crate::inference::ModelProviderRegistry;
 use crate::inference::config::ModelRegistryConfig;
 use crate::memory::service::MemoryService;
 use crate::notification::service::NotificationService;
+use crate::policy::service::PolicyService;
+use crate::tool::manager::ToolManager;
 use crate::agent::prompt::PromptLoader;
 use crate::space::service::SpaceService;
 use crate::agent::task::service::TaskService;
@@ -110,6 +112,8 @@ pub struct AppState {
     pub storage_service: StorageService,
     pub prompts: PromptLoader,
     pub vault_service: VaultService,
+    pub policy_service: PolicyService,
+    pub tool_manager: Arc<ToolManager>,
     pub mcp_manager: Arc<crate::tool::mcp::McpManager>,
     pub mcp_service: Arc<crate::tool::mcp::McpServerService>,
     pub keypair_service: KeyPairService,
@@ -164,7 +168,6 @@ impl AppState {
             .with_var("schema_path", &schema_path);
 
         let cli_tools_config = load_cli_tool_configs(&prompt_loader);
-        crate::tool::init_configurable_tools(&cli_tools_config);
         let cli_tools_config = Arc::new(cli_tools_config);
 
         let memory_service = MemoryService::new(
@@ -288,12 +291,19 @@ impl AppState {
             Arc::new(crate::tool::mcp::SandboxedPackageInstaller::new(
                 mcp_manager.clone(),
             ));
+        let tool_manager = Arc::new(ToolManager::new(config.mcp.bridge_mode));
+        let policy_schema = crate::policy::schema::build_schema();
+        let policy_repo: Arc<dyn crate::policy::repository::PolicyRepository> =
+            Arc::new(SurrealRepo::<crate::policy::models::Policy>::new(db.clone()));
+        let policy_service = PolicyService::new(policy_repo, policy_schema, tool_manager.clone());
+
         let mcp_service = Arc::new(crate::tool::mcp::McpServerService::new(
             mcp_repo,
             mcp_manager.clone(),
             mcp_registry,
             Arc::new(vault_service.clone()),
             mcp_installer,
+            tool_manager.clone(),
             token_service.clone(),
             keypair_service.clone(),
             user_service.clone(),
@@ -332,6 +342,8 @@ impl AppState {
             active_sessions: ActiveSessions::default(),
             memory_service,
             notification_service: NotificationService::new(SurrealRepo::new(db.clone())),
+            policy_service: policy_service.clone(),
+            tool_manager,
             sandbox_manager,
             cli_tools_config,
             search_provider,

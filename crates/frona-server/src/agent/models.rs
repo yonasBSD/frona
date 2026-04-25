@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_aux::field_attributes::deserialize_bool_from_anything;
 use surrealdb::types::SurrealValue;
 
-use crate::tool::configurable_tools;
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[surreal(crate = "surrealdb::types")]
@@ -49,8 +48,6 @@ pub struct Agent {
     pub description: String,
     pub model_group: String,
     pub enabled: bool,
-    #[serde(default)]
-    pub tools: Vec<String>,
     #[serde(default)]
     pub sandbox_config: Option<SandboxSettings>,
     #[serde(default)]
@@ -114,16 +111,8 @@ pub struct AgentResponse {
     pub updated_at: DateTime<Utc>,
 }
 
-fn normalize_tools(tools: Vec<String>) -> Vec<String> {
-    if tools.is_empty() {
-        configurable_tools().to_vec()
-    } else {
-        tools
-    }
-}
-
-impl From<Agent> for AgentResponse {
-    fn from(agent: Agent) -> Self {
+impl AgentResponse {
+    pub fn from_agent(agent: Agent, tools: Vec<String>) -> Self {
         let is_shared = agent.user_id.is_none();
         Self {
             id: agent.id,
@@ -131,7 +120,7 @@ impl From<Agent> for AgentResponse {
             description: agent.description,
             model_group: agent.model_group,
             enabled: agent.enabled,
-            tools: normalize_tools(agent.tools),
+            tools,
             skills: agent.skills,
             sandbox_config: agent.sandbox_config,
             avatar: agent.avatar,

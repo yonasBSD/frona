@@ -145,17 +145,13 @@ pub async fn seed_config_agents(db: &Surreal<Db>, agent_service: &AgentService, 
         }
 
         let ws = storage.agent_workspace(&agent_id);
-        let (description, model_group, tools) = ws
+        let (description, model_group) = ws
             .read("AGENT.md")
             .map(|content| {
                 let entry = parse_frontmatter(&content);
                 let desc = entry.metadata.get("description").cloned().unwrap_or_default();
                 let mg = entry.metadata.get("model_group").cloned().unwrap_or_else(|| "primary".to_string());
-                let tools: Vec<String> = entry.metadata
-                    .get("tools")
-                    .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
-                    .unwrap_or_default();
-                (desc, mg, tools)
+                (desc, mg)
             })
             .unwrap_or_default();
 
@@ -165,7 +161,6 @@ pub async fn seed_config_agents(db: &Surreal<Db>, agent_service: &AgentService, 
                 description = $description,
                 model_group = $model_group,
                 enabled = true,
-                tools = $tools,
                 skills = [],
                 identity = {},
                 created_at = time::now(),
@@ -174,7 +169,6 @@ pub async fn seed_config_agents(db: &Surreal<Db>, agent_service: &AgentService, 
         .bind(("id", agent_id.clone()))
         .bind(("description", description))
         .bind(("model_group", model_group))
-        .bind(("tools", tools))
         .await?;
 
         info!(agent_id = %agent_id, "Seeded config agent into database");

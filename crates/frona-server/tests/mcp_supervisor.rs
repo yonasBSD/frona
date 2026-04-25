@@ -71,12 +71,15 @@ async fn build_mcp_supervisor() -> (
         SurrealRepo::new(db.clone()),
         &Default::default(),
     );
+    let tool_manager = Arc::new(frona::tool::manager::ToolManager::new(false));
+
     let service = Arc::new(McpServerService::new(
         mcp_repo.clone(),
         manager.clone(),
         registry,
         Arc::new(vault),
         installer,
+        tool_manager,
         token_service,
         keypair_service,
         user_service,

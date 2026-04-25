@@ -12,6 +12,7 @@ pub mod messages;
 pub mod metrics;
 pub mod navigation;
 pub mod notifications;
+pub mod policies;
 pub mod spaces;
 pub mod system;
 pub mod tasks;
