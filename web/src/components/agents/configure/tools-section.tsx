@@ -67,19 +67,17 @@ export function ToolsSection({ tools, onChange }: ToolsSectionProps) {
    *  - non-configurable tools are always-on (registered unconditionally by the backend)
    *  - otherwise the tool id (or its provider id, for legacy entries) must be in the selection
    */
-  const isToolSelected = (provider: ToolProviderWithTools, toolId: string): boolean => {
-    const tool = provider.tools.find((t) => t.id === toolId);
-    if (tool && !tool.configurable) return true;
-    return selected.has(toolId) || selected.has(provider.id);
+  const isToolSelected = (_provider: ToolProviderWithTools, toolId: string): boolean => {
+    return selected.has(toolId);
   };
 
   /** all / none / partial */
   const providerSelectionState = (provider: ToolProviderWithTools): "all" | "none" | "partial" => {
-    const configurable = provider.tools.filter((t) => t.configurable);
-    if (configurable.length === 0) return "all";
-    const selectedCount = configurable.filter((t) => isToolSelected(provider, t.id)).length;
+    const allTools = provider.tools;
+    if (allTools.length === 0) return "all";
+    const selectedCount = allTools.filter((t) => isToolSelected(provider, t.id)).length;
     if (selectedCount === 0) return "none";
-    if (selectedCount === configurable.length) return "all";
+    if (selectedCount === allTools.length) return "all";
     return "partial";
   };
 
@@ -94,7 +92,7 @@ export function ToolsSection({ tools, onChange }: ToolsSectionProps) {
       const provider = providers.find((p) => p.id === entry);
       if (provider) {
         for (const tool of provider.tools) {
-          if (tool.configurable) result.add(tool.id);
+          result.add(tool.id);
         }
       } else {
         result.add(entry);
@@ -110,9 +108,9 @@ export function ToolsSection({ tools, onChange }: ToolsSectionProps) {
       // remove every tool of this provider
       for (const t of provider.tools) next.delete(t.id);
     } else {
-      // add every configurable tool of this provider
+      // add every tool of this provider
       for (const t of provider.tools) {
-        if (t.configurable) next.add(t.id);
+        next.add(t.id);
       }
     }
     updateSelection(next);
@@ -131,7 +129,7 @@ export function ToolsSection({ tools, onChange }: ToolsSectionProps) {
   const selectAllInProvider = (provider: ToolProviderWithTools) => {
     const next = expandLegacyProviderIds(selected);
     for (const t of provider.tools) {
-      if (t.configurable) next.add(t.id);
+      next.add(t.id);
     }
     updateSelection(next);
   };
