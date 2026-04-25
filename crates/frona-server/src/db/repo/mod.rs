@@ -10,6 +10,7 @@ pub mod mcp_servers;
 pub mod memories;
 pub mod messages;
 pub mod notifications;
+pub mod policies;
 pub mod oauth;
 pub mod spaces;
 pub mod tasks;
