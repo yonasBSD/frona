@@ -55,9 +55,13 @@ impl PolicyService {
         agent: &Agent,
         action: PolicyAction,
     ) -> Result<AuthorizationDecision, AppError> {
+        let start = std::time::Instant::now();
+        let action_name = action.cedar_action_name();
+
         if agent.id == "system"
             && matches!(&action, PolicyAction::InvokeTool { tool_name, .. } if tool_name == "manage_policy")
         {
+            crate::core::metrics::record_policy_evaluation(action_name, "allow", start.elapsed());
             return Ok(AuthorizationDecision::allow());
         }
 
@@ -105,7 +109,10 @@ impl PolicyService {
         let response = authorizer.is_authorized(&request, &cached.policy_set, &entities);
 
         match response.decision() {
-            Decision::Allow => Ok(AuthorizationDecision::allow()),
+            Decision::Allow => {
+                crate::core::metrics::record_policy_evaluation(action_name, "allow", start.elapsed());
+                Ok(AuthorizationDecision::allow())
+            }
             Decision::Deny => {
                 let reasons: Vec<String> = response
                     .diagnostics()
@@ -117,6 +124,7 @@ impl PolicyService {
                 } else {
                     reasons.join("; ")
                 };
+                crate::core::metrics::record_policy_evaluation(action_name, "deny", start.elapsed());
                 Ok(AuthorizationDecision::deny(diag))
             }
         }

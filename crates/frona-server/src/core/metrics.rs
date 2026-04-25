@@ -15,6 +15,8 @@ pub const INFERENCE_CACHED_INPUT_TOKENS_TOTAL: &str = "frona_inference_cached_in
 pub const INFERENCE_ACTIVE_REQUESTS: &str = "frona_inference_active_requests";
 pub const TOOL_CALLS_TOTAL: &str = "frona_tool_calls_total";
 pub const TOOL_CALL_DURATION_SECONDS: &str = "frona_tool_call_duration_seconds";
+pub const POLICY_EVALUATIONS_TOTAL: &str = "frona_policy_evaluations_total";
+pub const POLICY_EVALUATION_DURATION_SECONDS: &str = "frona_policy_evaluation_duration_seconds";
 
 static METRICS_HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
@@ -86,6 +88,20 @@ pub fn record_tool_call(
 
     counter!(TOOL_CALLS_TOTAL, &labels).increment(1);
     histogram!(TOOL_CALL_DURATION_SECONDS, &labels).record(duration.as_secs_f64());
+}
+
+pub fn record_policy_evaluation(
+    action: &str,
+    decision: &str,
+    duration: Duration,
+) {
+    let labels = [
+        ("action", action.to_string()),
+        ("decision", decision.to_string()),
+    ];
+
+    counter!(POLICY_EVALUATIONS_TOTAL, &labels).increment(1);
+    histogram!(POLICY_EVALUATION_DURATION_SECONDS, &labels).record(duration.as_secs_f64());
 }
 
 pub fn set_active_inference_requests(count: usize) {
