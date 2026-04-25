@@ -1,0 +1,45 @@
+namespace Policy {
+    entity User;
+
+    entity Agent in [User] {
+        enabled: Bool,
+        model_group: String,
+        tools: Set<String>,
+    };
+
+    entity ToolGroup;
+
+    entity Tool in [ToolGroup] {
+        provider_id: String,
+    };
+
+    action invoke_tool appliesTo {
+        principal: [Agent],
+        resource: [Tool, ToolGroup],
+        context: {
+            chat_id?: String,
+            is_task?: Bool,
+            task_depth?: Long,
+        },
+    };
+
+    action delegate_task appliesTo {
+        principal: [Agent],
+        resource: [Agent],
+        context: {
+            chat_id?: String,
+            is_task?: Bool,
+            task_depth?: Long,
+        },
+    };
+
+    action send_message appliesTo {
+        principal: [Agent],
+        resource: [Agent],
+        context: {
+            chat_id?: String,
+            is_task?: Bool,
+            task_depth?: Long,
+        },
+    };
+}

@@ -13,6 +13,7 @@ pub mod credential;
 pub mod inference;
 pub mod memory;
 pub mod notification;
+pub mod policy;
 pub mod scheduler;
 pub mod space;
 pub mod storage;
