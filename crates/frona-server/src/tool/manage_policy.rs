@@ -37,6 +37,7 @@ impl ManagePolicyTool {
             .ok_or_else(|| AppError::Validation("Missing required parameter: action".into()))?;
 
         match action {
+            "schema" => Ok(Self::handle_schema()),
             "create" => self.handle_create(&arguments, ctx).await,
             "update" => self.handle_update(&arguments, ctx).await,
             "delete" => self.handle_delete(&arguments, ctx).await,
@@ -200,6 +201,10 @@ impl ManagePolicyTool {
         }
 
         Ok(ToolOutput::text(output.trim()))
+    }
+
+    fn handle_schema() -> ToolOutput {
+        ToolOutput::text(include_str!("../../../../resources/policy/frona.cedarschema"))
     }
 
     fn handle_validate(&self, arguments: &Value) -> Result<ToolOutput, AppError> {

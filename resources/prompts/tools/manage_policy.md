@@ -4,8 +4,9 @@ provider: policy
 parameters:
   action:
     type: string
-    description: "The action to perform: 'create', 'update', 'delete', 'list', or 'validate'"
+    description: "The action to perform: 'schema', 'create', 'update', 'delete', 'list', or 'validate'"
     enum:
+      - schema
       - create
       - update
       - delete
@@ -23,53 +24,15 @@ parameters:
 required:
   - action
 ---
-Manage authorization policies that control which tools agents can use, which agents can delegate to each other, and which agents can communicate.
+Manage authorization policies that control agent permissions: tool access, delegation, communication, sandbox filesystem, and network access.
 
-## Policy language
+**Always call `schema` first** before creating or updating policies. The schema documents all available entity types, actions, valid formats, and includes examples.
 
-Policies use the Cedar policy language with the `Policy` namespace. Two statement types:
-- `permit(...)` — allow an action
-- `forbid(...)` — deny an action (overrides permits)
+## Workflow
 
-## Entity types
-
-- `Policy::Agent::"agent-id"` — an agent
-- `Policy::Tool::"tool-name"` — a specific tool
-- `Policy::ToolGroup::"group"` — a tool group (browser, search, web_fetch, task, etc.)
-
-## Actions
-
-- `Policy::Action::"invoke_tool"` — use a tool
-- `Policy::Action::"delegate_task"` — delegate work to another agent
-- `Policy::Action::"send_message"` — send a message to another agent
-
-## Examples
-
-Allow an agent to use browser tools:
-```
-permit(
-  principal == Policy::Agent::"my-agent",
-  action == Policy::Action::"invoke_tool",
-  resource in Policy::ToolGroup::"browser"
-);
-```
-
-Block an agent from delegating to another:
-```
-forbid(
-  principal == Policy::Agent::"junior",
-  action == Policy::Action::"delegate_task",
-  resource == Policy::Agent::"admin"
-);
-```
-
-Allow all tools for an agent:
-```
-permit(
-  principal == Policy::Agent::"power-user",
-  action == Policy::Action::"invoke_tool",
-  resource
-);
-```
+1. Call `schema` to see available entity types, actions, and examples
+2. Call `list` to see existing policies
+3. Call `validate` to check syntax before saving
+4. Call `create`, `update`, or `delete` to modify policies
 
 A policy document can contain multiple statements.

@@ -1,18 +1,76 @@
+// Frona Policy Schema
+//
+// Policies use the Cedar language. Two statement types:
+//   permit(...) — allow an action
+//   forbid(...) — deny an action (always overrides permit)
+//
+// Conditions:
+//   when  { <expr> }  — permit/forbid only applies if expr is true
+//   unless { <expr> } — permit/forbid only applies if expr is false
+//
+// Common patterns:
+//   permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/data");
+//   forbid(principal == Policy::Agent::"x", action == Policy::Action::"connect", resource)
+//       unless { resource == Policy::NetworkDestination::"gmail.com" };
+//   permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/browser-data")
+//       when { principal.tools.contains("browser") };
+
 namespace Policy {
     entity User;
 
+    // An AI agent that can perform actions.
+    //
+    // Attributes available in when/unless conditions:
+    //   principal.tools             — Set<String> of tool IDs the agent has access to
+    //   principal.tools.contains("x")    — true if agent has tool "x"
+    //   principal.tools.containsAll(["x", "y"]) — true if agent has all listed tools
+    //   principal.tools.containsAny(["x", "y"]) — true if agent has any listed tool
+    //   principal.enabled           — Bool
+    //   principal.model_group       — String
+    //
+    // Reference format: Policy::Agent::"agent-id"
     entity Agent in [User] {
         enabled: Bool,
         model_group: String,
         tools: Set<String>,
     };
 
+    // A group of related tools (e.g., "browser", "search", "cli", "task").
+    // Use with the 'in' operator to match all tools in a group.
+    //
+    // Reference format: Policy::ToolGroup::"group-name"
+    //
+    // Example:
+    //   resource in Policy::ToolGroup::"browser"
     entity ToolGroup;
 
+    // A specific tool identified by its tool ID (e.g., "web_search", "browser_navigate").
+    // Each tool belongs to a ToolGroup.
+    //
+    // Reference format: Policy::Tool::"tool-id"
     entity Tool in [ToolGroup] {
         provider_id: String,
     };
 
+    // Control which tools an agent can use.
+    //
+    // Principal: Agent    Resource: Tool or ToolGroup
+    //
+    // Examples:
+    //   // Allow an agent to use browser tools
+    //   permit(principal == Policy::Agent::"my-agent",
+    //          action == Policy::Action::"invoke_tool",
+    //          resource in Policy::ToolGroup::"browser");
+    //
+    //   // Block CLI tools for an agent
+    //   forbid(principal == Policy::Agent::"junior",
+    //          action == Policy::Action::"invoke_tool",
+    //          resource in Policy::ToolGroup::"cli");
+    //
+    //   // Allow all tools
+    //   permit(principal == Policy::Agent::"power-user",
+    //          action == Policy::Action::"invoke_tool",
+    //          resource);
     action invoke_tool appliesTo {
         principal: [Agent],
         resource: [Tool, ToolGroup],
@@ -21,6 +79,19 @@ namespace Policy {
         },
     };
 
+    // Control which agents can delegate tasks to other agents.
+    //
+    // Principal: delegating Agent    Resource: target Agent
+    //
+    // Examples:
+    //   // Allow delegation only to agents with a subset of tools
+    //   permit(principal, action == Policy::Action::"delegate_task", resource)
+    //       when { principal.tools.containsAll(resource.tools) };
+    //
+    //   // Block a specific agent from delegating to another
+    //   forbid(principal == Policy::Agent::"junior",
+    //          action == Policy::Action::"delegate_task",
+    //          resource == Policy::Agent::"admin");
     action delegate_task appliesTo {
         principal: [Agent],
         resource: [Agent],
@@ -29,6 +100,12 @@ namespace Policy {
         },
     };
 
+    // Control which agents can send messages to other agents.
+    //
+    // Principal: sending Agent    Resource: receiving Agent
+    //
+    // Example:
+    //   permit(principal, action == Policy::Action::"send_message", resource);
     action send_message appliesTo {
         principal: [Agent],
         resource: [Agent],
@@ -37,9 +114,45 @@ namespace Policy {
         },
     };
 
+    // A filesystem directory for sandbox read/write rules.
+    //
+    // The ID must be an absolute path starting with /.
+    //
+    // Reference format: Policy::Directory::"/absolute/path"
+    //
+    // Examples:
+    //   Policy::Directory::"/data"
+    //   Policy::Directory::"/workspace/output"
+    //   Policy::Directory::"/tmp"
     entity Directory;
+
+    // A network destination for sandbox connect/bind rules.
+    //
+    // Valid ID formats:
+    //   hostname          — "gmail.com"
+    //   hostname:port     — "api.example.com:443"
+    //   IPv4              — "1.2.3.4"
+    //   IPv6              — "::1"
+    //   bracketed IPv6    — "[::1]:443"
+    //   CIDR              — "10.0.0.0/8"
+    //   CIDR with port    — "10.0.0.0/8!443"
+    //
+    // Reference format: Policy::NetworkDestination::"destination"
     entity NetworkDestination;
 
+    // Grant sandbox read access to a directory.
+    //
+    // Principal: Agent    Resource: Directory
+    //
+    // Examples:
+    //   // All agents can read /tmp
+    //   permit(principal, action == Policy::Action::"read",
+    //          resource == Policy::Directory::"/tmp");
+    //
+    //   // Only agents with the browser tool can read browser profiles
+    //   permit(principal, action == Policy::Action::"read",
+    //          resource == Policy::Directory::"/browser-profiles")
+    //       when { principal.tools.contains("browser") };
     action read appliesTo {
         principal: [Agent],
         resource: [Directory],
@@ -48,6 +161,23 @@ namespace Policy {
         },
     };
 
+    // Grant sandbox write access to a directory.
+    //
+    // Principal: Agent    Resource: Directory
+    //
+    // Use forbid to deny write to subdirectories, with unless for exceptions.
+    //
+    // Examples:
+    //   // Allow write to workspace, deny secrets subdirectory
+    //   permit(principal, action == Policy::Action::"write",
+    //          resource == Policy::Directory::"/workspace");
+    //   forbid(principal, action == Policy::Action::"write",
+    //          resource == Policy::Directory::"/workspace/secrets");
+    //
+    //   // Deny secrets unless agent has admin_tool
+    //   forbid(principal, action == Policy::Action::"write",
+    //          resource == Policy::Directory::"/workspace/secrets")
+    //       unless { principal.tools.contains("admin_tool") };
     action write appliesTo {
         principal: [Agent],
         resource: [Directory],
@@ -56,6 +186,28 @@ namespace Policy {
         },
     };
 
+    // Grant sandbox outbound network access to a destination.
+    //
+    // Principal: Agent    Resource: NetworkDestination
+    //
+    // Without any connect permit, agents have no outbound network access.
+    //
+    // Examples:
+    //   // Allow all network, block internal range
+    //   permit(principal, action == Policy::Action::"connect", resource);
+    //   forbid(principal, action == Policy::Action::"connect",
+    //          resource == Policy::NetworkDestination::"10.0.0.0/8");
+    //
+    //   // Restrict an agent to specific destinations using forbid...unless
+    //   forbid(principal == Policy::Agent::"restricted",
+    //          action == Policy::Action::"connect", resource)
+    //       unless { resource == Policy::NetworkDestination::"api.internal:443"
+    //             || resource == Policy::NetworkDestination::"gmail.com:443" };
+    //
+    //   // Network access conditional on having a tool
+    //   permit(principal, action == Policy::Action::"connect", resource)
+    //       when { principal.tools.contains("browser")
+    //           || principal.tools.contains("web_search") };
     action connect appliesTo {
         principal: [Agent],
         resource: [NetworkDestination],
@@ -64,6 +216,13 @@ namespace Policy {
         },
     };
 
+    // Grant sandbox port binding.
+    //
+    // Principal: Agent    Resource: NetworkDestination (port number as string)
+    //
+    // Example:
+    //   permit(principal, action == Policy::Action::"bind",
+    //          resource == Policy::NetworkDestination::"8080");
     action bind appliesTo {
         principal: [Agent],
         resource: [NetworkDestination],
