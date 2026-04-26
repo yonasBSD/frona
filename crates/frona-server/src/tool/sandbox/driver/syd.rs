@@ -223,6 +223,11 @@ impl SydArgsBuilder {
             self.allow_read_write(&format!("{path}/***"));
         }
 
+        for path in &config.denied_paths {
+            self.args.push("-m".into());
+            self.args.push(format!("mask+{path}/***"));
+        }
+
         self
     }
 
@@ -265,6 +270,15 @@ impl SydArgsBuilder {
                 self.args.push(format!("allow/net/bind+::/0!{port}"));
             }
         }
+
+        for dest in &config.blocked_networks {
+            for resolved in resolve_destination(dest, dest_cache) {
+                let denied = resolved.replacen("allow/", "deny/", 1);
+                self.args.push("-m".into());
+                self.args.push(denied);
+            }
+        }
+
         self
     }
 

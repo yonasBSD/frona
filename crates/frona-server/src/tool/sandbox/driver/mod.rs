@@ -86,6 +86,8 @@ pub struct SandboxConfig {
     pub env_vars: Vec<(String, String)>,
     pub timeout_secs: u64,
     pub max_output_bytes: usize,
+    pub denied_paths: Vec<String>,
+    pub blocked_networks: Vec<String>,
 }
 
 impl Default for SandboxConfig {
@@ -103,6 +105,8 @@ impl Default for SandboxConfig {
             env_vars: Vec::new(),
             timeout_secs: 0,
             max_output_bytes: 512 * 1024,
+            denied_paths: Vec::new(),
+            blocked_networks: Vec::new(),
         }
     }
 }
