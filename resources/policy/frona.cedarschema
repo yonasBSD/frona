@@ -17,9 +17,7 @@ namespace Policy {
         principal: [Agent],
         resource: [Tool, ToolGroup],
         context: {
-            chat_id?: String,
             is_task?: Bool,
-            task_depth?: Long,
         },
     };
 
@@ -27,9 +25,7 @@ namespace Policy {
         principal: [Agent],
         resource: [Agent],
         context: {
-            chat_id?: String,
             is_task?: Bool,
-            task_depth?: Long,
         },
     };
 
@@ -37,9 +33,42 @@ namespace Policy {
         principal: [Agent],
         resource: [Agent],
         context: {
-            chat_id?: String,
             is_task?: Bool,
-            task_depth?: Long,
+        },
+    };
+
+    entity Directory;
+    entity NetworkDestination;
+
+    action read appliesTo {
+        principal: [Agent],
+        resource: [Directory],
+        context: {
+            is_task?: Bool,
+        },
+    };
+
+    action write appliesTo {
+        principal: [Agent],
+        resource: [Directory],
+        context: {
+            is_task?: Bool,
+        },
+    };
+
+    action connect appliesTo {
+        principal: [Agent],
+        resource: [NetworkDestination],
+        context: {
+            is_task?: Bool,
+        },
+    };
+
+    action bind appliesTo {
+        principal: [Agent],
+        resource: [NetworkDestination],
+        context: {
+            is_task?: Bool,
         },
     };
 }
