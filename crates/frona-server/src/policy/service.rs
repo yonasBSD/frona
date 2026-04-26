@@ -461,9 +461,7 @@ impl PolicyService {
     }
 
     pub fn validate_policy_text(&self, policy_text: &str) -> Result<(), AppError> {
-        PolicySet::from_str(policy_text)
-            .map_err(|e| AppError::Validation(format!("Invalid policy syntax: {e}")))?;
-        Ok(())
+        super::validation::validate_syntax(policy_text)
     }
 
     pub async fn validate_policy_entities(
@@ -471,58 +469,9 @@ impl PolicyService {
         user_id: &str,
         policy_text: &str,
     ) -> Result<Vec<String>, AppError> {
-        self.validate_policy_text(policy_text)?;
-
-        let policy_set = PolicySet::from_str(policy_text)
-            .map_err(|e| AppError::Validation(format!("Invalid policy syntax: {e}")))?;
-
         let all_groups = self.tool_manager.tool_groups(user_id).await;
         let all_defs = self.tool_manager.definitions(user_id).await;
-        let tool_ids: Vec<&str> = all_defs.iter().map(|d| d.id.as_str()).collect();
-
-        let tool_group_type = super::schema::entity_type_name("ToolGroup");
-        let tool_type = super::schema::entity_type_name("Tool");
-        let action_type = super::schema::entity_type_name("Action");
-        let valid_actions = ["invoke_tool", "delegate_task", "send_message"];
-
-        let mut warnings = Vec::new();
-
-        for policy in policy_set.policies() {
-            match policy.resource_constraint() {
-                cedar_policy::ResourceConstraint::In(ref uid)
-                | cedar_policy::ResourceConstraint::Eq(ref uid) => {
-                    if uid.type_name() == &tool_group_type
-                        && !all_groups.iter().any(|g| g == uid.id().unescaped())
-                    {
-                        warnings.push(format!(
-                            "ToolGroup '{}' does not exist. Available groups: {}",
-                            uid.id().unescaped(), all_groups.join(", ")
-                        ));
-                    }
-                    if uid.type_name() == &tool_type
-                        && !tool_ids.contains(&uid.id().unescaped())
-                    {
-                        warnings.push(format!(
-                            "Tool '{}' does not exist",
-                            uid.id().unescaped()
-                        ));
-                    }
-                }
-                _ => {}
-            }
-
-            if let cedar_policy::ActionConstraint::Eq(ref uid) = policy.action_constraint()
-                && uid.type_name() == &action_type
-                && !valid_actions.contains(&uid.id().unescaped())
-            {
-                warnings.push(format!(
-                    "Action '{}' is not valid. Valid actions: {}",
-                    uid.id().unescaped(), valid_actions.join(", ")
-                ));
-            }
-        }
-
-        Ok(warnings)
+        super::validation::validate_entities(policy_text, &all_groups, &all_defs)
     }
 
     pub async fn delete_agent_policies(
@@ -619,4 +568,3 @@ impl PolicyService {
         self.cache.invalidate_all();
     }
 }
-
