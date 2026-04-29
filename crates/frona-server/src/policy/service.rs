@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use cedar_policy::{
     Authorizer, Context, Decision, PolicySet, Request, Schema,
@@ -27,8 +27,10 @@ struct CachedPolicySet {
 pub struct PolicyService {
     repo: Arc<dyn PolicyRepository>,
     schema: Arc<Schema>,
-    cache: Cache<String, Arc<CachedPolicySet>>,
+    policy_cache: Cache<String, Arc<CachedPolicySet>>,
+    sandbox_cache: Cache<String, Arc<super::sandbox::SandboxPolicy>>,
     tool_manager: Arc<crate::tool::manager::ToolManager>,
+    managed_policies: Arc<RwLock<Vec<cedar_policy::Policy>>>,
 }
 
 impl PolicyService {
@@ -37,16 +39,73 @@ impl PolicyService {
         schema: Arc<Schema>,
         tool_manager: Arc<crate::tool::manager::ToolManager>,
     ) -> Self {
-        let cache = Cache::builder()
+        let policy_cache = Cache::builder()
+            .max_capacity(1000)
+            .build();
+        let sandbox_cache = Cache::builder()
             .max_capacity(1000)
             .build();
 
         Self {
             repo,
             schema,
-            cache,
+            policy_cache,
+            sandbox_cache,
             tool_manager,
+            managed_policies: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    pub fn register_managed_policy(&self, policy: cedar_policy::Policy) {
+        self.managed_policies.write().unwrap().push(policy);
+        self.policy_cache.invalidate_all();
+        self.sandbox_cache.invalidate_all();
+    }
+
+    pub fn managed_policies(&self) -> Vec<cedar_policy::Policy> {
+        self.managed_policies.read().unwrap().clone()
+    }
+
+    pub async fn evaluate_sandbox_policy(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+    ) -> Result<Arc<super::sandbox::SandboxPolicy>, AppError> {
+        let key = format!("{user_id}:{agent_id}");
+        if let Some(cached) = self.sandbox_cache.get(&key).await {
+            return Ok(cached);
+        }
+
+        let cached = self.build_policy_set(user_id).await?;
+        let agent_tools = self.resolve_agent_tools(user_id, agent_id, &cached.policy_set).await?;
+        let policy = super::sandbox::evaluate_sandbox_policy(
+            &cached.policy_set,
+            agent_id,
+            &agent_tools,
+        );
+        let arc = Arc::new(policy);
+        self.sandbox_cache.insert(key, arc.clone()).await;
+        Ok(arc)
+    }
+
+    async fn resolve_agent_tools(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        policy_set: &PolicySet,
+    ) -> Result<Vec<String>, AppError> {
+        let all_defs = self.tool_manager.definitions(user_id).await;
+        let mut tools = Vec::new();
+        for def in all_defs {
+            let resource = PolicyResource::Tool {
+                id: def.id.clone(),
+                group: def.provider_id.clone(),
+            };
+            if self.is_permitted(agent_id, &resource, policy_set)? {
+                tools.push(def.id);
+            }
+        }
+        Ok(tools)
     }
 
     pub async fn authorize(
@@ -499,7 +558,7 @@ impl PolicyService {
     async fn build_policy_set(&self, user_id: &str) -> Result<Arc<CachedPolicySet>, AppError> {
         let key = user_id.to_string();
 
-        if let Some(cached) = self.cache.get(&key).await {
+        if let Some(cached) = self.policy_cache.get(&key).await {
             return Ok(cached);
         }
 
@@ -514,11 +573,17 @@ impl PolicyService {
             }
         }
 
-        let policy_set = PolicySet::from_str(&combined)
+        let mut policy_set = PolicySet::from_str(&combined)
             .map_err(|e| AppError::Internal(format!("Failed to parse policies: {e}")))?;
 
+        for policy in self.managed_policies.read().unwrap().iter() {
+            policy_set
+                .add(policy.clone())
+                .map_err(|e| AppError::Internal(format!("Failed to add managed policy: {e}")))?;
+        }
+
         let cached = Arc::new(CachedPolicySet { policy_set });
-        self.cache.insert(key, cached.clone()).await;
+        self.policy_cache.insert(key, cached.clone()).await;
         Ok(cached)
     }
 
@@ -561,10 +626,17 @@ impl PolicyService {
     }
 
     pub async fn invalidate_cache(&self, user_id: &str) {
-        self.cache.invalidate(user_id).await;
+        self.policy_cache.invalidate(user_id).await;
+        let prefix = format!("{user_id}:");
+        for entry in self.sandbox_cache.iter() {
+            if entry.0.starts_with(&prefix) {
+                self.sandbox_cache.invalidate(&*entry.0).await;
+            }
+        }
     }
 
     pub async fn invalidate_all_caches(&self) {
-        self.cache.invalidate_all();
+        self.policy_cache.invalidate_all();
+        self.sandbox_cache.invalidate_all();
     }
 }

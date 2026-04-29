@@ -144,13 +144,15 @@ pub fn evaluate_sandbox_policy(
                 cedar_policy::Effect::Forbid => RuleEffect::Deny,
             };
 
-            if let cedar_policy::ResourceConstraint::Eq(ref uid) = satisfied.resource_constraint() {
-                rules.push(Rule {
-                    effect,
-                    kind: kind.clone(),
-                    target: uid.id().unescaped().to_string(),
-                });
-            }
+            let target = match satisfied.resource_constraint() {
+                cedar_policy::ResourceConstraint::Eq(ref uid) => uid.id().unescaped().to_string(),
+                _ => String::new(),
+            };
+            rules.push(Rule {
+                effect,
+                kind: kind.clone(),
+                target,
+            });
         }
     }
 
@@ -653,5 +655,72 @@ mod tests {
         assert!(no_tools.read_paths.contains(&"/tmp".to_string()));
         assert!(!no_tools.read_paths.contains(&"/browser-profiles".to_string()));
         assert!(no_tools.network_destinations.is_empty());
+    }
+
+    // --- managed policy tests ---
+
+    fn make_default_network_policy() -> cedar_policy::Policy {
+        cedar_policy::Policy::from_json(
+            Some(cedar_policy::PolicyId::new("default-network-access")),
+            serde_json::json!({
+                "effect": "permit",
+                "principal": { "op": "All" },
+                "action": { "op": "==", "entity": { "type": "Policy::Action", "id": "connect" } },
+                "resource": { "op": "All" },
+                "annotations": {
+                    "description": "Default outbound network access for all agents",
+                    "config": "sandbox.default_network_access",
+                    "readonly": "true"
+                },
+                "conditions": []
+            }),
+        )
+        .expect("valid policy")
+    }
+
+    fn eval_with_managed(policies: &str, agent_id: &str, tools: &[&str], managed: &[cedar_policy::Policy]) -> SandboxPolicy {
+        let mut ps = parse_policies(if policies.is_empty() { "// empty" } else { policies });
+        for p in managed {
+            ps.add(p.clone()).expect("add managed policy");
+        }
+        let tool_strings: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
+        evaluate_sandbox_policy(&ps, agent_id, &tool_strings)
+    }
+
+    #[test]
+    fn test_managed_default_network_grants_access() {
+        let managed = make_default_network_policy();
+        let p = eval_with_managed("", "any-agent", &[], &[managed]);
+        assert!(p.network_access);
+    }
+
+    #[test]
+    fn test_no_managed_no_network() {
+        let p = eval_with_managed("", "any-agent", &[], &[]);
+        assert!(!p.network_access);
+    }
+
+    #[test]
+    fn test_managed_network_with_user_forbid_unless() {
+        let managed = make_default_network_policy();
+        let user_policies = r#"
+            forbid(principal == Policy::Agent::"restricted",
+                   action == Policy::Action::"connect", resource)
+                unless { resource == Policy::NetworkDestination::"gmail.com:443" };
+        "#;
+        let restricted = eval_with_managed(user_policies, "restricted", &[], std::slice::from_ref(&managed));
+        assert!(restricted.network_destinations.contains(&"gmail.com:443".to_string()));
+
+        let normal = eval_with_managed(user_policies, "normal-agent", &[], std::slice::from_ref(&managed));
+        assert!(normal.network_access);
+        assert!(!normal.network_destinations.contains(&"gmail.com:443".to_string()));
+    }
+
+    #[test]
+    fn test_managed_policy_annotations() {
+        let policy = make_default_network_policy();
+        assert_eq!(policy.annotation("config"), Some("sandbox.default_network_access"));
+        assert_eq!(policy.annotation("readonly"), Some("true"));
+        assert_eq!(policy.annotation("description"), Some("Default outbound network access for all agents"));
     }
 }
