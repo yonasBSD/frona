@@ -99,6 +99,19 @@ impl ManagePolicyTool {
         }
     }
 
+    fn check_readonly(&self, id: &str) -> Option<ToolOutput> {
+        for policy in self.policy_service.managed_policies() {
+            let policy_id: &str = policy.id().as_ref();
+            if policy_id == id && policy.annotation("readonly") == Some("true") {
+                let config = policy.annotation("config").unwrap_or("unknown");
+                return Some(ToolOutput::error(format!(
+                    "Policy '{id}' is read-only (managed by server config: {config}). Change the server configuration to modify it."
+                )));
+            }
+        }
+        None
+    }
+
     async fn handle_update(
         &self,
         arguments: &Value,
@@ -108,6 +121,10 @@ impl ManagePolicyTool {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Validation("Missing required parameter: id".into()))?;
+
+        if let Some(err) = self.check_readonly(id) {
+            return Ok(err);
+        }
 
         let existing = self
             .policy_service
@@ -157,6 +174,10 @@ impl ManagePolicyTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Validation("Missing required parameter: id".into()))?;
 
+        if let Some(err) = self.check_readonly(id) {
+            return Ok(err);
+        }
+
         match self
             .policy_service
             .delete_policy_by_name(&ctx.user.id, id)
@@ -170,33 +191,49 @@ impl ManagePolicyTool {
     }
 
     async fn handle_list(&self, ctx: &InferenceContext) -> Result<ToolOutput, AppError> {
+        let managed_policies = self.policy_service.managed_policies();
         let system_policies = self.policy_service.list_system_policies().await?;
         let user_policies = self.policy_service.list_policies(&ctx.user.id).await?;
 
-        if system_policies.is_empty() && user_policies.is_empty() {
+        if managed_policies.is_empty() && system_policies.is_empty() && user_policies.is_empty() {
             return Ok(ToolOutput::text("No policies found."));
         }
 
         let mut output = String::new();
+        let mut idx = 1;
+
+        if !managed_policies.is_empty() {
+            output.push_str("## Managed policies (server-managed by config — cannot be modified)\n\n");
+            for policy in &managed_policies {
+                let id = policy.id();
+                let description = policy.annotation("description").unwrap_or("");
+                let config = policy.annotation("config").unwrap_or("");
+                output.push_str(&format!(
+                    "{idx}. {id} — {description}\n   Config: {config}\n```\n{policy}\n```\n\n",
+                ));
+                idx += 1;
+            }
+        }
 
         if !system_policies.is_empty() {
             output.push_str("## System policies (base defaults)\n\n");
-            for (i, policy) in system_policies.iter().enumerate() {
+            for policy in &system_policies {
                 output.push_str(&format!(
-                    "{}. {} — {}\n```\n{}\n```\n\n",
-                    i + 1, policy.name, policy.description, policy.policy_text,
+                    "{idx}. {} — {}\n```\n{}\n```\n\n",
+                    policy.name, policy.description, policy.policy_text,
                 ));
+                idx += 1;
             }
         }
 
         if !user_policies.is_empty() {
             output.push_str("## User policies\n\n");
-            let offset = system_policies.len();
-            for (i, policy) in user_policies.iter().enumerate() {
+            for policy in &user_policies {
                 output.push_str(&format!(
-                    "{}. {} — {}\n```\n{}\n```\n\n",
-                    offset + i + 1, policy.name, policy.description, policy.policy_text,
+                    "{idx}. {} — {}\n```\n{}\n```\n\n",
+                    policy.name, policy.description, policy.policy_text,
                 ));
+                idx += 1;
             }
         }
 
