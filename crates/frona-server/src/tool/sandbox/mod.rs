@@ -84,6 +84,8 @@ impl SandboxManager {
             shared_read_paths: self.shared_read_paths.clone(),
             shared_read_files: Vec::new(),
             shared_write_paths: Vec::new(),
+            denied_paths: Vec::new(),
+            blocked_networks: Vec::new(),
             agent_id: id.to_string(),
             resource_manager: Arc::clone(&self.resource_manager),
             init_venv: true,
@@ -102,6 +104,8 @@ pub struct Sandbox {
     shared_read_paths: Vec<String>,
     shared_read_files: Vec<String>,
     shared_write_paths: Vec<String>,
+    denied_paths: Vec<String>,
+    blocked_networks: Vec<String>,
     agent_id: String,
     resource_manager: Arc<SystemResourceManager>,
     init_venv: bool,
@@ -131,6 +135,16 @@ impl Sandbox {
 
     pub fn with_bind_ports(mut self, ports: Vec<u16>) -> Self {
         self.allowed_bind_ports = ports;
+        self
+    }
+
+    pub fn with_denied_paths(mut self, paths: Vec<String>) -> Self {
+        self.denied_paths.extend(paths);
+        self
+    }
+
+    pub fn with_blocked_networks(mut self, networks: Vec<String>) -> Self {
+        self.blocked_networks.extend(networks);
         self
     }
 
@@ -273,6 +287,8 @@ impl Sandbox {
             additional_read_paths: self.shared_read_paths.clone(),
             additional_read_files: self.shared_read_files.clone(),
             additional_write_paths: self.shared_write_paths.clone(),
+            denied_paths: self.denied_paths.clone(),
+            blocked_networks: self.blocked_networks.clone(),
             additional_path_dirs,
             env_vars,
             ..Default::default()
@@ -428,6 +444,8 @@ mod tests {
             shared_read_paths: Vec::new(),
             shared_read_files: Vec::new(),
             shared_write_paths: Vec::new(),
+            denied_paths: Vec::new(),
+            blocked_networks: Vec::new(),
             agent_id: "test".to_string(),
             resource_manager: Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),
             init_venv: true,
@@ -474,6 +492,8 @@ mod tests {
             shared_read_paths: Vec::new(),
             shared_read_files: Vec::new(),
             shared_write_paths: Vec::new(),
+            denied_paths: Vec::new(),
+            blocked_networks: Vec::new(),
             agent_id: "test".to_string(),
             resource_manager: Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),
             init_venv: true,
