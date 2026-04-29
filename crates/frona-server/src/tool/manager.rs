@@ -317,6 +317,7 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
         tools.push(Arc::new(CliTool::new(
             tool_config.clone(), state.sandbox_manager.clone(), state.skill_service.clone(),
             state.storage_service.clone(), state.token_service.clone(), state.keypair_service.clone(),
+            state.policy_service.clone(),
             state.config.server.public_base_url(), state.config.auth.runtime_tokens_dir.clone(),
             state.config.auth.ephemeral_token_expiry_secs,
         )));

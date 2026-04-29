@@ -13,6 +13,7 @@ use crate::auth::token::service::TokenService;
 use crate::core::Principal;
 use crate::core::error::AppError;
 use crate::credential::keypair::service::KeyPairService;
+use crate::policy::service::PolicyService;
 use crate::storage::StorageService;
 use crate::storage::path::VirtualPath;
 
@@ -45,6 +46,7 @@ pub struct CliTool {
     storage: StorageService,
     token_service: TokenService,
     keypair_service: KeyPairService,
+    policy_service: PolicyService,
     api_base_url: String,
     runtime_tokens_dir: PathBuf,
     ephemeral_token_expiry_secs: u64,
@@ -59,6 +61,7 @@ impl CliTool {
         storage: StorageService,
         token_service: TokenService,
         keypair_service: KeyPairService,
+        policy_service: PolicyService,
         api_base_url: String,
         runtime_tokens_dir: PathBuf,
         ephemeral_token_expiry_secs: u64,
@@ -70,6 +73,7 @@ impl CliTool {
             storage,
             token_service,
             keypair_service,
+            policy_service,
             api_base_url,
             runtime_tokens_dir,
             ephemeral_token_expiry_secs,
@@ -145,6 +149,11 @@ impl AgentTool for CliTool {
         let agent_id = &ctx.agent.id;
         let defaults = ctx.agent.sandbox_config.clone().unwrap_or_default();
 
+        let policy = self
+            .policy_service
+            .evaluate_sandbox_policy(&ctx.user.id, agent_id)
+            .await?;
+
         let skill_read_paths: Vec<String> = self
             .skill_service
             .list(agent_id, ctx.agent.skills.as_deref())
@@ -168,12 +177,22 @@ impl AgentTool for CliTool {
             })
             .collect();
 
+        let network_access = defaults.network_access && policy.network_access;
+        let mut allowed_destinations = defaults.allowed_network_destinations.clone();
+        allowed_destinations.extend(policy.network_destinations.iter().cloned());
+
         let mut sandbox = self.sandbox_manager.get_sandbox(
             agent_id,
-            defaults.network_access,
-            defaults.allowed_network_destinations,
-        ).with_read_paths(skill_read_paths)
-         .with_read_paths(resolved_shared);
+            network_access,
+            allowed_destinations,
+        )
+        .with_read_paths(skill_read_paths)
+        .with_read_paths(resolved_shared)
+        .with_read_paths(policy.read_paths.clone())
+        .with_write_paths(policy.write_paths.clone())
+        .with_denied_paths(policy.denied_paths.clone())
+        .with_blocked_networks(policy.blocked_networks.clone())
+        .with_bind_ports(policy.bind_ports.clone());
 
         if !ctx.file_paths.is_empty() {
             sandbox = sandbox.with_write_paths(ctx.file_paths.clone());
@@ -417,6 +436,18 @@ mod tests {
         )
     }
 
+    async fn mock_policy_service() -> PolicyService {
+        use crate::db::repo::generic::SurrealRepo;
+        use crate::policy::repository::PolicyRepository;
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(()).await.unwrap();
+        crate::db::init::setup_schema(&db).await.unwrap();
+        let schema = crate::policy::schema::build_schema();
+        let repo: std::sync::Arc<dyn PolicyRepository> =
+            std::sync::Arc::new(SurrealRepo::<crate::policy::models::Policy>::new(db));
+        let tool_manager = std::sync::Arc::new(crate::tool::manager::ToolManager::new(false));
+        PolicyService::new(repo, schema, tool_manager)
+    }
+
     #[tokio::test]
     async fn test_cli_tool_definitions() {
         let config = CliToolConfig {
@@ -449,6 +480,7 @@ mod tests {
             storage,
             tokens,
             keypair,
+            mock_policy_service().await,
             "http://localhost".into(),
             std::env::temp_dir().join("frona-cli-def-tokens"),
             300,
@@ -545,6 +577,7 @@ mod tests {
             storage,
             tokens,
             keypair,
+            mock_policy_service().await,
             "http://localhost".into(),
             runtime_tokens,
             300,
