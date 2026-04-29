@@ -320,8 +320,8 @@ export default function SettingsPage() {
                   )}
                   {activeTab === "sandbox" && (
                     <SandboxSettingsSection
-                      server={config.server}
-                      onChange={(v) => updatePatch("server", v)}
+                      sandbox={config.sandbox}
+                      onChange={(v) => updatePatch("sandbox", v)}
                     />
                   )}
                   {activeTab === "vault" && (

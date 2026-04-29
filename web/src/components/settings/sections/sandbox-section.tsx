@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { ServerConfig } from "@/lib/config-types";
+import type { SandboxConfig } from "@/lib/config-types";
 import { api } from "@/lib/api-client";
 import { Toggle, Field, SectionHeader, SectionPanel } from "@/components/settings/field";
 import { ShieldCheckIcon } from "@heroicons/react/24/outline";
@@ -12,8 +12,8 @@ interface SystemInfo {
 }
 
 interface SandboxSettingsSectionProps {
-  server: ServerConfig;
-  onChange: (server: ServerConfig) => void;
+  sandbox: SandboxConfig;
+  onChange: (sandbox: SandboxConfig) => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -21,7 +21,7 @@ function formatBytes(bytes: number): string {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1_048_576).toFixed(0)} MB`;
 }
 
-export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSectionProps) {
+export function SandboxSettingsSection({ sandbox, onChange }: SandboxSettingsSectionProps) {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
 
   useEffect(() => {
@@ -41,18 +41,27 @@ export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSect
       <SectionPanel>
         <Toggle
           label="Sandbox Enabled"
-          description={server.sandbox_disabled
+          description={sandbox.disabled
             ? "The sandbox is disabled — agents have unrestricted command execution"
             : "Restrict filesystem and network access for CLI tool execution"}
-          value={!server.sandbox_disabled}
-          onChange={(enabled) => onChange({ ...server, sandbox_disabled: !enabled })}
+          value={!sandbox.disabled}
+          onChange={(enabled) => onChange({ ...sandbox, disabled: !enabled })}
+        />
+
+        <Toggle
+          label="Default Network Access"
+          description={sandbox.default_network_access
+            ? "Agents have outbound network access by default. Restrict with forbid policies."
+            : "Agents have no network access unless explicitly granted by policy."}
+          value={sandbox.default_network_access}
+          onChange={(value) => onChange({ ...sandbox, default_network_access: value })}
         />
 
         <Field label="Default Timeout (seconds)" description="Default execution timeout for sandboxed tool calls. 0 means no timeout. Per-agent settings override this.">
           <input
             type="number"
-            value={server.sandbox_timeout_secs}
-            onChange={(e) => onChange({ ...server, sandbox_timeout_secs: Math.max(0, Number(e.target.value)) })}
+            value={sandbox.timeout_secs}
+            onChange={(e) => onChange({ ...sandbox, timeout_secs: Math.max(0, Number(e.target.value)) })}
             min={0}
             max={3600}
             placeholder="0"
@@ -65,8 +74,8 @@ export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSect
             <div className="flex items-center gap-3">
               <input
                 type="number"
-                value={server.sandbox_max_total_cpu_pct}
-                onChange={(e) => onChange({ ...server, sandbox_max_total_cpu_pct: Number(e.target.value) })}
+                value={sandbox.max_total_cpu_pct}
+                onChange={(e) => onChange({ ...sandbox, max_total_cpu_pct: Number(e.target.value) })}
                 min={1}
                 max={100}
                 placeholder="90"
@@ -74,7 +83,7 @@ export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSect
               />
               {sysInfo && (
                 <span className="text-xs text-text-tertiary">
-                  {parseFloat(((server.sandbox_max_total_cpu_pct / 100) * sysInfo.cpus).toFixed(1))} of {sysInfo.cpus} cores
+                  {parseFloat(((sandbox.max_total_cpu_pct / 100) * sysInfo.cpus).toFixed(1))} of {sysInfo.cpus} cores
                 </span>
               )}
             </div>
@@ -83,8 +92,8 @@ export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSect
             <div className="flex items-center gap-3">
               <input
                 type="number"
-                value={server.sandbox_max_agent_cpu_pct}
-                onChange={(e) => onChange({ ...server, sandbox_max_agent_cpu_pct: Number(e.target.value) })}
+                value={sandbox.max_agent_cpu_pct}
+                onChange={(e) => onChange({ ...sandbox, max_agent_cpu_pct: Number(e.target.value) })}
                 min={1}
                 max={100}
                 placeholder="80"
@@ -92,7 +101,7 @@ export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSect
               />
               {sysInfo && (
                 <span className="text-xs text-text-tertiary">
-                  {parseFloat(((server.sandbox_max_agent_cpu_pct / 100) * sysInfo.cpus).toFixed(1))} of {sysInfo.cpus} cores
+                  {parseFloat(((sandbox.max_agent_cpu_pct / 100) * sysInfo.cpus).toFixed(1))} of {sysInfo.cpus} cores
                 </span>
               )}
             </div>
@@ -104,8 +113,8 @@ export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSect
             <div className="flex items-center gap-3">
               <input
                 type="number"
-                value={server.sandbox_max_total_memory_pct}
-                onChange={(e) => onChange({ ...server, sandbox_max_total_memory_pct: Number(e.target.value) })}
+                value={sandbox.max_total_memory_pct}
+                onChange={(e) => onChange({ ...sandbox, max_total_memory_pct: Number(e.target.value) })}
                 min={1}
                 max={100}
                 placeholder="90"
@@ -113,7 +122,7 @@ export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSect
               />
               {sysInfo && (
                 <span className="text-xs text-text-tertiary">
-                  {formatBytes((server.sandbox_max_total_memory_pct / 100) * sysInfo.total_memory_bytes)} of {formatBytes(sysInfo.total_memory_bytes)}
+                  {formatBytes((sandbox.max_total_memory_pct / 100) * sysInfo.total_memory_bytes)} of {formatBytes(sysInfo.total_memory_bytes)}
                 </span>
               )}
             </div>
@@ -122,8 +131,8 @@ export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSect
             <div className="flex items-center gap-3">
               <input
                 type="number"
-                value={server.sandbox_max_agent_memory_pct}
-                onChange={(e) => onChange({ ...server, sandbox_max_agent_memory_pct: Number(e.target.value) })}
+                value={sandbox.max_agent_memory_pct}
+                onChange={(e) => onChange({ ...sandbox, max_agent_memory_pct: Number(e.target.value) })}
                 min={1}
                 max={100}
                 placeholder="80"
@@ -131,7 +140,7 @@ export function SandboxSettingsSection({ server, onChange }: SandboxSettingsSect
               />
               {sysInfo && (
                 <span className="text-xs text-text-tertiary">
-                  {formatBytes((server.sandbox_max_agent_memory_pct / 100) * sysInfo.total_memory_bytes)} of {formatBytes(sysInfo.total_memory_bytes)}
+                  {formatBytes((sandbox.max_agent_memory_pct / 100) * sysInfo.total_memory_bytes)} of {formatBytes(sysInfo.total_memory_bytes)}
                 </span>
               )}
             </div>

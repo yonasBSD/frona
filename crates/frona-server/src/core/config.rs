@@ -25,18 +25,6 @@ pub struct ServerConfig {
     pub issuer_url: String,
     #[schemars(description = "Maximum number of concurrent background tasks.")]
     pub max_concurrent_tasks: usize,
-    #[schemars(description = "Disable filesystem sandboxing for CLI tools. Enable only if your OS does not support Landlock.")]
-    pub sandbox_disabled: bool,
-    #[schemars(description = "Per-agent CPU usage limit as percentage of total system CPU. Kill sandboxed process if exceeded.")]
-    pub sandbox_max_agent_cpu_pct: f64,
-    #[schemars(description = "Per-agent memory usage limit as percentage of total system memory. Kill sandboxed process if exceeded.")]
-    pub sandbox_max_agent_memory_pct: f64,
-    #[schemars(description = "Global CPU usage limit across all agents as percentage of total system CPU.")]
-    pub sandbox_max_total_cpu_pct: f64,
-    #[schemars(description = "Global memory usage limit across all agents as percentage of total system memory.")]
-    pub sandbox_max_total_memory_pct: f64,
-    #[schemars(description = "Default timeout in seconds for sandboxed tool execution. 0 means no timeout. Per-agent settings override this.")]
-    pub sandbox_timeout_secs: u64,
     #[schemars(description = "Comma-separated list of allowed CORS origins.")]
     pub cors_origins: Option<String>,
     #[schemars(description = "Public base URL for the server (used for callbacks, links).")]
@@ -80,12 +68,6 @@ impl Default for ServerConfig {
             static_dir: "/app/static".into(),
             issuer_url: String::new(),
             max_concurrent_tasks: 10,
-            sandbox_disabled: false,
-            sandbox_max_agent_cpu_pct: 95.0,
-            sandbox_max_agent_memory_pct: 80.0,
-            sandbox_max_total_cpu_pct: 98.0,
-            sandbox_max_total_memory_pct: 90.0,
-            sandbox_timeout_secs: 0,
             cors_origins: None,
             base_url: None,
             backend_url: None,
@@ -93,6 +75,39 @@ impl Default for ServerConfig {
             max_body_size_bytes: 104_857_600,
             shutdown_timeout_secs: 60,
             sse_pending_events_secs: 60,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(default)]
+pub struct SandboxConfig {
+    #[schemars(description = "Disable filesystem sandboxing for CLI tools. Enable only if your OS does not support Landlock.")]
+    pub disabled: bool,
+    #[schemars(description = "Per-agent CPU usage limit as percentage of total system CPU. Kill sandboxed process if exceeded.")]
+    pub max_agent_cpu_pct: f64,
+    #[schemars(description = "Per-agent memory usage limit as percentage of total system memory. Kill sandboxed process if exceeded.")]
+    pub max_agent_memory_pct: f64,
+    #[schemars(description = "Global CPU usage limit across all agents as percentage of total system CPU.")]
+    pub max_total_cpu_pct: f64,
+    #[schemars(description = "Global memory usage limit across all agents as percentage of total system memory.")]
+    pub max_total_memory_pct: f64,
+    #[schemars(description = "Default timeout in seconds for sandboxed tool execution. 0 means no timeout. Per-agent settings override this.")]
+    pub timeout_secs: u64,
+    #[schemars(description = "Grant all agents outbound network access by default. Agents can be restricted with forbid policies.")]
+    pub default_network_access: bool,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            max_agent_cpu_pct: 95.0,
+            max_agent_memory_pct: 80.0,
+            max_total_cpu_pct: 98.0,
+            max_total_memory_pct: 90.0,
+            timeout_secs: 0,
+            default_network_access: true,
         }
     }
 }
@@ -785,6 +800,7 @@ impl Default for McpConfig {
 #[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
+    pub sandbox: SandboxConfig,
     pub auth: AuthConfig,
     pub sso: SsoConfig,
     pub database: DatabaseConfig,
@@ -1273,7 +1289,7 @@ mod tests {
     #[test]
     fn strip_defaults_handles_integer_vs_float() {
         let mut value = serde_json::json!({
-            "server": { "sandbox_max_agent_cpu_pct": 95, "sandbox_max_agent_memory_pct": 80 },
+            "sandbox": { "max_agent_cpu_pct": 95, "max_agent_memory_pct": 80 },
         });
         strip_defaults(&mut value);
         assert_eq!(value, serde_json::json!({}));

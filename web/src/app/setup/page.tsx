@@ -257,8 +257,8 @@ function SetupWizard() {
             )}
             {currentStep.id === "sandbox" && (
               <SandboxSettingsSection
-                server={config.server}
-                onChange={(v) => updatePatch("server", v)}
+                sandbox={config.sandbox}
+                onChange={(v) => updatePatch("sandbox", v)}
               />
             )}
             {currentStep.id === "browser" && (

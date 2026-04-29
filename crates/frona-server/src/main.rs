@@ -51,8 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    verify_sandbox(&config.storage.workspaces_path, config.server.sandbox_disabled)
-        .expect("Sandbox verification failed — filesystem may not support sandboxing. Set FRONA_SERVER_SANDBOX_DISABLED=true to bypass.");
+    verify_sandbox(&config.storage.workspaces_path, config.sandbox.disabled)
+        .expect("Sandbox verification failed — filesystem may not support sandboxing. Set FRONA_SANDBOX_DISABLED=true to bypass.");
 
     frona::tool::sandbox::driver::resource_monitor::log_system_resources();
 
@@ -71,10 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let resource_manager = Arc::new(SystemResourceManager::new(
-        config.server.sandbox_max_agent_cpu_pct,
-        config.server.sandbox_max_agent_memory_pct,
-        config.server.sandbox_max_total_cpu_pct,
-        config.server.sandbox_max_total_memory_pct,
+        config.sandbox.max_agent_cpu_pct,
+        config.sandbox.max_agent_memory_pct,
+        config.sandbox.max_total_cpu_pct,
+        config.sandbox.max_total_memory_pct,
     ));
     resource_manager.start_polling();
 
@@ -95,6 +95,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.init_task_executor();
     state.tool_manager.init(&state);
     state.policy_service.sync_base_policies().await?;
+
+    if state.config.sandbox.default_network_access {
+        let policy = cedar_policy::Policy::from_json(
+            Some(cedar_policy::PolicyId::new("default-network-access")),
+            serde_json::json!({
+                "effect": "permit",
+                "principal": { "op": "All" },
+                "action": { "op": "==", "entity": { "type": "Policy::Action", "id": "connect" } },
+                "resource": { "op": "All" },
+                "annotations": {
+                    "description": "Default outbound network access for all agents",
+                    "config": "sandbox.default_network_access",
+                    "readonly": "true"
+                },
+                "conditions": []
+            }),
+        )
+        .expect("valid default network policy");
+        state.policy_service.register_managed_policy(policy);
+    }
+
     if let Some(executor) = state.task_executor() {
         let executor = executor.clone();
         tokio::spawn(async move {

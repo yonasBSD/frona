@@ -8,17 +8,21 @@ export interface ServerConfig {
   static_dir: string;
   issuer_url: string;
   max_concurrent_tasks: number;
-  sandbox_disabled: boolean;
-  sandbox_max_agent_cpu_pct: number;
-  sandbox_max_agent_memory_pct: number;
-  sandbox_max_total_cpu_pct: number;
-  sandbox_max_total_memory_pct: number;
-  sandbox_timeout_secs: number;
   cors_origins: string | null;
   base_url: string | null;
   backend_url: string | null;
   frontend_url: string | null;
   max_body_size_bytes: number;
+}
+
+export interface SandboxConfig {
+  disabled: boolean;
+  max_agent_cpu_pct: number;
+  max_agent_memory_pct: number;
+  max_total_cpu_pct: number;
+  max_total_memory_pct: number;
+  timeout_secs: number;
+  default_network_access: boolean;
 }
 
 export interface AuthConfig {
@@ -168,6 +172,7 @@ export interface AppConfig {
 
 export interface Config {
   server: ServerConfig;
+  sandbox: SandboxConfig;
   auth: AuthConfig;
   sso: SsoConfig;
   browser: BrowserConfig | null;

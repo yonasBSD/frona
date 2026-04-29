@@ -151,9 +151,9 @@ impl AppState {
 
         let sandbox_manager = Arc::new(SandboxManager::new(
             &config.storage.workspaces_path,
-            config.server.sandbox_disabled,
+            config.sandbox.disabled,
             resource_manager,
-        ).with_default_timeout(config.server.sandbox_timeout_secs)
+        ).with_default_timeout(config.sandbox.timeout_secs)
          .with_shared_read_paths(vec![shared_config_abs.to_string_lossy().into_owned()]));
         let search_provider = create_search_provider(&config.search);
         let local_base_url = config.server.base_url.clone()
