@@ -1,17 +1,24 @@
-use cedar_policy::{Entities, PolicySet, RestrictedExpression};
+use cedar_policy::{Entities, Entity, PolicySet};
 
 use crate::tool::sandbox::driver::SandboxConfig;
 
-use super::schema::{action_entity_uid, agent_entity_uid, entity_type_name};
+use super::schema::{action_entity_uid, entity_type_name};
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SandboxPolicy {
+    #[serde(default)]
     pub read_paths: Vec<String>,
+    #[serde(default)]
     pub write_paths: Vec<String>,
+    #[serde(default)]
     pub network_access: bool,
+    #[serde(default)]
     pub network_destinations: Vec<String>,
+    #[serde(default)]
     pub bind_ports: Vec<u16>,
+    #[serde(default)]
     pub denied_paths: Vec<String>,
+    #[serde(default)]
     pub blocked_networks: Vec<String>,
 }
 
@@ -26,6 +33,13 @@ impl SandboxPolicy {
         config.allowed_bind_ports.extend(self.bind_ports.iter());
         config.denied_paths.extend(self.denied_paths.iter().cloned());
         config.blocked_networks.extend(self.blocked_networks.iter().cloned());
+    }
+
+    pub fn permissive() -> Self {
+        Self {
+            network_access: true,
+            ..Self::default()
+        }
     }
 }
 
@@ -59,31 +73,11 @@ struct Rule {
 
 pub fn evaluate_sandbox_policy(
     policy_set: &PolicySet,
-    agent_id: &str,
-    agent_tools: &[String],
+    principal: Entity,
 ) -> SandboxPolicy {
-    let agent_uid = agent_entity_uid(agent_id);
+    let principal_uid = principal.uid();
 
-    let agent_entity = {
-        let tool_set: Vec<RestrictedExpression> = agent_tools
-            .iter()
-            .map(|t| RestrictedExpression::new_string(t.clone()))
-            .collect();
-        cedar_policy::Entity::new(
-            agent_uid.clone(),
-            [
-                ("enabled".into(), RestrictedExpression::new_bool(true)),
-                ("model_group".into(), RestrictedExpression::new_string("primary".into())),
-                ("tools".into(), RestrictedExpression::new_set(tool_set)),
-            ]
-            .into_iter()
-            .collect(),
-            std::collections::HashSet::new(),
-        )
-        .expect("valid agent entity")
-    };
-
-    let base_entities = Entities::from_entities([agent_entity], None)
+    let base_entities = Entities::from_entities([principal], None)
         .unwrap_or_else(|_| Entities::empty());
 
     let authorizer = cedar_policy::Authorizer::new();
@@ -98,7 +92,7 @@ pub fn evaluate_sandbox_policy(
         };
 
         let request = cedar_policy::Request::builder()
-            .principal(agent_uid.clone())
+            .principal(principal_uid.clone())
             .action(action_uid)
             .unknown_resource_with_type(resource_type)
             .build();
@@ -309,7 +303,8 @@ mod tests {
     fn eval(policies: &str, agent_id: &str, tools: &[&str]) -> SandboxPolicy {
         let ps = parse_policies(policies);
         let tool_strings: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
-        evaluate_sandbox_policy(&ps, agent_id, &tool_strings)
+        let principal = super::super::schema::build_agent_principal_entity(agent_id, &tool_strings);
+        evaluate_sandbox_policy(&ps, principal)
     }
 
     #[test]
@@ -684,7 +679,8 @@ mod tests {
             ps.add(p.clone()).expect("add managed policy");
         }
         let tool_strings: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
-        evaluate_sandbox_policy(&ps, agent_id, &tool_strings)
+        let principal = super::super::schema::build_agent_principal_entity(agent_id, &tool_strings);
+        evaluate_sandbox_policy(&ps, principal)
     }
 
     #[test]

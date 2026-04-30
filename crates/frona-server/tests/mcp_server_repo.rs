@@ -38,10 +38,7 @@ fn make_server(id: &str, user_id: &str, slug: &str, status: McpServerStatus) -> 
         active_transport: "stdio".into(),
         status,
         tool_cache: vec![],
-        workspace_dir: format!("data/mcp/{id}"),
-        extra_read_paths: vec![],
-        extra_write_paths: vec![],
-        installed_at: now,
+        workspace_dir: format!("data/mcp/{id}"),        installed_at: now,
         last_started_at: None,
         updated_at: now,
     }

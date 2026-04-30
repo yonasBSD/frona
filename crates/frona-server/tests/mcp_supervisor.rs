@@ -39,7 +39,14 @@ async fn build_mcp_supervisor() -> (
             ),
         ),
     ));
-    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces, 4100, 4200));
+    let policy_schema = frona::policy::schema::build_schema();
+    let policy_repo: Arc<dyn frona::policy::repository::PolicyRepository> =
+        Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
+    let policy_tool_manager = Arc::new(frona::tool::manager::ToolManager::new(false));
+    let policy_service = frona::policy::service::PolicyService::new(
+        policy_repo, policy_schema, policy_tool_manager,
+    );
+    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces, 4100, 4200, policy_service.clone()));
     let mcp_repo: Arc<dyn McpServerRepository> =
         Arc::new(SurrealRepo::<McpServer>::new(db.clone()));
     let vault = VaultService::new(
@@ -83,6 +90,7 @@ async fn build_mcp_supervisor() -> (
         token_service,
         keypair_service,
         user_service,
+        policy_service,
         "http://localhost".to_string(),
         tmp.path().join("runtime-tokens"),
         300,
@@ -115,10 +123,7 @@ fn make_server(id: &str, user_id: &str, status: McpServerStatus) -> McpServer {
         active_transport: "stdio".into(),
         status,
         tool_cache: vec![],
-        workspace_dir: "/tmp/test".into(),
-        extra_read_paths: vec![],
-        extra_write_paths: vec![],
-        installed_at: now,
+        workspace_dir: "/tmp/test".into(),        installed_at: now,
         last_started_at: None,
         updated_at: now,
     }

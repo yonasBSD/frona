@@ -26,7 +26,7 @@ fn test_agent(user_id: Option<&str>) -> Agent {
         model_group: "primary".to_string(),
         enabled: true,
         skills: None,
-        sandbox_config: None,
+        sandbox_limits: None,
         max_concurrent_tasks: None,
         avatar: None,
         identity: std::collections::BTreeMap::new(),
@@ -86,7 +86,7 @@ async fn test_seeded_agent_with_absent_user_id_round_trips() {
 
     let agent = found.unwrap();
     assert_eq!(agent.user_id, None);
-    assert!(agent.sandbox_config.is_none());
+    assert!(agent.sandbox_limits.is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ async fn test_agent_none_user_id_round_trips_via_repo() {
 
     let found = repo.find_by_id(&agent.id).await.unwrap().unwrap();
     assert_eq!(found.user_id, None);
-    assert!(found.sandbox_config.is_none());
+    assert!(found.sandbox_limits.is_none());
 
     let agents = repo.find_by_user_id("any-user").await.unwrap();
     assert!(

@@ -2,40 +2,10 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use crate::Entity;
+use crate::core::config::SandboxLimits;
+use crate::policy::sandbox::SandboxPolicy;
 use serde::{Deserialize, Serialize};
-use serde_aux::field_attributes::deserialize_bool_from_anything;
 use surrealdb::types::SurrealValue;
-
-
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-#[surreal(crate = "surrealdb::types")]
-pub struct SandboxSettings {
-    #[serde(default = "serde_aux::field_attributes::bool_true", deserialize_with = "deserialize_bool_from_anything")]
-    pub network_access: bool,
-    #[serde(default)]
-    pub allowed_network_destinations: Vec<String>,
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
-    #[serde(default)]
-    pub max_cpu_pct: Option<f64>,
-    #[serde(default)]
-    pub max_memory_pct: Option<f64>,
-    #[serde(default)]
-    pub shared_paths: Vec<String>,
-}
-
-impl Default for SandboxSettings {
-    fn default() -> Self {
-        Self {
-            network_access: true,
-            allowed_network_destinations: Vec::new(),
-            timeout_secs: None,
-            max_cpu_pct: None,
-            max_memory_pct: None,
-            shared_paths: Vec::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]
@@ -49,7 +19,7 @@ pub struct Agent {
     pub model_group: String,
     pub enabled: bool,
     #[serde(default)]
-    pub sandbox_config: Option<SandboxSettings>,
+    pub sandbox_limits: Option<SandboxLimits>,
     #[serde(default)]
     pub max_concurrent_tasks: Option<u32>,
     #[serde(default)]
@@ -75,7 +45,11 @@ pub struct CreateAgentRequest {
     pub model_group: Option<String>,
     pub tools: Option<Vec<String>>,
     pub skills: Option<Vec<String>>,
-    pub sandbox_config: Option<SandboxSettings>,
+    /// Reconciled into Cedar policies on save; not persisted on the row.
+    #[serde(default)]
+    pub sandbox_policy: Option<SandboxPolicy>,
+    #[serde(default)]
+    pub sandbox_limits: Option<SandboxLimits>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,7 +60,12 @@ pub struct UpdateAgentRequest {
     pub enabled: Option<bool>,
     pub tools: Option<Vec<String>>,
     pub skills: Option<Vec<String>>,
-    pub sandbox_config: Option<SandboxSettings>,
+    /// `None` leaves existing reconciled policies untouched. Pass an explicit
+    /// value (including `default()`) to re-reconcile.
+    #[serde(default)]
+    pub sandbox_policy: Option<SandboxPolicy>,
+    #[serde(default)]
+    pub sandbox_limits: Option<SandboxLimits>,
     pub prompt: Option<String>,
     pub identity: Option<BTreeMap<String, String>>,
 }
@@ -100,7 +79,9 @@ pub struct AgentResponse {
     pub enabled: bool,
     pub tools: Vec<String>,
     pub skills: Option<Vec<String>>,
-    pub sandbox_config: Option<SandboxSettings>,
+    /// Evaluated sandbox access (reconciled + user-authored + managed).
+    pub sandbox_policy: SandboxPolicy,
+    pub sandbox_limits: Option<SandboxLimits>,
     pub avatar: Option<String>,
     pub identity: BTreeMap<String, String>,
     pub prompt: Option<String>,
@@ -112,7 +93,7 @@ pub struct AgentResponse {
 }
 
 impl AgentResponse {
-    pub fn from_agent(agent: Agent, tools: Vec<String>) -> Self {
+    pub fn from_agent(agent: Agent, tools: Vec<String>, sandbox_policy: SandboxPolicy) -> Self {
         let is_shared = agent.user_id.is_none();
         Self {
             id: agent.id,
@@ -122,7 +103,8 @@ impl AgentResponse {
             enabled: agent.enabled,
             tools,
             skills: agent.skills,
-            sandbox_config: agent.sandbox_config,
+            sandbox_policy,
+            sandbox_limits: agent.sandbox_limits,
             avatar: agent.avatar,
             identity: agent.identity,
             prompt: agent.prompt,

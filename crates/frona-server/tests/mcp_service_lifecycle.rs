@@ -121,7 +121,14 @@ async fn build_test_harness(
             80.0, 80.0, 90.0, 90.0,
         )),
     ));
-    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces_path, 4100, 4200));
+    let policy_schema = frona::policy::schema::build_schema();
+    let policy_repo: Arc<dyn frona::policy::repository::PolicyRepository> =
+        Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
+    let policy_tool_manager = Arc::new(frona::tool::manager::ToolManager::new(false));
+    let policy_service = frona::policy::service::PolicyService::new(
+        policy_repo, policy_schema, policy_tool_manager,
+    );
+    let manager = Arc::new(McpManager::new(sandbox_manager, workspaces_path, 4100, 4200, policy_service.clone()));
     let mcp_repo: Arc<dyn McpServerRepository> =
         Arc::new(SurrealRepo::<McpServer>::new(db.clone()));
     let registry: Arc<dyn McpRegistryClient> = Arc::new(FakeRegistry {
@@ -157,6 +164,7 @@ async fn build_test_harness(
         token_service,
         keypair_service,
         user_service,
+        policy_service,
         "http://localhost".to_string(),
         runtime_tokens_dir,
         300,
@@ -217,8 +225,7 @@ async fn install_rejects_when_binding_has_no_matching_grant() {
         display_name_override: None,
         credentials: vec![binding("GITHUB_TOKEN", "nonexistent-item")],
         extra_env: Default::default(),
-        extra_read_paths: vec![],
-        extra_write_paths: vec![],
+        sandbox_policy: None,
     };
     let err = service.install("user1", req).await.unwrap_err();
     assert!(
@@ -238,8 +245,7 @@ async fn install_allows_missing_binding_for_declared_secret() {
         display_name_override: None,
         credentials: vec![],
         extra_env: Default::default(),
-        extra_read_paths: vec![],
-        extra_write_paths: vec![],
+        sandbox_policy: None,
     };
     let server = service.install("user1", req).await.unwrap();
     assert_eq!(server.status, McpServerStatus::Installed);
@@ -259,8 +265,7 @@ async fn install_rejects_extraneous_binding() {
             binding("NOT_DECLARED", "item2"),
         ],
         extra_env: Default::default(),
-        extra_read_paths: vec![],
-        extra_write_paths: vec![],
+        sandbox_policy: None,
     };
     let err = service.install("user1", req).await.unwrap_err();
     assert!(
@@ -279,8 +284,10 @@ async fn install_rejects_relative_extra_paths() {
         display_name_override: None,
         credentials: vec![],
         extra_env: Default::default(),
-        extra_read_paths: vec!["relative/path".into()],
-        extra_write_paths: vec![],
+        sandbox_policy: Some(frona::policy::sandbox::SandboxPolicy {
+            read_paths: vec!["relative/path".into()],
+            ..Default::default()
+        }),
     };
     let err = service.install("user1", req).await.unwrap_err();
     assert!(matches!(err, AppError::Validation(_)));
@@ -296,8 +303,7 @@ async fn install_succeeds_with_empty_env_entry() {
         display_name_override: None,
         credentials: vec![],
         extra_env: Default::default(),
-        extra_read_paths: vec![],
-        extra_write_paths: vec![],
+        sandbox_policy: None,
     };
     let persisted = service.install("user1", req).await.unwrap();
     assert_eq!(persisted.user_id, "user1");
@@ -324,8 +330,7 @@ async fn uninstall_sweeps_bindings_and_grants() {
                 display_name_override: None,
                 credentials: vec![],
                 extra_env: Default::default(),
-                extra_read_paths: vec![],
-                extra_write_paths: vec![],
+                sandbox_policy: None,
             },
         )
         .await
@@ -400,8 +405,7 @@ async fn update_extra_env_replaces_value() {
                 extra_env: [("LOG_LEVEL".to_string(), "info".to_string())]
                     .into_iter()
                     .collect(),
-                extra_read_paths: vec![],
-                extra_write_paths: vec![],
+                sandbox_policy: None,
             },
         )
         .await
@@ -433,8 +437,7 @@ async fn update_rejects_when_another_user_owns_the_server() {
                 display_name_override: None,
                 credentials: vec![],
                 extra_env: Default::default(),
-                extra_read_paths: vec![],
-                extra_write_paths: vec![],
+                sandbox_policy: None,
             },
         )
         .await

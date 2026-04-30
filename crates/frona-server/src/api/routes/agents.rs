@@ -31,7 +31,12 @@ async fn sync_agent_tools(
     agent_id: &str,
     selected_tools: &[String],
 ) -> Result<(), crate::core::error::AppError> {
-    state.policy_service.sync_agent_tools(user_id, agent_id, selected_tools).await
+    state
+        .policy_service
+        .reconcile_agent_tools(user_id, agent_id, selected_tools)
+        .await
+        .map(|_| ())
+        .map_err(crate::core::error::AppError::from)
 }
 
 fn resolve_default_prompt(state: &AppState, agent_id: &str) -> String {
@@ -49,7 +54,16 @@ async fn to_response(state: &AppState, user_id: &str, agent: Agent) -> Result<Ag
         .build_agent_registry(user_id, &agent, &state.policy_service)
         .await;
     let tools: Vec<String> = registry.definitions().iter().map(|d| d.id.clone()).collect();
-    Ok(AgentResponse::from_agent(agent, tools))
+    let sandbox_policy = state
+        .policy_service
+        .evaluate_sandbox_policy(
+            user_id,
+            &crate::core::principal::Principal::agent(&agent.id),
+        )
+        .await?
+        .as_ref()
+        .clone();
+    Ok(AgentResponse::from_agent(agent, tools, sandbox_policy))
 }
 
 async fn create_agent(

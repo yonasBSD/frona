@@ -25,6 +25,7 @@ pub struct ManagedProcess {
     pub child: tokio::process::Child,
     pub port: u16,
     pub agent_id: String,
+    pub user_id: String,
     pub manifest: AppManifest,
     pub credential_env_vars: Vec<(String, String)>,
     pub restart_count: u32,
@@ -38,6 +39,7 @@ pub struct AppManager {
     port_range: (u16, u16),
     sandbox_manager: Arc<SandboxManager>,
     last_accessed: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
+    policy_service: crate::policy::service::PolicyService,
 }
 
 impl AppManager {
@@ -45,6 +47,7 @@ impl AppManager {
         sandbox_manager: Arc<SandboxManager>,
         port_range_start: u16,
         port_range_end: u16,
+        policy_service: crate::policy::service::PolicyService,
     ) -> Self {
         Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
@@ -52,6 +55,7 @@ impl AppManager {
             port_range: (port_range_start, port_range_end),
             sandbox_manager,
             last_accessed: Arc::new(Mutex::new(HashMap::new())),
+            policy_service,
         }
     }
 
@@ -59,6 +63,7 @@ impl AppManager {
         &self,
         app_id: &str,
         agent_id: &str,
+        user_id: &str,
         command: &str,
         manifest: &AppManifest,
         credential_env_vars: Vec<(String, String)>,
@@ -67,11 +72,12 @@ impl AppManager {
 
         let (child, log_path) = self.spawn_process(
             agent_id,
+            user_id,
             command,
             port,
             manifest,
             &credential_env_vars,
-        )?;
+        ).await?;
 
         let pid = child.id().unwrap_or(0);
 
@@ -79,6 +85,7 @@ impl AppManager {
             child,
             port,
             agent_id: agent_id.to_string(),
+            user_id: user_id.to_string(),
             manifest: manifest.clone(),
             credential_env_vars,
             restart_count: 0,
@@ -153,13 +160,14 @@ impl AppManager {
         app_id: &str,
         agent_id: &str,
     ) -> Result<Option<(u16, u32)>, AppError> {
-        let (command, manifest, creds) = {
+        let (command, manifest, creds, user_id) = {
             let processes = self.processes.lock().await;
             match processes.get(app_id) {
                 Some(proc) => (
                     proc.manifest.command.clone(),
                     proc.manifest.clone(),
                     proc.credential_env_vars.clone(),
+                    proc.user_id.clone(),
                 ),
                 None => return Ok(None),
             }
@@ -168,7 +176,7 @@ impl AppManager {
         self.stop_app(app_id).await?;
 
         if let Some(cmd) = command {
-            let (port, pid) = self.start_app(app_id, agent_id, &cmd, &manifest, creds).await?;
+            let (port, pid) = self.start_app(app_id, agent_id, &user_id, &cmd, &manifest, creds).await?;
             Ok(Some((port, pid)))
         } else {
             Ok(None)
@@ -206,6 +214,7 @@ impl AppManager {
                 let restart_count = proc.restart_count;
                 Some((
                     proc.agent_id.clone(),
+                    proc.user_id.clone(),
                     proc.manifest.command.clone(),
                     proc.manifest.clone(),
                     proc.credential_env_vars.clone(),
@@ -216,11 +225,11 @@ impl AppManager {
             }
         };
 
-        if let Some((agent_id, command, manifest, creds, restart_count)) = info {
+        if let Some((agent_id, user_id, command, manifest, creds, restart_count)) = info {
             self.stop_app(app_id).await?;
             if let Some(cmd) = command {
                 let (port, pid) =
-                    self.start_app(app_id, &agent_id, &cmd, &manifest, creds).await?;
+                    self.start_app(app_id, &agent_id, &user_id, &cmd, &manifest, creds).await?;
                 self.processes
                     .lock()
                     .await
@@ -298,33 +307,40 @@ impl AppManager {
     }
 
 
-    fn spawn_process(
+    async fn spawn_process(
         &self,
         agent_id: &str,
+        user_id: &str,
         command: &str,
         port: u16,
         manifest: &AppManifest,
         credential_env_vars: &[(String, String)],
     ) -> Result<(tokio::process::Child, PathBuf), AppError> {
+        // Per-app principal so two apps from the same agent get independent rules.
+        let policy = self
+            .policy_service
+            .evaluate_sandbox_policy(
+                user_id,
+                &crate::core::principal::Principal::app(&manifest.id),
+            )
+            .await?;
+
+        // 127.0.0.1:{port} must reach the proxy regardless of policy.
         let mut network_dests = vec![format!("127.0.0.1:{port}")];
-        if let Some(dests) = &manifest.network_destinations {
-            for dest in dests {
-                network_dests.push(format!("{}:{}", dest.host, dest.port));
-            }
-        }
+        network_dests.extend(policy.network_destinations.iter().cloned());
 
         let mut env_vars = vec![("PORT".to_string(), port.to_string())];
         env_vars.extend(credential_env_vars.iter().cloned());
 
         let mut sandbox = self
             .sandbox_manager
-            .get_sandbox(agent_id, true, network_dests)
+            .get_sandbox(agent_id, policy.network_access, network_dests)
             .with_bind_ports(vec![port])
-            .with_extra_env_vars(env_vars);
-
-        if let Some(paths) = &manifest.read_paths {
-            sandbox = sandbox.with_read_paths(paths.clone());
-        }
+            .with_extra_env_vars(env_vars)
+            .with_read_paths(policy.read_paths.clone())
+            .with_write_paths(policy.write_paths.clone())
+            .with_denied_paths(policy.denied_paths.clone())
+            .with_blocked_networks(policy.blocked_networks.clone());
 
         let app_dir = sandbox.path().join("apps").join(&manifest.id);
         let app_log_dir = app_dir.join("logs");
@@ -405,17 +421,28 @@ fn read_tail(path: &PathBuf, max_bytes: u64) -> String {
 mod tests {
     use super::*;
 
-    fn test_manager(port_start: u16, port_end: u16) -> AppManager {
+    async fn test_policy_service() -> crate::policy::service::PolicyService {
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(()).await.unwrap();
+        crate::db::init::setup_schema(&db).await.unwrap();
+        let schema = crate::policy::schema::build_schema();
+        let repo: Arc<dyn crate::policy::repository::PolicyRepository> =
+            Arc::new(crate::db::repo::generic::SurrealRepo::<crate::policy::models::Policy>::new(db));
+        let tool_manager = Arc::new(crate::tool::manager::ToolManager::new(false));
+        crate::policy::service::PolicyService::new(repo, schema, tool_manager)
+    }
+
+    async fn test_manager(port_start: u16, port_end: u16) -> AppManager {
         AppManager::new(
             Arc::new(SandboxManager::new("/tmp/test_workspaces", true, Arc::new(crate::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(60.0, 60.0, 60.0, 60.0)))),
             port_start,
             port_end,
+            test_policy_service().await,
         )
     }
 
     #[tokio::test]
     async fn test_allocate_port_returns_sequential() {
-        let manager = test_manager(5000, 5003);
+        let manager = test_manager(5000, 5003).await;
 
         let p1 = manager.allocate_port().await.unwrap();
         let p2 = manager.allocate_port().await.unwrap();
@@ -431,7 +458,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_allocate_port_reuses_after_free() {
-        let manager = test_manager(5000, 5002);
+        let manager = test_manager(5000, 5002).await;
 
         let p1 = manager.allocate_port().await.unwrap();
         assert_eq!(p1, 5000);
@@ -444,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_record_and_get_access() {
-        let manager = test_manager(5000, 5100);
+        let manager = test_manager(5000, 5100).await;
 
         assert!(manager.get_last_accessed("app1").await.is_none());
 
@@ -454,7 +481,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_access_times() {
-        let manager = test_manager(5000, 5100);
+        let manager = test_manager(5000, 5100).await;
 
         manager.record_access("app1").await;
         manager.record_access("app2").await;
@@ -479,6 +506,7 @@ mod tests {
             Arc::new(SandboxManager::new(workspaces, true, Arc::new(crate::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(60.0, 60.0, 60.0, 60.0)))),
             6000,
             6010,
+            test_policy_service().await,
         );
 
         let child = tokio::process::Command::new("true")
@@ -497,9 +525,7 @@ mod tests {
             resources: None,
             static_dir: None,
             expose: None,
-            network_destinations: None,
-            read_paths: None,
-            write_paths: None,
+            sandbox_policy: None,
             credentials: None,
             hibernate: None,
         };
@@ -515,6 +541,7 @@ mod tests {
                     child,
                     port,
                     agent_id: "agent-1".to_string(),
+                    user_id: "user-1".to_string(),
                     manifest,
                     credential_env_vars: Vec::new(),
                     restart_count: 0,

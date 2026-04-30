@@ -88,7 +88,8 @@ impl CreateAgentTool {
             model_group,
             tools,
             skills: None,
-            sandbox_config: None,
+            sandbox_policy: None,
+            sandbox_limits: None,
         };
 
         let agent = self.agent_service.create(&ctx.user.id, req).await?;

@@ -50,7 +50,7 @@ fn make_agent(id: &str, user_id: &str, heartbeat_interval: Option<u64>, next_hea
         model_group: "primary".to_string(),
         enabled: true,
         skills: None,
-        sandbox_config: None,
+        sandbox_limits: None,
         max_concurrent_tasks: None,
         avatar: None,
         identity: BTreeMap::new(),

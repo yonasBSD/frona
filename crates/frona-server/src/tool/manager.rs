@@ -167,7 +167,6 @@ impl ToolManager {
         agent: &Agent,
         policy_service: &PolicyService,
     ) -> AgentToolRegistry {
-        let agent_id = &agent.id;
         let all_defs = {
             let mut registries = self.user_registries.write().await;
             let registry = registries
@@ -231,9 +230,6 @@ impl ToolManager {
             tool_name_to_owner.insert(def.id.clone(), owner_name);
             definitions.push(def);
         }
-
-        let tool_names: Vec<&str> = definitions.iter().map(|d| d.id.as_str()).collect();
-        tracing::debug!(?tool_names, agent_id, user_id, "Agent tool registry built");
 
         AgentToolRegistry::new(tools, tool_name_to_owner, definitions, self.mcp_bridge_mode)
     }
@@ -316,7 +312,7 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
     for tool_config in state.cli_tools_config.iter() {
         tools.push(Arc::new(CliTool::new(
             tool_config.clone(), state.sandbox_manager.clone(), state.skill_service.clone(),
-            state.storage_service.clone(), state.token_service.clone(), state.keypair_service.clone(),
+            state.token_service.clone(), state.keypair_service.clone(),
             state.policy_service.clone(),
             state.config.server.public_base_url(), state.config.auth.runtime_tokens_dir.clone(),
             state.config.auth.ephemeral_token_expiry_secs,

@@ -296,7 +296,7 @@ async fn handle_hibernated_app(
     let result = state
         .app_service
         .manager()
-        .start_app(&app.id, &app.agent_id, &command, &manifest, Vec::new())
+        .start_app(&app.id, &app.agent_id, &app.user_id, &command, &manifest, Vec::new())
         .await;
 
     match result {

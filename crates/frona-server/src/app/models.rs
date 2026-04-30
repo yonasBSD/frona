@@ -73,12 +73,10 @@ pub struct AppManifest {
     pub static_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expose: Option<bool>,
+    /// Reconciled into Cedar policies on deploy/update; not persisted on the
+    /// App row. Cedar is the runtime source of truth for sandbox access.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub network_destinations: Option<Vec<NetworkDestination>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub read_paths: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub write_paths: Option<Vec<String>>,
+    pub sandbox_policy: Option<crate::policy::sandbox::SandboxPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credentials: Option<Vec<CredentialRequest>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

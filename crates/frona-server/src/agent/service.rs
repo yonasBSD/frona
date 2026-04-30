@@ -7,6 +7,8 @@ use crate::core::config::CacheConfig;
 use crate::db::repo::agents::SurrealAgentRepo;
 use crate::core::error::AppError;
 use crate::core::repository::Repository;
+use crate::policy::sandbox::SandboxPolicy;
+use crate::policy::service::PolicyService;
 use crate::tool::sandbox::driver::resource_monitor::SystemResourceManager;
 
 use super::models::{CreateAgentRequest, UpdateAgentRequest};
@@ -19,6 +21,7 @@ pub struct AgentService {
     cache: moka::future::Cache<String, Agent>,
     shared_agents_dir: PathBuf,
     resource_manager: Arc<SystemResourceManager>,
+    policy_service: PolicyService,
 }
 
 impl AgentService {
@@ -27,27 +30,34 @@ impl AgentService {
         cache_config: &CacheConfig,
         shared_agents_dir: PathBuf,
         resource_manager: Arc<SystemResourceManager>,
+        policy_service: PolicyService,
     ) -> Self {
         let cache = moka::future::Cache::builder()
             .max_capacity(cache_config.entity_max_capacity)
             .time_to_live(std::time::Duration::from_secs(cache_config.entity_ttl_secs))
             .build();
-        Self { repo, cache, shared_agents_dir, resource_manager }
+        Self {
+            repo,
+            cache,
+            shared_agents_dir,
+            resource_manager,
+            policy_service,
+        }
     }
 
     pub async fn sync_agent_limits(&self) -> Result<(), AppError> {
         let agents = self.repo.find_all().await?;
         for agent in agents {
-            if let Some(ref cfg) = agent.sandbox_config {
-                self.resource_manager.set_agent_limits(&agent.id, cfg.max_cpu_pct, cfg.max_memory_pct);
+            if let Some(ref limits) = agent.sandbox_limits {
+                self.resource_manager.set_agent_limits(&agent.id, Some(limits.max_cpu_pct), Some(limits.max_memory_pct));
             }
         }
         Ok(())
     }
 
     fn push_agent_limits(&self, agent_id: &str, agent: &Agent) {
-        if let Some(ref cfg) = agent.sandbox_config {
-            self.resource_manager.set_agent_limits(agent_id, cfg.max_cpu_pct, cfg.max_memory_pct);
+        if let Some(ref limits) = agent.sandbox_limits {
+            self.resource_manager.set_agent_limits(agent_id, Some(limits.max_cpu_pct), Some(limits.max_memory_pct));
         }
     }
 
@@ -94,7 +104,7 @@ impl AgentService {
             model_group: req.model_group.unwrap_or_else(|| "primary".to_string()),
             enabled: true,
             skills: req.skills,
-            sandbox_config: req.sandbox_config,
+            sandbox_limits: req.sandbox_limits,
             max_concurrent_tasks: None,
             avatar: None,
             identity: std::collections::BTreeMap::new(),
@@ -108,6 +118,16 @@ impl AgentService {
 
         let agent = self.repo.create(&agent).await?;
         self.push_agent_limits(&agent.id, &agent);
+        // Reconcile with default-empty even when no policy was sent: if this
+        // agent id was used before, the planner clears any leftover owned rows.
+        let policy = req.sandbox_policy.as_ref().cloned().unwrap_or_default();
+        self.policy_service
+            .reconcile_sandbox_policy(
+                user_id,
+                crate::policy::reconcile::EntityRef::Agent(agent.id.clone()),
+                &policy,
+            )
+            .await?;
         Ok(agent)
     }
 
@@ -194,8 +214,8 @@ impl AgentService {
                 agent.skills = Some(skills);
             }
         }
-        if let Some(sandbox_config) = req.sandbox_config {
-            agent.sandbox_config = Some(sandbox_config);
+        if let Some(sandbox_limits) = req.sandbox_limits {
+            agent.sandbox_limits = Some(sandbox_limits);
         }
         if let Some(prompt) = req.prompt {
             agent.prompt = if prompt.is_empty() { None } else { Some(prompt) };
@@ -214,6 +234,15 @@ impl AgentService {
         let agent = self.repo.update(&agent).await?;
         self.push_agent_limits(agent_id, &agent);
         self.cache.invalidate(agent_id).await;
+        if let Some(policy) = req.sandbox_policy.as_ref() {
+            self.policy_service
+                .reconcile_sandbox_policy(
+                    user_id,
+                    crate::policy::reconcile::EntityRef::Agent(agent_id.to_string()),
+                    policy,
+                )
+                .await?;
+        }
         Ok(agent)
     }
 
@@ -241,6 +270,13 @@ impl AgentService {
         }
 
         self.cache.invalidate(agent_id).await;
+        self.policy_service
+            .reconcile_sandbox_policy(
+                user_id,
+                crate::policy::reconcile::EntityRef::Agent(agent_id.to_string()),
+                &SandboxPolicy::permissive(),
+            )
+            .await?;
         self.repo.delete(agent_id).await
     }
 

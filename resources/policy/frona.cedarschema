@@ -35,6 +35,26 @@ namespace Policy {
         tools: Set<String>,
     };
 
+    // An MCP (Model Context Protocol) server installed by a user. Subject to the
+    // same sandbox actions (read/write/connect/bind) as agents.
+    //
+    // Reference format: Policy::Mcp::"server-uuid"
+    //
+    // Example:
+    //   permit(principal == Policy::Mcp::"github-mcp", action == Policy::Action::"connect",
+    //          resource == Policy::NetworkDestination::"api.github.com:443");
+    entity Mcp in [User];
+
+    // An agent-published web application running in a sandbox. Subject to the
+    // same sandbox actions (read/write/connect/bind) as agents.
+    //
+    // Reference format: Policy::App::"app-id"
+    //
+    // Example:
+    //   permit(principal == Policy::App::"my-app", action == Policy::Action::"read",
+    //          resource == Policy::Directory::"/data");
+    entity App in [User];
+
     // A group of related tools (e.g., "browser", "search", "cli", "task").
     // Use with the 'in' operator to match all tools in a group.
     //
@@ -142,10 +162,10 @@ namespace Policy {
 
     // Grant sandbox read access to a directory.
     //
-    // Principal: Agent    Resource: Directory
+    // Principal: Agent | Mcp | App    Resource: Directory
     //
     // Examples:
-    //   // All agents can read /tmp
+    //   // All sandbox principals can read /tmp
     //   permit(principal, action == Policy::Action::"read",
     //          resource == Policy::Directory::"/tmp");
     //
@@ -153,8 +173,12 @@ namespace Policy {
     //   permit(principal, action == Policy::Action::"read",
     //          resource == Policy::Directory::"/browser-profiles")
     //       when { principal.tools.contains("browser") };
+    //
+    //   // An MCP server can read its data directory
+    //   permit(principal == Policy::Mcp::"github-mcp", action == Policy::Action::"read",
+    //          resource == Policy::Directory::"/var/mcp/github");
     action read appliesTo {
-        principal: [Agent],
+        principal: [Agent, Mcp, App],
         resource: [Directory],
         context: {
             is_task?: Bool,
@@ -163,7 +187,7 @@ namespace Policy {
 
     // Grant sandbox write access to a directory.
     //
-    // Principal: Agent    Resource: Directory
+    // Principal: Agent | Mcp | App    Resource: Directory
     //
     // Use forbid to deny write to subdirectories, with unless for exceptions.
     //
@@ -179,7 +203,7 @@ namespace Policy {
     //          resource == Policy::Directory::"/workspace/secrets")
     //       unless { principal.tools.contains("admin_tool") };
     action write appliesTo {
-        principal: [Agent],
+        principal: [Agent, Mcp, App],
         resource: [Directory],
         context: {
             is_task?: Bool,
@@ -188,9 +212,9 @@ namespace Policy {
 
     // Grant sandbox outbound network access to a destination.
     //
-    // Principal: Agent    Resource: NetworkDestination
+    // Principal: Agent | Mcp | App    Resource: NetworkDestination
     //
-    // Without any connect permit, agents have no outbound network access.
+    // Without any connect permit, principals have no outbound network access.
     //
     // Examples:
     //   // Allow all network, block internal range
@@ -204,12 +228,17 @@ namespace Policy {
     //       unless { resource == Policy::NetworkDestination::"api.internal:443"
     //             || resource == Policy::NetworkDestination::"gmail.com:443" };
     //
+    //   // An MCP server pinned to one external API
+    //   forbid(principal == Policy::Mcp::"github-mcp",
+    //          action == Policy::Action::"connect", resource)
+    //       unless { resource == Policy::NetworkDestination::"api.github.com:443" };
+    //
     //   // Network access conditional on having a tool
     //   permit(principal, action == Policy::Action::"connect", resource)
     //       when { principal.tools.contains("browser")
     //           || principal.tools.contains("web_search") };
     action connect appliesTo {
-        principal: [Agent],
+        principal: [Agent, Mcp, App],
         resource: [NetworkDestination],
         context: {
             is_task?: Bool,
@@ -218,13 +247,13 @@ namespace Policy {
 
     // Grant sandbox port binding.
     //
-    // Principal: Agent    Resource: NetworkDestination (port number as string)
+    // Principal: Agent | Mcp | App    Resource: NetworkDestination (port number as string)
     //
     // Example:
     //   permit(principal, action == Policy::Action::"bind",
     //          resource == Policy::NetworkDestination::"8080");
     action bind appliesTo {
-        principal: [Agent],
+        principal: [Agent, Mcp, App],
         resource: [NetworkDestination],
         context: {
             is_task?: Bool,

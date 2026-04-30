@@ -14,8 +14,6 @@ use crate::core::Principal;
 use crate::core::error::AppError;
 use crate::credential::keypair::service::KeyPairService;
 use crate::policy::service::PolicyService;
-use crate::storage::StorageService;
-use crate::storage::path::VirtualPath;
 
 use super::sandbox::SandboxManager;
 use super::{AgentTool, InferenceContext, ToolDefinition, ToolOutput, parse_frontmatter};
@@ -43,7 +41,6 @@ pub struct CliTool {
     config: CliToolConfig,
     sandbox_manager: Arc<SandboxManager>,
     skill_service: SkillService,
-    storage: StorageService,
     token_service: TokenService,
     keypair_service: KeyPairService,
     policy_service: PolicyService,
@@ -58,7 +55,6 @@ impl CliTool {
         config: CliToolConfig,
         sandbox_manager: Arc<SandboxManager>,
         skill_service: SkillService,
-        storage: StorageService,
         token_service: TokenService,
         keypair_service: KeyPairService,
         policy_service: PolicyService,
@@ -70,7 +66,6 @@ impl CliTool {
             config,
             sandbox_manager,
             skill_service,
-            storage,
             token_service,
             keypair_service,
             policy_service,
@@ -147,11 +142,13 @@ impl AgentTool for CliTool {
         let args_refs: Vec<&str> = substituted_args.iter().map(|s| s.as_str()).collect();
 
         let agent_id = &ctx.agent.id;
-        let defaults = ctx.agent.sandbox_config.clone().unwrap_or_default();
 
         let policy = self
             .policy_service
-            .evaluate_sandbox_policy(&ctx.user.id, agent_id)
+            .evaluate_sandbox_policy(
+                &ctx.user.id,
+                &crate::core::principal::Principal::agent(agent_id),
+            )
             .await?;
 
         let skill_read_paths: Vec<String> = self
@@ -162,32 +159,12 @@ impl AgentTool for CliTool {
             .map(|s| s.path)
             .collect();
 
-        let resolved_shared: Vec<String> = defaults
-            .shared_paths
-            .iter()
-            .filter_map(|p| {
-                if p.starts_with('/') {
-                    Some(p.clone())
-                } else {
-                    VirtualPath::parse(p)
-                        .ok()
-                        .and_then(|vp| self.storage.resolve(&vp).ok())
-                        .map(|pb| pb.to_string_lossy().into_owned())
-                }
-            })
-            .collect();
-
-        let network_access = defaults.network_access && policy.network_access;
-        let mut allowed_destinations = defaults.allowed_network_destinations.clone();
-        allowed_destinations.extend(policy.network_destinations.iter().cloned());
-
         let mut sandbox = self.sandbox_manager.get_sandbox(
             agent_id,
-            network_access,
-            allowed_destinations,
+            policy.network_access,
+            policy.network_destinations.clone(),
         )
         .with_read_paths(skill_read_paths)
-        .with_read_paths(resolved_shared)
         .with_read_paths(policy.read_paths.clone())
         .with_write_paths(policy.write_paths.clone())
         .with_denied_paths(policy.denied_paths.clone())
@@ -228,7 +205,11 @@ impl AgentTool for CliTool {
             sandbox = sandbox.with_extra_env_vars(extra_vars);
         }
 
-        let timeout = defaults.timeout_secs
+        let timeout = ctx
+            .agent
+            .sandbox_limits
+            .as_ref()
+            .map(|l| l.timeout_secs)
             .unwrap_or_else(|| self.sandbox_manager.default_timeout_secs());
 
         let rm = self.sandbox_manager.resource_manager();
@@ -471,13 +452,11 @@ mod tests {
 
         let wm = Arc::new(SandboxManager::new("/tmp/test", false, Arc::new(crate::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(60.0, 60.0, 60.0, 60.0))));
         let service = mock_skill_service();
-        let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
         let (tokens, keypair) = mock_token_services().await;
         let tool = CliTool::new(
             config,
             wm,
             service,
-            storage,
             tokens,
             keypair,
             mock_policy_service().await,
@@ -513,7 +492,7 @@ mod tests {
                 model_group: "primary".into(),
                 enabled: true,
                 skills: None,
-                sandbox_config: None,
+                sandbox_limits: None,
                 max_concurrent_tasks: None,
                 avatar: None,
                 identity: Default::default(),
@@ -567,14 +546,12 @@ mod tests {
 
         let wm = Arc::new(SandboxManager::new(&tmp, false, Arc::new(crate::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(60.0, 60.0, 60.0, 60.0))));
         let service = mock_skill_service();
-        let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
         let (tokens, keypair) = mock_token_services().await;
         let runtime_tokens = tmp.join("tokens");
         let tool = CliTool::new(
             config,
             wm,
             service,
-            storage,
             tokens,
             keypair,
             mock_policy_service().await,

@@ -13,7 +13,6 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use frona::agent::service::AgentService;
 use frona::storage::StorageService;
 use frona::db::init as db;
 use frona::api::middleware::metrics::track_http_metrics;
@@ -71,23 +70,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let resource_manager = Arc::new(SystemResourceManager::new(
-        config.sandbox.max_agent_cpu_pct,
-        config.sandbox.max_agent_memory_pct,
+        config.sandbox.default_limits.max_cpu_pct,
+        config.sandbox.default_limits.max_memory_pct,
         config.sandbox.max_total_cpu_pct,
         config.sandbox.max_total_memory_pct,
     ));
     resource_manager.start_polling();
 
-    let shared_agents_dir = std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents");
-    let agent_service = AgentService::new(
-        frona::db::repo::generic::SurrealRepo::new(surreal.clone()),
-        &config.cache,
-        shared_agents_dir,
-        Arc::clone(&resource_manager),
-    );
-    db::seed_config_agents(&surreal, &agent_service, &storage).await?;
-    agent_service.sync_agent_limits().await?;
-    let state = AppState::new(surreal.clone(), &config, loaded.models, agent_service, storage, metrics_handle, resource_manager);
+    let state = AppState::new(surreal.clone(), &config, loaded.models, storage, metrics_handle, resource_manager);
+    db::seed_config_agents(&surreal, &state.agent_service, &state.storage_service).await?;
+    state.agent_service.sync_agent_limits().await?;
     state.vault_service.sync_config_connections().await?;
     state.browser_session_manager.kill_all_sessions().await;
     state.skill_service.start_watcher();

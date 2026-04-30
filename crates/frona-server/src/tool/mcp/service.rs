@@ -126,6 +126,7 @@ pub struct McpServerService {
     token_service: TokenService,
     keypair_service: KeyPairService,
     user_service: UserService,
+    policy_service: crate::policy::service::PolicyService,
     api_base_url: String,
     runtime_tokens_dir: PathBuf,
     ephemeral_token_expiry_secs: u64,
@@ -154,6 +155,7 @@ impl McpServerService {
         token_service: TokenService,
         keypair_service: KeyPairService,
         user_service: UserService,
+        policy_service: crate::policy::service::PolicyService,
         api_base_url: String,
         runtime_tokens_dir: PathBuf,
         ephemeral_token_expiry_secs: u64,
@@ -168,6 +170,7 @@ impl McpServerService {
             token_service,
             keypair_service,
             user_service,
+            policy_service,
             api_base_url,
             runtime_tokens_dir,
             ephemeral_token_expiry_secs,
@@ -229,8 +232,10 @@ impl McpServerService {
         })?;
 
         validate_credential_bindings(package, &req.credentials, &req.extra_env)?;
-        validate_absolute_paths(&req.extra_read_paths)?;
-        validate_absolute_paths(&req.extra_write_paths)?;
+        if let Some(ref policy) = req.sandbox_policy {
+            validate_absolute_paths(&policy.read_paths)?;
+            validate_absolute_paths(&policy.write_paths)?;
+        }
 
         let slug_source = req
             .display_name_override
@@ -301,8 +306,6 @@ impl McpServerService {
             status: McpServerStatus::Installed,
             tool_cache: Vec::new(),
             workspace_dir,
-            extra_read_paths: req.extra_read_paths,
-            extra_write_paths: req.extra_write_paths,
             installed_at: now,
             last_started_at: None,
             updated_at: now,
@@ -311,6 +314,14 @@ impl McpServerService {
         let persisted = self.repo.create(&server).await?;
         self.write_bindings(user_id, &persisted.id, req.credentials).await?;
         self.installer.install(&persisted).await?;
+        let sandbox_policy = req.sandbox_policy.unwrap_or_default();
+        self.policy_service
+            .reconcile_sandbox_policy(
+                user_id,
+                crate::policy::reconcile::EntityRef::Mcp(persisted.id.clone()),
+                &sandbox_policy,
+            )
+            .await?;
         Ok(persisted)
     }
 
@@ -377,11 +388,9 @@ impl McpServerService {
         let mut server = self.load_owned(user_id, server_id).await?;
         let was_running = matches!(server.status, McpServerStatus::Running);
 
-        if let Some(paths) = &req.extra_read_paths {
-            validate_absolute_paths(paths)?;
-        }
-        if let Some(paths) = &req.extra_write_paths {
-            validate_absolute_paths(paths)?;
+        if let Some(ref policy) = req.sandbox_policy {
+            validate_absolute_paths(&policy.read_paths)?;
+            validate_absolute_paths(&policy.write_paths)?;
         }
 
         if let Some(credentials) = req.credentials {
@@ -404,17 +413,21 @@ impl McpServerService {
         if let Some(extra_env) = req.extra_env {
             server.env = extra_env;
         }
-        if let Some(read) = req.extra_read_paths {
-            server.extra_read_paths = read;
-        }
-        if let Some(write) = req.extra_write_paths {
-            server.extra_write_paths = write;
-        }
         if let Some(active_transport) = req.active_transport {
             server.active_transport = active_transport;
         }
         server.updated_at = Utc::now();
         let server = self.repo.update(&server).await?;
+
+        if let Some(ref policy) = req.sandbox_policy {
+            self.policy_service
+                .reconcile_sandbox_policy(
+                    user_id,
+                    crate::policy::reconcile::EntityRef::Mcp(server.id.clone()),
+                    policy,
+                )
+                .await?;
+        }
 
         Ok(UpdateResult {
             server,
@@ -428,6 +441,13 @@ impl McpServerService {
         let principal = Principal::mcp_server(&server.id);
         self.vault.delete_bindings_for_principal(user_id, &principal).await?;
         self.vault.delete_grants_for_principal(user_id, &principal).await?;
+        self.policy_service
+            .reconcile_sandbox_policy(
+                user_id,
+                crate::policy::reconcile::EntityRef::Mcp(server_id.to_string()),
+                &crate::policy::sandbox::SandboxPolicy::permissive(),
+            )
+            .await?;
         let _ = std::fs::remove_dir_all(PathBuf::from(&server.workspace_dir));
         self.repo.delete(server_id).await
     }

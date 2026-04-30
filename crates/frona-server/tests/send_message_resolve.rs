@@ -59,7 +59,7 @@ fn test_agent(id: &str, user_id: &str, heartbeat_chat_id: Option<&str>) -> Agent
         model_group: "primary".to_string(),
         enabled: true,
         skills: None,
-        sandbox_config: None,
+        sandbox_limits: None,
         max_concurrent_tasks: None,
         avatar: None,
         identity: Default::default(),

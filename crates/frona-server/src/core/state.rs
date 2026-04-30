@@ -131,7 +131,6 @@ impl AppState {
         db: Surreal<Db>,
         config: &Config,
         models_config: Option<ModelRegistryConfig>,
-        agent_service: AgentService,
         storage: StorageService,
         metrics_handle: PrometheusHandle,
         resource_manager: Arc<SystemResourceManager>,
@@ -152,8 +151,8 @@ impl AppState {
         let sandbox_manager = Arc::new(SandboxManager::new(
             &config.storage.workspaces_path,
             config.sandbox.disabled,
-            resource_manager,
-        ).with_default_timeout(config.sandbox.timeout_secs)
+            resource_manager.clone(),
+        ).with_default_timeout(config.sandbox.default_limits.timeout_secs)
          .with_shared_read_paths(vec![shared_config_abs.to_string_lossy().into_owned()]));
         let search_provider = create_search_provider(&config.search);
         let local_base_url = config.server.base_url.clone()
@@ -258,10 +257,31 @@ impl AppState {
             None
         };
 
+        let tool_manager = Arc::new(ToolManager::new(config.mcp.bridge_mode));
+        let policy_schema = crate::policy::schema::build_schema();
+        let policy_repo: Arc<dyn crate::policy::repository::PolicyRepository> =
+            Arc::new(SurrealRepo::<crate::policy::models::Policy>::new(db.clone()));
+        let policy_service = PolicyService::with_sandbox_disabled(
+            policy_repo,
+            policy_schema,
+            tool_manager.clone(),
+            config.sandbox.disabled,
+        );
+
+        let shared_agents_dir = PathBuf::from(&config.storage.shared_config_dir).join("agents");
+        let agent_service = AgentService::new(
+            SurrealRepo::new(db.clone()),
+            &config.cache,
+            shared_agents_dir,
+            resource_manager.clone(),
+            policy_service.clone(),
+        );
+
         let app_manager = Arc::new(AppManager::new(
             sandbox_manager.clone(),
             config.app.port_range_start,
             config.app.port_range_end,
+            policy_service.clone(),
         ));
 
         let mcp_workspaces = std::fs::canonicalize(&config.mcp.workspaces_path)
@@ -277,6 +297,7 @@ impl AppState {
             mcp_workspaces,
             config.mcp.port_range_start,
             config.mcp.port_range_end,
+            policy_service.clone(),
         ));
         let mcp_repo: Arc<dyn crate::tool::mcp::repository::McpServerRepository> =
             Arc::new(SurrealRepo::<crate::tool::mcp::McpServer>::new(db.clone()));
@@ -291,11 +312,6 @@ impl AppState {
             Arc::new(crate::tool::mcp::SandboxedPackageInstaller::new(
                 mcp_manager.clone(),
             ));
-        let tool_manager = Arc::new(ToolManager::new(config.mcp.bridge_mode));
-        let policy_schema = crate::policy::schema::build_schema();
-        let policy_repo: Arc<dyn crate::policy::repository::PolicyRepository> =
-            Arc::new(SurrealRepo::<crate::policy::models::Policy>::new(db.clone()));
-        let policy_service = PolicyService::new(policy_repo, policy_schema, tool_manager.clone());
 
         let mcp_service = Arc::new(crate::tool::mcp::McpServerService::new(
             mcp_repo,
@@ -307,19 +323,23 @@ impl AppState {
             token_service.clone(),
             keypair_service.clone(),
             user_service.clone(),
+            policy_service.clone(),
             config.server.public_base_url(),
             config.auth.runtime_tokens_dir.clone(),
             config.auth.ephemeral_token_expiry_secs,
         ));
 
+        let app_service = AppService::new(
+            SurrealRepo::new(db.clone()),
+            app_manager,
+            config.app.clone(),
+            policy_service.clone(),
+        );
+
         Self {
             db: db.clone(),
             auth_service: Arc::new(AuthService::new()),
-            app_service: AppService::new(
-                SurrealRepo::new(db.clone()),
-                app_manager,
-                config.app.clone(),
-            ),
+            app_service,
             user_service: user_service.clone(),
             agent_service: agent_service.clone(),
             space_service: SpaceService::new(SurrealRepo::new(db.clone())),

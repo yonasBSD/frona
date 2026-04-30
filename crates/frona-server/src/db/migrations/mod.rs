@@ -24,6 +24,7 @@ use chrono::{DateTime, Utc};
 use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 
+mod migrate_agent_sandbox_config_to_policies;
 mod migrate_agent_tools_to_policies;
 mod rename_vault_grant_to_principal;
 

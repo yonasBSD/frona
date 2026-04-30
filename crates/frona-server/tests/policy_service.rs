@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use frona::agent::models::Agent;
 use frona::db::repo::generic::SurrealRepo;
-use frona::policy::models::{Policy, PolicyAction, PolicyResource};
+use frona::policy::models::{Policy, PolicyAction};
 use frona::policy::repository::PolicyRepository;
 use frona::policy::schema::build_schema;
 use frona::policy::schema::extract_annotations;
@@ -12,6 +12,12 @@ use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, Mem};
 
 async fn setup() -> (Surreal<Db>, PolicyService) {
+    setup_with_extra_tools(&[]).await
+}
+
+async fn setup_with_extra_tools(
+    extras: &[(&'static str, &'static str, &'static str)],
+) -> (Surreal<Db>, PolicyService) {
     let db = Surreal::new::<Mem>(()).await.unwrap();
     frona::db::init::setup_schema(&db).await.unwrap();
 
@@ -20,7 +26,6 @@ async fn setup() -> (Surreal<Db>, PolicyService) {
         Arc::new(SurrealRepo::<Policy>::new(db.clone()));
     let tool_manager = std::sync::Arc::new(frona::tool::manager::ToolManager::new(false));
 
-    // Register a mock tool so delegation checks have tools to compare
     use frona::tool::{AgentTool, ToolDefinition, ToolOutput};
     struct MockTool {
         name: &'static str,
@@ -55,6 +60,18 @@ async fn setup() -> (Surreal<Db>, PolicyService) {
         defs: vec![mock_def("web_search", "search")],
     })).await;
 
+    for &(owner, tool_id, group) in extras {
+        tool_manager
+            .register_user_tool(
+                "user-1",
+                std::sync::Arc::new(MockTool {
+                    name: owner,
+                    defs: vec![mock_def(tool_id, group)],
+                }),
+            )
+            .await;
+    }
+
     let service = PolicyService::new(repo, schema, tool_manager);
     service.sync_base_policies().await.unwrap();
     (db, service)
@@ -69,7 +86,7 @@ fn test_agent(id: &str) -> Agent {
         model_group: "primary".into(),
         enabled: true,
         skills: None,
-        sandbox_config: None,
+        sandbox_limits: None,
         max_concurrent_tasks: None,
         avatar: None,
         identity: Default::default(),
@@ -159,72 +176,6 @@ async fn forbid_overrides_permit() {
 }
 
 #[tokio::test]
-async fn forbid_denies_tool_that_base_permits() {
-    let (_db, service) = setup().await;
-    let agent = test_agent("agent-1");
-
-    let before = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await
-        .unwrap();
-    assert!(before.allowed);
-
-    service
-        .forbid("user-1", "agent-1", &PolicyResource::ToolGroup { group: "browser".into() })
-        .await
-        .unwrap();
-
-    let after = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await
-        .unwrap();
-    assert!(after.is_denied());
-}
-
-#[tokio::test]
-async fn permit_restores_tool_after_forbid() {
-    let (_db, service) = setup().await;
-    let agent = test_agent("agent-1");
-
-    service
-        .forbid("user-1", "agent-1", &PolicyResource::ToolGroup { group: "browser".into() })
-        .await
-        .unwrap();
-
-    service
-        .permit("user-1", "agent-1", &PolicyResource::ToolGroup { group: "browser".into() })
-        .await
-        .unwrap();
-
-    let decision = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await
-        .unwrap();
-    assert!(decision.allowed);
-}
-
-#[tokio::test]
-async fn permit_forbid_preserves_complex_policies() {
-    let (_db, service) = setup().await;
-
-    service
-        .create_policy(
-            "user-1",
-            "@id(\"custom-forbid\")\nforbid(\n  principal == Policy::Agent::\"agent-1\",\n  action == Policy::Action::\"invoke_tool\",\n  resource in Policy::ToolGroup::\"browser\"\n) when { context.is_task };",
-        )
-        .await
-        .unwrap();
-
-    service
-        .forbid("user-1", "agent-1", &PolicyResource::ToolGroup { group: "search".into() })
-        .await
-        .unwrap();
-
-    let policies = service.list_policies("user-1").await.unwrap();
-    assert!(policies.iter().any(|p| p.name == "custom-forbid"));
-}
-
-#[tokio::test]
 async fn base_policies_include_delegation_and_communication() {
     let (_db, service) = setup().await;
     let agent = test_agent("agent-1");
@@ -240,19 +191,6 @@ async fn base_policies_include_delegation_and_communication() {
         .await
         .unwrap();
     assert!(send.allowed);
-}
-
-#[tokio::test]
-async fn permit_is_noop_when_already_allowed() {
-    let (_db, service) = setup().await;
-
-    service
-        .permit("user-1", "agent-1", &PolicyResource::ToolGroup { group: "browser".into() })
-        .await
-        .unwrap();
-
-    let policies = service.list_policies("user-1").await.unwrap();
-    assert!(!policies.iter().any(|p| p.name == "agent-1-browser"));
 }
 
 #[tokio::test]
@@ -299,7 +237,10 @@ async fn delete_agent_policies_cleans_up() {
     let (_db, service) = setup().await;
 
     service
-        .forbid("user-1", "agent-1", &PolicyResource::ToolGroup { group: "browser".into() })
+        .create_policy(
+            "user-1",
+            "@id(\"agent-1-allow\")\npermit(\n  principal == Policy::Agent::\"agent-1\",\n  action == Policy::Action::\"invoke_tool\",\n  resource in Policy::ToolGroup::\"browser\"\n);",
+        )
         .await
         .unwrap();
 
@@ -411,7 +352,10 @@ async fn delegation_denied_when_target_has_more_tools() {
     let agent_a = test_agent("agent-a");
 
     service
-        .forbid("user-1", "agent-a", &PolicyResource::ToolGroup { group: "browser".into() })
+        .create_policy(
+            "user-1",
+            "@id(\"a-no-browser\")\nforbid(\n  principal == Policy::Agent::\"agent-a\",\n  action == Policy::Action::\"invoke_tool\",\n  resource in Policy::ToolGroup::\"browser\"\n);",
+        )
         .await
         .unwrap();
 
@@ -501,145 +445,680 @@ async fn sync_base_policies_no_duplicates_on_restart() {
     assert_eq!(names.len(), unique_names.len(), "all policy names should be unique");
 }
 
-// --- sync_agent_tools tests ---
+mod reconcile {
+    use frona::policy::reconcile::{
+        AccessGroup, AccessIntent, AccessOverride, EntityRef, PolicyReconcileTarget,
+        PolicyReconciliationError,
+    };
+    use frona::policy::sandbox::SandboxPolicy;
 
-#[tokio::test]
-async fn sync_all_tools_selected_no_policies_created() {
-    let (_db, service) = setup().await;
-    let agent = test_agent("agent-1");
+    use super::setup;
 
-    // Select all tools — base policy already permits everything
-    let all_tools: Vec<String> = vec![
-        "browser_navigate".into(), "make_voice_call".into(), "hangup_call".into(), "web_search".into(),
-    ];
-    service.sync_agent_tools("user-1", "agent-1", &all_tools).await.unwrap();
+    fn group(
+        principal_id: &str,
+        action: &str,
+        default: Option<AccessIntent>,
+        overrides: Vec<(EntityRef, AccessIntent)>,
+    ) -> AccessGroup {
+        AccessGroup {
+            principal: EntityRef::Agent(principal_id.into()),
+            action: action.into(),
+            default,
+            overrides: overrides
+                .into_iter()
+                .map(|(resource, intent)| AccessOverride { resource, intent })
+                .collect(),
+        }
+    }
 
-    let policies = service.list_policies("user-1").await.unwrap();
-    assert!(policies.is_empty(), "no user policies needed when all tools selected (base permits all)");
+    fn dir(p: &str) -> EntityRef {
+        EntityRef::Directory(p.into())
+    }
 
-    // Verify all tools are still accessible
-    let decision = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await.unwrap();
-    assert!(decision.allowed);
-}
+    fn netd(d: &str) -> EntityRef {
+        EntityRef::NetworkDestination(d.into())
+    }
 
-#[tokio::test]
-async fn sync_no_tools_selected_forbids_all_groups() {
-    let (_db, service) = setup().await;
-    let agent = test_agent("agent-1");
-
-    service.sync_agent_tools("user-1", "agent-1", &[]).await.unwrap();
-
-    let decision = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await.unwrap();
-    assert!(decision.is_denied(), "browser should be denied after deselecting all");
-
-    let decision = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "web_search".into(), tool_group: "search".into() })
-        .await.unwrap();
-    assert!(decision.is_denied(), "search should be denied after deselecting all");
-}
-
-#[tokio::test]
-async fn sync_partial_group_selection() {
-    let (_db, service) = setup().await;
-    let agent = test_agent("agent-1");
-
-    // Select only make_voice_call but not hangup_call (both in voice group)
-    let selected: Vec<String> = vec![
-        "browser_navigate".into(), "web_search".into(), "make_voice_call".into(),
-    ];
-    service.sync_agent_tools("user-1", "agent-1", &selected).await.unwrap();
-
-    // make_voice_call should be permitted
-    let decision = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "make_voice_call".into(), tool_group: "voice".into() })
-        .await.unwrap();
-    assert!(decision.allowed, "make_voice_call should be permitted");
-
-    // hangup_call should be denied (partial group — individual forbid)
-    let decision = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "hangup_call".into(), tool_group: "voice".into() })
-        .await.unwrap();
-    assert!(decision.is_denied(), "hangup_call should be denied in partial selection");
-
-    // browser should be permitted (full group selected)
-    let decision = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await.unwrap();
-    assert!(decision.allowed, "browser should be permitted");
-}
-
-#[tokio::test]
-async fn sync_then_reselect_all_removes_forbids() {
-    let (_db, service) = setup().await;
-    let agent = test_agent("agent-1");
-
-    // First deselect everything
-    service.sync_agent_tools("user-1", "agent-1", &[]).await.unwrap();
-
-    let decision = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await.unwrap();
-    assert!(decision.is_denied());
-
-    // Now reselect all
-    let all_tools: Vec<String> = vec![
-        "browser_navigate".into(), "make_voice_call".into(), "hangup_call".into(), "web_search".into(),
-    ];
-    service.sync_agent_tools("user-1", "agent-1", &all_tools).await.unwrap();
-
-    let decision = service
-        .authorize("user-1", &agent, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await.unwrap();
-    assert!(decision.allowed, "browser should be permitted again after reselecting all");
-
-    let policies = service.list_policies("user-1").await.unwrap();
-    assert!(policies.is_empty(), "forbid policies should be cleaned up after reselecting all");
-}
-
-#[tokio::test]
-async fn sync_preserves_other_agent_policies() {
-    let (_db, service) = setup().await;
-    let agent_a = test_agent("agent-a");
-    let agent_b = test_agent("agent-b");
-
-    // Forbid browser for agent-b
-    service.sync_agent_tools("user-1", "agent-b", &["web_search".into()]).await.unwrap();
-
-    // Now sync agent-a — should not affect agent-b
-    service.sync_agent_tools("user-1", "agent-a", &["browser_navigate".into()]).await.unwrap();
-
-    // agent-b should still have browser denied
-    let decision = service
-        .authorize("user-1", &agent_b, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await.unwrap();
-    assert!(decision.is_denied(), "agent-b browser should still be denied");
-
-    // agent-a should have browser permitted
-    let decision = service
-        .authorize("user-1", &agent_a, PolicyAction::InvokeTool { tool_name: "browser_navigate".into(), tool_group: "browser".into() })
-        .await.unwrap();
-    assert!(decision.allowed, "agent-a browser should be permitted");
-}
-
-#[tokio::test]
-async fn forbid_then_permit_conflict_detected() {
-    let (_db, service) = setup().await;
-
-    service
-        .create_policy(
-            "user-1",
-            "@id(\"hard-deny\")\nforbid(\n  principal == Policy::Agent::\"agent-1\",\n  action == Policy::Action::\"invoke_tool\",\n  resource in Policy::ToolGroup::\"browser\"\n);",
+    /// Register the managed `default-network-access` permit. Carveout
+    /// (forbid-unless) patterns only make sense when there's an underlying
+    /// wildcard permit to override.
+    fn register_default_network_access(service: &frona::policy::service::PolicyService) {
+        let policy = cedar_policy::Policy::from_json(
+            Some(cedar_policy::PolicyId::new("default-network-access")),
+            serde_json::json!({
+                "effect": "permit",
+                "principal": { "op": "All" },
+                "action": { "op": "==", "entity": { "type": "Policy::Action", "id": "connect" } },
+                "resource": { "op": "All" },
+                "annotations": {},
+                "conditions": []
+            }),
         )
-        .await
-        .unwrap();
+        .expect("default-network-access");
+        service.register_managed_policy(policy);
+    }
 
-    let result = service
-        .permit("user-1", "agent-1", &PolicyResource::ToolGroup { group: "browser".into() })
-        .await;
+    #[tokio::test]
+    async fn empty_target_is_noop() {
+        let (_db, service) = setup().await;
+        let plan = service
+            .reconcile("user-1", PolicyReconcileTarget::default())
+            .await
+            .unwrap();
+        assert!(plan.is_noop());
+    }
 
-    assert!(result.is_err());
+    #[tokio::test]
+    async fn allow_override_with_baseline_deny_emits_permit() {
+        let (_db, service) = setup().await;
+        let target = PolicyReconcileTarget {
+            groups: vec![group("a", "read", None, vec![(dir("/x"), AccessIntent::Allow)])],
+        };
+        let result = service.reconcile_or_fail("user-1", target).await.unwrap();
+        assert_eq!(result.created, 1);
+        assert_eq!(result.deleted, 0);
+    }
+
+    #[tokio::test]
+    async fn re_reconcile_same_target_is_noop() {
+        let (_db, service) = setup().await;
+        let target = || PolicyReconcileTarget {
+            groups: vec![group("a", "read", None, vec![(dir("/x"), AccessIntent::Allow)])],
+        };
+        service.reconcile_or_fail("user-1", target()).await.unwrap();
+        let plan = service.reconcile("user-1", target()).await.unwrap();
+        assert!(plan.is_noop(), "re-run is noop, got plan={plan:?}");
+    }
+
+    #[tokio::test]
+    async fn dropped_override_deletes_owned_row() {
+        let (_db, service) = setup().await;
+        let v1 = PolicyReconcileTarget {
+            groups: vec![group(
+                "a",
+                "read",
+                None,
+                vec![(dir("/x"), AccessIntent::Allow), (dir("/y"), AccessIntent::Allow)],
+            )],
+        };
+        service.reconcile_or_fail("user-1", v1).await.unwrap();
+
+        let v2 = PolicyReconcileTarget {
+            groups: vec![group("a", "read", None, vec![(dir("/x"), AccessIntent::Allow)])],
+        };
+        let result = service.reconcile_or_fail("user-1", v2).await.unwrap();
+        assert_eq!(result.deleted, 1, "drops the /y permit");
+    }
+
+    #[tokio::test]
+    async fn default_deny_no_overrides_emits_wildcard_forbid() {
+        let (_db, service) = setup().await;
+        let target = PolicyReconcileTarget {
+            groups: vec![group("a", "connect", Some(AccessIntent::Deny), vec![])],
+        };
+        let result = service.reconcile_or_fail("user-1", target).await.unwrap();
+        assert_eq!(result.created, 1);
+    }
+
+    #[tokio::test]
+    async fn default_deny_with_allow_override_emits_carveout() {
+        let (_db, service) = setup().await;
+        register_default_network_access(&service);
+        let target = PolicyReconcileTarget {
+            groups: vec![group(
+                "a",
+                "connect",
+                Some(AccessIntent::Deny),
+                vec![(netd("gmail.com"), AccessIntent::Allow)],
+            )],
+        };
+        let result = service.reconcile_or_fail("user-1", target).await.unwrap();
+        assert_eq!(result.created, 1);
+
+        let plan = service
+            .reconcile(
+                "user-1",
+                PolicyReconcileTarget {
+                    groups: vec![group(
+                        "a",
+                        "connect",
+                        Some(AccessIntent::Deny),
+                        vec![(netd("gmail.com"), AccessIntent::Allow)],
+                    )],
+                },
+            )
+            .await
+            .unwrap();
+        assert!(plan.is_noop(), "carveout should be kept, got plan={plan:?}");
+    }
+
+    #[tokio::test]
+    async fn switching_carveout_resources_replaces_in_place() {
+        let (_db, service) = setup().await;
+        register_default_network_access(&service);
+        let v1 = PolicyReconcileTarget {
+            groups: vec![group(
+                "a",
+                "connect",
+                Some(AccessIntent::Deny),
+                vec![
+                    (netd("gmail.com"), AccessIntent::Allow),
+                    (netd("api.github.com"), AccessIntent::Allow),
+                ],
+            )],
+        };
+        service.reconcile_or_fail("user-1", v1).await.unwrap();
+
+        let v2 = PolicyReconcileTarget {
+            groups: vec![group(
+                "a",
+                "connect",
+                Some(AccessIntent::Deny),
+                vec![
+                    (netd("gmail.com"), AccessIntent::Allow),
+                    (netd("zoom.us"), AccessIntent::Allow),
+                ],
+            )],
+        };
+        let result = service.reconcile_or_fail("user-1", v2).await.unwrap();
+        assert_eq!(result.deleted, 1, "old carveout deleted");
+        assert_eq!(result.created, 1, "new carveout created");
+    }
+
+    #[tokio::test]
+    async fn user_when_conditional_blocks_allow_returns_conflict() {
+        let (_db, service) = setup().await;
+
+        // User-authored complex forbid with `when` clause — not owned by reconcile.
+        service
+            .create_policy(
+                "user-1",
+                "@id(\"u-when\")\nforbid(principal == Policy::Agent::\"a\", action == Policy::Action::\"read\", resource == Policy::Directory::\"/x\")\nwhen { principal.enabled };",
+            )
+            .await
+            .unwrap();
+
+        let target = PolicyReconcileTarget {
+            groups: vec![group("a", "read", None, vec![(dir("/x"), AccessIntent::Allow)])],
+        };
+        let plan = service.reconcile("user-1", target).await.unwrap();
+        assert!(!plan.is_clean(), "should have conflicts");
+
+        let r = service.commit(plan, false).await;
+        match r {
+            Err(PolicyReconciliationError::Conflicts(c)) => {
+                assert!(!c.is_empty());
+            }
+            _ => panic!("expected Conflicts, got {r:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_plan_returns_stale_plan_error() {
+        let (_db, service) = setup().await;
+        let target = PolicyReconcileTarget {
+            groups: vec![group("a", "read", None, vec![(dir("/x"), AccessIntent::Allow)])],
+        };
+        let plan = service.reconcile("user-1", target).await.unwrap();
+
+        service
+            .create_policy(
+                "user-1",
+                "@id(\"u-other\")\npermit(principal == Policy::Agent::\"other\", action == Policy::Action::\"read\", resource == Policy::Directory::\"/z\");",
+            )
+            .await
+            .unwrap();
+
+        let r = service.commit(plan, false).await;
+        match r {
+            Err(PolicyReconciliationError::StalePlan) => {}
+            _ => panic!("expected StalePlan, got {r:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sandbox_policy_translation_round_trip() {
+        let (_db, service) = setup().await;
+        // Allowlist semantics require the managed default-network-access permit
+        // (matches production where the network_access feature registers it).
+        register_default_network_access(&service);
+        let sb = SandboxPolicy {
+            read_paths: vec!["/r".into()],
+            write_paths: vec!["/w".into()],
+            network_access: true,
+            network_destinations: vec!["api.example.com".into()],
+            bind_ports: vec![8080],
+            denied_paths: vec!["/secret".into()],
+            blocked_networks: vec!["10.0.0.0/8".into()],
+        };
+
+        let result = service
+            .reconcile_sandbox_policy("user-1", EntityRef::Agent("a".into()), &sb)
+            .await
+            .expect("commit succeeds");
+        assert!(result.created > 0);
+
+        let result2 = service
+            .reconcile_sandbox_policy("user-1", EntityRef::Agent("a".into()), &sb)
+            .await
+            .unwrap();
+        assert_eq!(result2.created, 0);
+        assert_eq!(result2.deleted, 0);
+    }
+
+    #[tokio::test]
+    async fn sandbox_policy_network_off_emits_wildcard_forbid() {
+        let (_db, service) = setup().await;
+        let sb = SandboxPolicy {
+            network_access: false,
+            ..Default::default()
+        };
+        let result = service
+            .reconcile_sandbox_policy("user-1", EntityRef::Agent("a".into()), &sb)
+            .await
+            .unwrap();
+        assert_eq!(result.created, 1, "one wildcard forbid for connect");
+    }
+
+    #[tokio::test]
+    /// With ancestor collapse: providers whose tools are all denied collapse
+    /// into a single `forbid(... resource in ToolGroup::"X")` rule rather
+    /// than one rule per tool.
+    async fn sync_agent_tools_emits_forbid_for_unselected() {
+        let (_db, service) = setup().await;
+        let result = service
+            .reconcile_agent_tools("user-1", "agent-1", &["web_search".into()])
+            .await
+            .unwrap();
+        // browser, voice → all-deny → 2 ToolGroup forbids
+        // search → all-allow → no row (baseline already permits)
+        assert_eq!(result.created, 2, "two ToolGroup forbids: browser + voice");
+
+        let all: Vec<String> = vec![
+            "browser_navigate".into(),
+            "make_voice_call".into(),
+            "hangup_call".into(),
+            "web_search".into(),
+        ];
+        let result2 = service
+            .reconcile_agent_tools("user-1", "agent-1", &all)
+            .await
+            .unwrap();
+        assert_eq!(result2.deleted, 2, "the two ToolGroup forbids get cleared");
+        assert_eq!(result2.created, 0);
+    }
+
+    /// Base policy `permit invoke_tool unless resource in ToolGroup::"agent"`
+    /// must resolve correctly during reconcile: an unselected agent-group tool
+    /// is already baseline-deny (no forbid needed), and selecting it requires
+    /// an explicit permit.
+    #[tokio::test]
+    async fn sync_agent_tools_respects_base_tool_group_restrictions() {
+        let (_db, service) =
+            super::setup_with_extra_tools(&[("agent_mgmt", "manage_agent", "agent")]).await;
+
+        let r1 = service
+            .reconcile_agent_tools("user-1", "agent-x", &[])
+            .await
+            .unwrap();
+        // browser, voice, search → 3 ToolGroup forbids (collapsed)
+        // ToolGroup::"agent" → baseline already denies, no row
+        assert_eq!(r1.created, 3, "three ToolGroup forbids; agent group already baseline-deny");
+
+        let r2 = service
+            .reconcile_agent_tools("user-1", "agent-x", &["manage_agent".into()])
+            .await
+            .unwrap();
+        // browser/voice/search forbids stay (still all-deny in their groups → collapse → forbid).
+        // ToolGroup::"agent" Allow vs baseline-deny → emit one ToolGroup permit.
+        assert_eq!(r2.created, 1, "selecting agent-group tool emits one ToolGroup permit");
+        assert_eq!(r2.deleted, 0);
+
+        let policies = service.list_policies("user-1").await.unwrap();
+        let agent_permit = policies
+            .iter()
+            .find(|p| p.policy_text.contains("ToolGroup::\"agent\"") && p.policy_text.contains("permit"))
+            .expect("permit row for ToolGroup::agent");
+        assert!(agent_permit.policy_text.contains("resource in"));
+    }
+
+    /// Provider with two tools, both denied → one rule on the ToolGroup
+    /// instead of two per-tool rules. The 'voice' provider in setup() has
+    /// make_voice_call + hangup_call.
+    #[tokio::test]
+    async fn collapse_full_provider_emits_single_toolgroup_rule() {
+        let (_db, service) = setup().await;
+        // Allow everything except the entire voice provider.
+        service
+            .reconcile_agent_tools(
+                "user-1",
+                "agent-z",
+                &["browser_navigate".into(), "web_search".into()],
+            )
+            .await
+            .unwrap();
+        let policies = service.list_policies("user-1").await.unwrap();
+        let voice_rows: Vec<_> = policies
+            .iter()
+            .filter(|p| p.policy_text.contains("voice"))
+            .collect();
+        assert_eq!(voice_rows.len(), 1, "one collapsed rule for voice, not per-tool");
+        assert!(voice_rows[0].policy_text.contains("resource in"));
+        assert!(voice_rows[0].policy_text.contains("ToolGroup::\"voice\""));
+    }
+
+    /// When a provider's tools have mixed intents, the planner falls back to
+    /// per-tool rules — no ancestor collapse.
+    #[tokio::test]
+    async fn collapse_partial_provider_falls_back_to_per_tool() {
+        let (_db, service) = setup().await;
+        // Voice provider: make_voice_call selected, hangup_call not.
+        service
+            .reconcile_agent_tools("user-1", "agent-m", &["make_voice_call".into()])
+            .await
+            .unwrap();
+        let policies = service.list_policies("user-1").await.unwrap();
+        let voice_rows: Vec<_> = policies
+            .iter()
+            .filter(|p| p.policy_text.contains("voice") || p.policy_text.contains("hangup_call"))
+            .collect();
+        // Expect a per-tool forbid for hangup_call (mixed → no collapse for voice group).
+        assert!(
+            voice_rows
+                .iter()
+                .any(|p| p.policy_text.contains("Tool::\"hangup_call\"") && p.policy_text.contains("forbid")),
+            "expected per-tool forbid for hangup_call when voice has mixed intent: {voice_rows:?}"
+        );
+        assert!(
+            !voice_rows.iter().any(|p| p.policy_text.contains("ToolGroup::\"voice\"")),
+            "should not have collapsed to ToolGroup::voice"
+        );
+    }
+
+    /// Incremental scenario: state has per-tool forbids, then user adds the
+    /// last tool. Diff: existing per-tool rows replaced by one ToolGroup rule.
+    #[tokio::test]
+    async fn incremental_complete_provider_replaces_per_tool_with_group() {
+        let (_db, service) = setup().await;
+        // Step 1: only make_voice_call denied (hangup_call still allowed) →
+        // mixed intent, falls back to per-tool forbid for hangup_call.
+        let r1 = service
+            .reconcile_agent_tools(
+                "user-1",
+                "agent-i",
+                &[
+                    "browser_navigate".into(),
+                    "web_search".into(),
+                    "make_voice_call".into(),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.created, 1, "per-tool forbid for hangup_call");
+
+        // Step 2: deny make_voice_call too → both voice tools denied →
+        // collapse to ToolGroup::voice rule. Diff: 1 delete (hangup_call
+        // per-tool) + 1 create (ToolGroup::voice).
+        let r2 = service
+            .reconcile_agent_tools(
+                "user-1",
+                "agent-i",
+                &["browser_navigate".into(), "web_search".into()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(r2.deleted, 1, "old per-tool hangup_call forbid deleted");
+        assert_eq!(r2.created, 1, "new ToolGroup::voice forbid created");
+
+        let policies = service.list_policies("user-1").await.unwrap();
+        let voice_rows: Vec<_> = policies
+            .iter()
+            .filter(|p| p.policy_text.contains("voice") || p.policy_text.contains("hangup_call"))
+            .collect();
+        assert_eq!(voice_rows.len(), 1);
+        assert!(voice_rows[0].policy_text.contains("resource in"));
+        assert!(voice_rows[0].policy_text.contains("ToolGroup::\"voice\""));
+    }
+
+    /// Re-running with the same selection produces no DB churn — the existing
+    /// ToolGroup rule is recognized as canonical and kept.
+    #[tokio::test]
+    async fn collapse_re_reconcile_is_noop() {
+        let (_db, service) = setup().await;
+        let selected = vec!["browser_navigate".into(), "web_search".into()];
+        let r1 = service.reconcile_agent_tools("user-1", "agent-r", &selected).await.unwrap();
+        assert_eq!(r1.created, 1, "voice ToolGroup forbid emitted");
+
+        let r2 = service.reconcile_agent_tools("user-1", "agent-r", &selected).await.unwrap();
+        assert_eq!(r2.created, 0, "no churn on re-reconcile");
+        assert_eq!(r2.deleted, 0);
+    }
+
+    /// Switching from a ToolGroup rule to mixed intents replaces the group
+    /// rule with per-tool rules.
+    #[tokio::test]
+    async fn switching_from_toolgroup_to_per_tool_replaces_correctly() {
+        let (_db, service) = setup().await;
+        // Step 1: deny entire voice provider.
+        service
+            .reconcile_agent_tools(
+                "user-1",
+                "agent-s",
+                &["browser_navigate".into(), "web_search".into()],
+            )
+            .await
+            .unwrap();
+
+        // Step 2: now allow make_voice_call → mixed intent → ToolGroup
+        // collapse breaks; emit per-tool forbid for hangup_call.
+        let r = service
+            .reconcile_agent_tools(
+                "user-1",
+                "agent-s",
+                &[
+                    "browser_navigate".into(),
+                    "web_search".into(),
+                    "make_voice_call".into(),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.deleted, 1, "ToolGroup::voice forbid deleted");
+        assert_eq!(r.created, 1, "per-tool hangup_call forbid emitted");
+
+        let policies = service.list_policies("user-1").await.unwrap();
+        assert!(
+            !policies.iter().any(|p| p.policy_text.contains("ToolGroup::\"voice\"")),
+            "ToolGroup::voice rule should be gone"
+        );
+        assert!(policies.iter().any(
+            |p| p.policy_text.contains("Tool::\"hangup_call\"") && p.policy_text.contains("forbid")
+        ));
+    }
+
+    #[tokio::test]
+    async fn default_allow_with_deny_overrides_emits_permit_unless_carveout() {
+        let (_db, service) = setup().await;
+        let target = PolicyReconcileTarget {
+            groups: vec![group(
+                "a",
+                "read",
+                Some(AccessIntent::Allow),
+                vec![(dir("/secret"), AccessIntent::Deny)],
+            )],
+        };
+        let result = service.reconcile_or_fail("user-1", target).await.unwrap();
+        assert_eq!(result.created, 1);
+
+        let policies = service.list_policies("user-1").await.unwrap();
+        let emitted = policies.iter().find(|p| p.name.starts_with("reconcile-")).expect("emitted");
+        assert!(emitted.policy_text.contains("permit"));
+        assert!(emitted.policy_text.contains("unless"));
+        assert!(emitted.policy_text.contains("/secret"));
+    }
+
+    #[tokio::test]
+    async fn delete_flow_wipes_all_reconciled_rows_for_principal() {
+        let (_db, service) = setup().await;
+        let sb = SandboxPolicy {
+            read_paths: vec!["/data".into(), "/logs".into()],
+            write_paths: vec!["/output".into()],
+            denied_paths: vec!["/secrets".into()],
+            bind_ports: vec![8080],
+            ..Default::default()
+        };
+        service
+            .reconcile_sandbox_policy("user-1", EntityRef::Agent("a".into()), &sb)
+            .await
+            .unwrap();
+        let before = service.list_policies("user-1").await.unwrap();
+        let owned_before: Vec<_> = before.iter().filter(|p| p.name.starts_with("reconcile-")).collect();
+        assert!(owned_before.len() >= 4, "should have multiple reconciled rows, got {}", owned_before.len());
+
+        service
+            .reconcile_sandbox_policy("user-1", EntityRef::Agent("a".into()), &SandboxPolicy::permissive())
+            .await
+            .unwrap();
+        let after = service.list_policies("user-1").await.unwrap();
+        let owned_after: Vec<_> = after.iter().filter(|p| p.name.starts_with("reconcile-")).collect();
+        assert!(owned_after.is_empty(), "all reconciled rows for agent should be gone, got {owned_after:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_flow_does_not_touch_other_principals_rows() {
+        let (_db, service) = setup().await;
+        let sb = || SandboxPolicy {
+            read_paths: vec!["/data".into()],
+            ..Default::default()
+        };
+        service
+            .reconcile_sandbox_policy("user-1", EntityRef::Agent("a".into()), &sb())
+            .await
+            .unwrap();
+        service
+            .reconcile_sandbox_policy("user-1", EntityRef::Agent("b".into()), &sb())
+            .await
+            .unwrap();
+
+        service
+            .reconcile_sandbox_policy("user-1", EntityRef::Agent("a".into()), &SandboxPolicy::permissive())
+            .await
+            .unwrap();
+
+        let policies = service.list_policies("user-1").await.unwrap();
+        let agent_a = policies.iter().filter(|p| p.policy_text.contains("Policy::Agent::\"a\"")).count();
+        let agent_b = policies.iter().filter(|p| p.policy_text.contains("Policy::Agent::\"b\"")).count();
+        assert_eq!(agent_a, 0, "agent a's rows should be wiped");
+        assert!(agent_b > 0, "agent b's rows should be untouched");
+    }
+
+    #[tokio::test]
+    async fn lifecycle_create_modify_revert_delete() {
+        let (_db, service) = setup().await;
+        let entity = || EntityRef::Agent("a".into());
+
+        // 1. Create with /data read.
+        let v1 = SandboxPolicy { read_paths: vec!["/data".into()], ..Default::default() };
+        let r1 = service.reconcile_sandbox_policy("user-1", entity(), &v1).await.unwrap();
+        assert!(r1.created > 0);
+
+        // 2. Modify: add /logs.
+        let v2 = SandboxPolicy {
+            read_paths: vec!["/data".into(), "/logs".into()],
+            ..Default::default()
+        };
+        let r2 = service.reconcile_sandbox_policy("user-1", entity(), &v2).await.unwrap();
+        assert_eq!(r2.created, 1, "added /logs");
+        assert_eq!(r2.deleted, 0);
+
+        // 3. Revert to /data only.
+        let r3 = service.reconcile_sandbox_policy("user-1", entity(), &v1).await.unwrap();
+        assert_eq!(r3.deleted, 1, "removed /logs");
+        assert_eq!(r3.created, 0);
+
+        // 4. Delete: empty SandboxPolicy.
+        let r4 = service
+            .reconcile_sandbox_policy("user-1", entity(), &SandboxPolicy::default())
+            .await
+            .unwrap();
+        assert_eq!(r4.deleted, 1, "removed /data");
+    }
+
+    #[tokio::test]
+    async fn read_group_change_does_not_affect_write_group() {
+        let (_db, service) = setup().await;
+        let entity = || EntityRef::Agent("a".into());
+
+        // Initial: both read and write to /shared.
+        let v1 = SandboxPolicy {
+            read_paths: vec!["/shared".into()],
+            write_paths: vec!["/shared".into()],
+            ..Default::default()
+        };
+        service.reconcile_sandbox_policy("user-1", entity(), &v1).await.unwrap();
+
+        // Drop read but keep write.
+        let v2 = SandboxPolicy {
+            read_paths: vec![],
+            write_paths: vec!["/shared".into()],
+            ..Default::default()
+        };
+        let r = service.reconcile_sandbox_policy("user-1", entity(), &v2).await.unwrap();
+        assert_eq!(r.deleted, 1, "read row removed");
+        assert_eq!(r.created, 0, "write row untouched");
+    }
+
+    #[tokio::test]
+    async fn connect_group_handles_mixed_allow_and_deny_overrides() {
+        let (_db, service) = setup().await;
+        register_default_network_access(&service);
+        let entity = || EntityRef::Agent("a".into());
+        let sb = SandboxPolicy {
+            network_access: true,
+            network_destinations: vec!["api.gmail.com".into(), "api.github.com".into()],
+            blocked_networks: vec!["10.0.0.0/8".into()],
+            ..Default::default()
+        };
+        service.reconcile_sandbox_policy("user-1", entity(), &sb).await.unwrap();
+
+        let policies = service.list_policies("user-1").await.unwrap();
+        let connect_rows: Vec<_> = policies
+            .iter()
+            .filter(|p| p.name.starts_with("reconcile-Agent-") && p.policy_text.contains("connect"))
+            .collect();
+        // network_access: true + destinations → allowlist carveout (forbid all
+        // unless one of the listed destinations). The blocked_networks entry
+        // matches the default (Deny) and is dropped as redundant.
+        assert_eq!(connect_rows.len(), 1);
+        assert!(connect_rows[0].policy_text.contains("forbid"));
+        assert!(connect_rows[0].policy_text.contains("unless"));
+        assert!(connect_rows[0].policy_text.contains("api.gmail.com"));
+        assert!(connect_rows[0].policy_text.contains("api.github.com"));
+    }
+
+    #[tokio::test]
+    async fn user_authored_simple_permit_with_same_shape_is_absorbed() {
+        // The planner's ownership check is purely structural (Eq P, Eq A, Eq R,
+        // no conditions). A user-authored simple-Eq permit matching a managed
+        // shape is treated as owned and replaced/deleted on reconcile. This
+        // test locks down that behavior so it's not surprising.
+        let (_db, service) = setup().await;
+        service
+            .create_policy(
+                "user-1",
+                "@id(\"u-y\")\npermit(principal == Policy::Agent::\"a\", action == Policy::Action::\"read\", resource == Policy::Directory::\"/y\");",
+            )
+            .await
+            .unwrap();
+
+        // Reconcile with read_paths excluding /y → planner sees the user's
+        // permit as owned and deletes it.
+        let sb = SandboxPolicy { read_paths: vec!["/x".into()], ..Default::default() };
+        service
+            .reconcile_sandbox_policy("user-1", EntityRef::Agent("a".into()), &sb)
+            .await
+            .unwrap();
+        let after = service.list_policies("user-1").await.unwrap();
+        assert!(!after.iter().any(|p| p.name == "u-y"), "user permit absorbed");
+    }
 }

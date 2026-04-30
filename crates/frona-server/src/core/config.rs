@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_aux::field_attributes::deserialize_bool_from_anything;
+use surrealdb::types::SurrealValue;
 
 const ENV_PREFIX: &str = "FRONA_";
 
@@ -79,22 +80,40 @@ impl Default for ServerConfig {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, SurrealValue)]
+#[surreal(crate = "surrealdb::types")]
+#[serde(default)]
+pub struct SandboxLimits {
+    #[schemars(description = "Per-principal CPU usage limit as percentage of total system CPU. Kill sandboxed process if exceeded.")]
+    pub max_cpu_pct: f64,
+    #[schemars(description = "Per-principal memory usage limit as percentage of total system memory. Kill sandboxed process if exceeded.")]
+    pub max_memory_pct: f64,
+    #[schemars(description = "Default timeout in seconds for sandboxed execution. 0 means no timeout.")]
+    pub timeout_secs: u64,
+}
+
+impl Default for SandboxLimits {
+    fn default() -> Self {
+        Self {
+            max_cpu_pct: 95.0,
+            max_memory_pct: 80.0,
+            timeout_secs: 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct SandboxConfig {
     #[schemars(description = "Disable filesystem sandboxing for CLI tools. Enable only if your OS does not support Landlock.")]
     pub disabled: bool,
-    #[schemars(description = "Per-agent CPU usage limit as percentage of total system CPU. Kill sandboxed process if exceeded.")]
-    pub max_agent_cpu_pct: f64,
-    #[schemars(description = "Per-agent memory usage limit as percentage of total system memory. Kill sandboxed process if exceeded.")]
-    pub max_agent_memory_pct: f64,
-    #[schemars(description = "Global CPU usage limit across all agents as percentage of total system CPU.")]
+    #[serde(flatten)]
+    pub default_limits: SandboxLimits,
+    #[schemars(description = "Global CPU usage limit across all sandboxed processes as percentage of total system CPU.")]
     pub max_total_cpu_pct: f64,
-    #[schemars(description = "Global memory usage limit across all agents as percentage of total system memory.")]
+    #[schemars(description = "Global memory usage limit across all sandboxed processes as percentage of total system memory.")]
     pub max_total_memory_pct: f64,
-    #[schemars(description = "Default timeout in seconds for sandboxed tool execution. 0 means no timeout. Per-agent settings override this.")]
-    pub timeout_secs: u64,
-    #[schemars(description = "Grant all agents outbound network access by default. Agents can be restricted with forbid policies.")]
+    #[schemars(description = "Grant all sandbox principals outbound network access by default. Override with forbid policies.")]
     pub default_network_access: bool,
 }
 
@@ -102,11 +121,9 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
             disabled: false,
-            max_agent_cpu_pct: 95.0,
-            max_agent_memory_pct: 80.0,
+            default_limits: SandboxLimits::default(),
             max_total_cpu_pct: 98.0,
             max_total_memory_pct: 90.0,
-            timeout_secs: 0,
             default_network_access: true,
         }
     }
@@ -1289,7 +1306,7 @@ mod tests {
     #[test]
     fn strip_defaults_handles_integer_vs_float() {
         let mut value = serde_json::json!({
-            "sandbox": { "max_agent_cpu_pct": 95, "max_agent_memory_pct": 80 },
+            "sandbox": { "max_cpu_pct": 95, "max_memory_pct": 80 },
         });
         strip_defaults(&mut value);
         assert_eq!(value, serde_json::json!({}));

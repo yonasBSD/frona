@@ -134,11 +134,6 @@ pub struct McpServer {
     pub tool_cache: Vec<CachedMcpTool>,
     pub workspace_dir: String,
 
-    #[serde(default)]
-    pub extra_read_paths: Vec<String>,
-    #[serde(default)]
-    pub extra_write_paths: Vec<String>,
-
     pub installed_at: DateTime<Utc>,
     pub last_started_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
@@ -166,10 +161,9 @@ pub struct McpServerInstall {
     pub credentials: Vec<CredentialBinding>,
     #[serde(default)]
     pub extra_env: BTreeMap<String, String>,
+    /// Reconciled into Cedar policies on install.
     #[serde(default)]
-    pub extra_read_paths: Vec<String>,
-    #[serde(default)]
-    pub extra_write_paths: Vec<String>,
+    pub sandbox_policy: Option<crate::policy::sandbox::SandboxPolicy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -180,10 +174,9 @@ pub struct McpServerUpdate {
     pub credentials: Option<Vec<CredentialBinding>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_env: Option<BTreeMap<String, String>>,
+    /// When present, re-reconciles Cedar policies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extra_read_paths: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extra_write_paths: Option<Vec<String>>,
+    pub sandbox_policy: Option<crate::policy::sandbox::SandboxPolicy>,
     pub active_transport: Option<String>,
 }
 

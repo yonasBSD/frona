@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, SurrealValue)]
 #[surreal(crate = "surrealdb::types")]
 pub struct Principal {
     pub kind: PrincipalKind,
     pub id: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, SurrealValue)]
 #[serde(rename_all = "snake_case")]
 #[surreal(crate = "surrealdb::types", rename_all = "snake_case")]
 pub enum PrincipalKind {

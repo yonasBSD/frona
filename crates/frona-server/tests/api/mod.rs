@@ -22,7 +22,6 @@ use axum::body::Body;
 use axum::extract::connect_info::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use frona::agent::service::AgentService;
 use frona::db::repo::generic::SurrealRepo;
 use frona::storage::StorageService;
 use frona::db::init as db;
@@ -57,14 +56,8 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
     let resource_manager = std::sync::Arc::new(
         frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(80.0, 80.0, 90.0, 90.0),
     );
-    let agent_service = AgentService::new(
-        SurrealRepo::new(db.clone()),
-        &config.cache,
-        std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
-        resource_manager.clone(),
-    );
     let metrics = setup_metrics_recorder();
-    let mut state = AppState::new(db.clone(), &config, None, agent_service, storage, metrics, resource_manager);
+    let mut state = AppState::new(db.clone(), &config, None, storage, metrics, resource_manager);
 
     // Override the MCP service with a noop package installer so tests don't
     // try to run npx/uvx against fake packages.
@@ -87,6 +80,7 @@ async fn test_app_state() -> (AppState, tempfile::TempDir) {
             state.token_service.clone(),
             state.keypair_service.clone(),
             state.user_service.clone(),
+            state.policy_service.clone(),
             state.config.server.public_base_url(),
             state.config.auth.runtime_tokens_dir.clone(),
             state.config.auth.ephemeral_token_expiry_secs,

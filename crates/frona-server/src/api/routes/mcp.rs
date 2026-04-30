@@ -45,8 +45,10 @@ struct McpServerResponse {
     active_transport: String,
     transports: Vec<crate::tool::mcp::TransportConfig>,
     env: std::collections::BTreeMap<String, String>,
-    extra_read_paths: Vec<String>,
-    extra_write_paths: Vec<String>,
+    /// Evaluated sandbox policy. Filled in by handlers via `to_response`,
+    /// not by `From<McpServer>` (the row carries no access fields).
+    #[serde(default)]
+    sandbox_policy: crate::policy::sandbox::SandboxPolicy,
     installed_at: String,
     last_started_at: Option<String>,
 }
@@ -67,8 +69,7 @@ impl From<crate::tool::mcp::McpServer> for McpServerResponse {
             active_transport: s.active_transport,
             transports: s.transports,
             env: s.env,
-            extra_read_paths: s.extra_read_paths,
-            extra_write_paths: s.extra_write_paths,
+            sandbox_policy: crate::policy::sandbox::SandboxPolicy::default(),
             installed_at: s.installed_at.to_rfc3339(),
             last_started_at: s.last_started_at.map(|t| t.to_rfc3339()),
         }
@@ -80,7 +81,29 @@ async fn list_servers(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<McpServerResponse>>, ApiError> {
     let servers = state.mcp_service.list_for_user(&auth.user_id).await?;
-    Ok(Json(servers.into_iter().map(Into::into).collect()))
+    let mut responses: Vec<McpServerResponse> = Vec::with_capacity(servers.len());
+    for s in servers {
+        responses.push(to_response(&state, &auth.user_id, s).await?);
+    }
+    Ok(Json(responses))
+}
+
+async fn to_response(
+    state: &AppState,
+    user_id: &str,
+    server: crate::tool::mcp::McpServer,
+) -> Result<McpServerResponse, ApiError> {
+    let principal = crate::core::principal::Principal::mcp_server(&server.id);
+    let evaluated = state
+        .policy_service
+        .evaluate_sandbox_policy(user_id, &principal)
+        .await
+        .map_err(ApiError::from)?
+        .as_ref()
+        .clone();
+    let mut resp: McpServerResponse = server.into();
+    resp.sandbox_policy = evaluated;
+    Ok(resp)
 }
 
 async fn get_server(
@@ -93,7 +116,8 @@ async fn get_server(
         .into_iter()
         .find(|s| s.id == id)
         .ok_or_else(|| ApiError::from(crate::core::error::AppError::NotFound(format!("mcp server {id}"))))?;
-    Ok(Json(server.into()))
+    let resp = to_response(&state, &auth.user_id, server).await?;
+    Ok(Json(resp))
 }
 
 async fn install_server(
@@ -102,7 +126,8 @@ async fn install_server(
     Json(req): Json<McpServerInstall>,
 ) -> Result<Json<McpServerResponse>, ApiError> {
     let server = state.mcp_service.install(&auth.user_id, req).await?;
-    Ok(Json(server.into()))
+    let resp = to_response(&state, &auth.user_id, server).await?;
+    Ok(Json(resp))
 }
 
 async fn update_server(
@@ -112,8 +137,9 @@ async fn update_server(
     Json(req): Json<McpServerUpdate>,
 ) -> Result<Json<UpdateResponse>, ApiError> {
     let result = state.mcp_service.update(&auth.user_id, &id, req).await?;
+    let server = to_response(&state, &auth.user_id, result.server).await?;
     Ok(Json(UpdateResponse {
-        server: result.server.into(),
+        server,
         restart_required: result.restart_required,
     }))
 }

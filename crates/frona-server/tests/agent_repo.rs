@@ -7,12 +7,22 @@ use frona::core::config::CacheConfig;
 use frona::core::repository::Repository;
 use frona::db::init as db;
 use frona::db::repo::agents::SurrealAgentRepo;
+use frona::db::repo::generic::SurrealRepo;
+use frona::policy::service::PolicyService;
+use frona::tool::manager::ToolManager;
 use frona::tool::sandbox::driver::resource_monitor::SystemResourceManager;
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
 
 fn test_resource_manager() -> Arc<SystemResourceManager> {
     Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0))
+}
+
+fn test_policy_service(db: &Surreal<Db>) -> PolicyService {
+    let schema = frona::policy::schema::build_schema();
+    let repo: Arc<dyn frona::policy::repository::PolicyRepository> =
+        Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
+    PolicyService::new(repo, schema, Arc::new(ToolManager::new(false)))
 }
 
 async fn test_db() -> Surreal<Db> {
@@ -31,7 +41,7 @@ fn test_agent(user_id: &str) -> Agent {
         model_group: "primary".to_string(),
         enabled: true,
         skills: None,
-        sandbox_config: None,
+        sandbox_limits: None,
         max_concurrent_tasks: None,
         avatar: None,
         identity: std::collections::BTreeMap::new(),
@@ -156,6 +166,7 @@ async fn test_seed_config_agents_visible_in_find_by_user_id() {
         &CacheConfig::default(),
         shared_dir.join("agents"),
         test_resource_manager(),
+        test_policy_service(&db),
     );
 
     db::seed_config_agents(&db, &agent_service, &storage).await.unwrap();
@@ -177,7 +188,7 @@ async fn test_seed_config_agents_visible_in_find_by_user_id() {
 #[tokio::test]
 async fn agent_service_find_by_id_caches() {
     let db = test_db().await;
-    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default(), "/nonexistent".into(), test_resource_manager());
+    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default(), "/nonexistent".into(), test_resource_manager(), test_policy_service(&db));
     let repo = SurrealAgentRepo::new(db);
     let agent = test_agent("user-1");
     repo.create(&agent).await.unwrap();
@@ -193,7 +204,7 @@ async fn agent_service_update_invalidates_cache() {
     use frona::agent::models::UpdateAgentRequest;
 
     let db = test_db().await;
-    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default(), "/nonexistent".into(), test_resource_manager());
+    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default(), "/nonexistent".into(), test_resource_manager(), test_policy_service(&db));
     let repo = SurrealAgentRepo::new(db);
     let agent = test_agent("user-1");
     repo.create(&agent).await.unwrap();
@@ -213,7 +224,8 @@ async fn agent_service_update_invalidates_cache() {
             enabled: None,
             tools: None,
             skills: None,
-            sandbox_config: None,
+            sandbox_policy: None,
+            sandbox_limits: None,
             prompt: None,
             identity: None,
         },
@@ -229,7 +241,7 @@ async fn agent_service_update_invalidates_cache() {
 #[tokio::test]
 async fn agent_service_delete_invalidates_cache() {
     let db = test_db().await;
-    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default(), "/nonexistent".into(), test_resource_manager());
+    let svc = AgentService::new(SurrealAgentRepo::new(db.clone()), &CacheConfig::default(), "/nonexistent".into(), test_resource_manager(), test_policy_service(&db));
     let repo = SurrealAgentRepo::new(db);
     let agent = test_agent("user-1");
     repo.create(&agent).await.unwrap();
@@ -252,7 +264,8 @@ async fn agent_service_builtin_agent_ids() {
         .join("..")
         .join("resources")
         .join("agents");
-    let svc = AgentService::new(SurrealAgentRepo::new(db), &CacheConfig::default(), shared_dir, test_resource_manager());
+    let policy_service = test_policy_service(&db);
+    let svc = AgentService::new(SurrealAgentRepo::new(db), &CacheConfig::default(), shared_dir, test_resource_manager(), policy_service);
     let ids = svc.builtin_agent_ids();
     assert!(ids.contains(&"system".to_string()), "Should include 'system' agent");
     assert!(ids.contains(&"researcher".to_string()), "Should include 'researcher' agent");

@@ -181,7 +181,7 @@ mod tests {
                 model_group: "primary".into(),
                 enabled: true,
                 skills: None,
-                sandbox_config: None,
+                sandbox_limits: None,
                 max_concurrent_tasks: None,
                 avatar: None,
                 identity: Default::default(),

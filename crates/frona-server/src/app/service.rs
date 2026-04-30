@@ -12,14 +12,21 @@ pub struct AppService {
     repo: Arc<dyn AppRepository>,
     manager: Arc<AppManager>,
     config: AppConfig,
+    policy_service: crate::policy::service::PolicyService,
 }
 
 impl AppService {
-    pub fn new(repo: impl AppRepository + 'static, manager: Arc<AppManager>, config: AppConfig) -> Self {
+    pub fn new(
+        repo: impl AppRepository + 'static,
+        manager: Arc<AppManager>,
+        config: AppConfig,
+        policy_service: crate::policy::service::PolicyService,
+    ) -> Self {
         Self {
             repo: Arc::new(repo),
             manager,
             config,
+            policy_service,
         }
     }
 
@@ -133,6 +140,16 @@ impl AppService {
                     self.repo.create(&app).await?
                 };
 
+                // Reconcile before `start_and_update`: the spawn path reads
+                // only the evaluated Cedar policy, never the manifest field.
+                self.policy_service
+                    .reconcile_sandbox_policy(
+                        user_id,
+                        crate::policy::reconcile::EntityRef::App(app.id.clone()),
+                        manifest.sandbox_policy.as_ref().unwrap_or(&crate::policy::sandbox::SandboxPolicy::default()),
+                    )
+                    .await?;
+
                 self.start_and_update(&mut app, &command, manifest, credential_env_vars)
                     .await
             }
@@ -221,6 +238,13 @@ impl AppService {
             self.manager.stop_app(app_id).await?;
         }
 
+        self.policy_service
+            .reconcile_sandbox_policy(
+                &app.user_id,
+                crate::policy::reconcile::EntityRef::App(app.id.clone()),
+                &crate::policy::sandbox::SandboxPolicy::permissive(),
+            )
+            .await?;
         self.repo.delete(app_id).await
     }
 
@@ -417,7 +441,7 @@ impl AppService {
     ) -> Result<AppResponse, AppError> {
         match self
             .manager
-            .start_app(&app.id, &app.agent_id, command, manifest, credential_env_vars)
+            .start_app(&app.id, &app.agent_id, &app.user_id, command, manifest, credential_env_vars)
             .await
         {
             Ok((port, pid)) => {

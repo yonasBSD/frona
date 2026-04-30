@@ -21,7 +21,7 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub model_group: String,
     pub skills: Option<Vec<String>>,
-    pub sandbox_config: Option<crate::agent::models::SandboxSettings>,
+    pub sandbox_limits: Option<crate::core::config::SandboxLimits>,
     pub identity: std::collections::BTreeMap<String, String>,
 }
 
@@ -805,7 +805,7 @@ impl ChatService {
                 system_prompt,
                 model_group: agent.model_group,
                 skills: agent.skills,
-                sandbox_config: agent.sandbox_config,
+                sandbox_limits: agent.sandbox_limits,
                 identity: agent.identity,
             });
         }
@@ -822,7 +822,7 @@ impl ChatService {
             system_prompt: parsed.template,
             model_group,
             skills: None,
-            sandbox_config: None,
+            sandbox_limits: None,
             identity: std::collections::BTreeMap::new(),
         })
     }

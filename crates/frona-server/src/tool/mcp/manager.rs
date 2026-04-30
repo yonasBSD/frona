@@ -32,6 +32,7 @@ pub struct McpManager {
     workspaces_path: String,
     allocated_ports: Arc<Mutex<HashSet<u16>>>,
     port_range: (u16, u16),
+    policy_service: crate::policy::service::PolicyService,
 }
 
 impl McpManager {
@@ -40,6 +41,7 @@ impl McpManager {
         workspaces_path: String,
         port_range_start: u16,
         port_range_end: u16,
+        policy_service: crate::policy::service::PolicyService,
     ) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
@@ -47,6 +49,7 @@ impl McpManager {
             workspaces_path,
             allocated_ports: Arc::new(Mutex::new(HashSet::new())),
             port_range: (port_range_start, port_range_end),
+            policy_service,
         }
     }
 
@@ -69,48 +72,61 @@ impl McpManager {
         &self.workspaces_path
     }
 
-    /// Sandbox for install-phase package warm-up: network allowed, write access to the
-    /// shared cache dir and the per-server workspace so `npx --yes …` / `uv pip install`
-    /// can populate them.
+    /// Install-phase sandbox: permissive network (so `npx --yes` / `uv pip install`
+    /// can reach registries) plus write access to the shared cache and per-server
+    /// workspace. Bypasses per-principal Cedar evaluation.
     pub fn build_install_sandbox(&self, server: &McpServer) -> Sandbox {
-        self.mcp_sandbox(server)
+        let permissive = crate::policy::sandbox::SandboxPolicy::permissive();
+        self.mcp_sandbox(server, &permissive)
             .with_extra_env_vars(package_manager_env_vars(&server.workspace_dir))
     }
 
-    pub fn build_run_sandbox(
+    pub async fn build_run_sandbox(
         &self,
         server: &McpServer,
         resolved_env: Vec<(String, String)>,
-    ) -> Sandbox {
-        self.build_run_sandbox_with_token(server, resolved_env, None)
+    ) -> Result<Sandbox, AppError> {
+        self.build_run_sandbox_with_token(server, resolved_env, None).await
     }
 
-    pub fn build_run_sandbox_with_token(
+    pub async fn build_run_sandbox_with_token(
         &self,
         server: &McpServer,
         resolved_env: Vec<(String, String)>,
         token_path: Option<&std::path::Path>,
-    ) -> Sandbox {
+    ) -> Result<Sandbox, AppError> {
         let mut env = package_manager_env_vars(&server.workspace_dir);
         env.extend(resolved_env);
-        let mut sandbox = self.mcp_sandbox(server)
-            .with_read_paths(server.extra_read_paths.to_vec())
-            .with_write_paths(server.extra_write_paths.to_vec())
+
+        let policy = self
+            .policy_service
+            .evaluate_sandbox_policy(
+                &server.user_id,
+                &crate::core::principal::Principal::mcp_server(&server.id),
+            )
+            .await?;
+
+        let mut sandbox = self.mcp_sandbox(server, &policy)
+            .with_read_paths(policy.read_paths.clone())
+            .with_write_paths(policy.write_paths.clone())
+            .with_denied_paths(policy.denied_paths.clone())
+            .with_blocked_networks(policy.blocked_networks.clone())
+            .with_bind_ports(policy.bind_ports.clone())
             .with_extra_env_vars(env);
         if let Some(path) = token_path {
             sandbox = sandbox.with_read_files(vec![path.to_string_lossy().into_owned()]);
         }
-        sandbox
+        Ok(sandbox)
     }
 
-    fn mcp_sandbox(&self, server: &McpServer) -> Sandbox {
+    fn mcp_sandbox(&self, server: &McpServer, policy: &crate::policy::sandbox::SandboxPolicy) -> Sandbox {
         let sandbox_id = format!("mcp-{}", server.id);
         self.sandbox_manager
             .sandbox_at(
                 std::path::PathBuf::from(&server.workspace_dir),
                 &sandbox_id,
-                true,
-                Vec::new(),
+                policy.network_access,
+                policy.network_destinations.clone(),
             )
             .without_venv()
             .without_node()
@@ -169,7 +185,7 @@ impl McpManager {
             server,
             env_pairs,
             token_guard.as_ref().map(|g| g.path()),
-        );
+        ).await?;
         sandbox.setup()?;
 
         let args_owned: Vec<String> = config
@@ -228,6 +244,7 @@ impl McpManager {
 
         let sandbox = self
             .build_run_sandbox_with_token(server, env_pairs, token_guard.as_ref().map(|g| g.path()))
+            .await?
             .with_bind_ports(vec![port]);
         sandbox.setup()?;
 

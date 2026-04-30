@@ -3,12 +3,25 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use frona::core::metrics::{self, InferenceMetricsContext};
+use frona::db::repo::generic::SurrealRepo;
 use frona::inference::config::{ModelGroup, RetryConfig};
 use frona::inference::error::InferenceError;
 use frona::inference::provider::{ModelProvider, ModelRef};
 use frona::inference::registry::ModelProviderRegistry;
 use frona::inference::Usage;
+use frona::policy::service::PolicyService;
+use frona::tool::manager::ToolManager;
 use frona::tool::{AgentTool, InferenceContext, ToolDefinition, ToolOutput};
+use surrealdb::Surreal;
+use surrealdb::engine::local::Db;
+
+pub fn test_policy_service(db: &Surreal<Db>) -> PolicyService {
+    let schema = frona::policy::schema::build_schema();
+    let repo: Arc<dyn frona::policy::repository::PolicyRepository> =
+        Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
+    let tool_manager = Arc::new(ToolManager::new(false));
+    PolicyService::new(repo, schema, tool_manager)
+}
 use rig::completion::request::ToolDefinition as RigToolDefinition;
 use rig::completion::{AssistantContent, Message as RigMessage};
 use rig::completion::message::{ToolCall, ToolFunction};
@@ -308,7 +321,7 @@ pub fn mock_context() -> InferenceContext {
             model_group: "primary".into(),
             enabled: true,
             skills: None,
-            sandbox_config: None,
+            sandbox_limits: None,
             max_concurrent_tasks: None,
             avatar: None,
             identity: Default::default(),
@@ -492,6 +505,7 @@ pub async fn test_chat_service() -> frona::chat::service::ChatService {
         &config.cache,
         std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
         resource_manager.clone(),
+        test_policy_service(&db),
     );
     let provider_registry = frona::inference::registry::ModelProviderRegistry::for_testing(
         HashMap::new(),

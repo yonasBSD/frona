@@ -69,7 +69,7 @@ impl Supervisor for AppSupervisor {
             .state
             .app_service
             .manager()
-            .start_app(id, &app.agent_id, command, &manifest, Vec::new())
+            .start_app(id, &app.agent_id, &app.user_id, command, &manifest, Vec::new())
             .await?;
         let _ = self
             .state

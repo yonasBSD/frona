@@ -3,8 +3,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use cedar_policy::{
-    Entities, EntityId, EntityTypeName, EntityUid, PolicySet, Schema,
+    Entities, Entity, EntityId, EntityTypeName, EntityUid, PolicySet, RestrictedExpression, Schema,
 };
+
+use crate::core::principal::{Principal, PrincipalKind};
 
 pub const NAMESPACE: &str = "Policy";
 
@@ -33,6 +35,46 @@ pub fn entity_uid(type_name: &str, id: &str) -> EntityUid {
 
 pub fn agent_entity_uid(agent_id: &str) -> EntityUid {
     entity_uid("Agent", agent_id)
+}
+
+pub fn principal_entity_uid(principal: &Principal) -> EntityUid {
+    let type_name = match principal.kind {
+        PrincipalKind::User => "User",
+        PrincipalKind::Agent => "Agent",
+        PrincipalKind::McpServer => "Mcp",
+        PrincipalKind::App => "App",
+    };
+    entity_uid(type_name, &principal.id)
+}
+
+fn tools_to_set(tools: &[String]) -> RestrictedExpression {
+    let elements: Vec<RestrictedExpression> = tools
+        .iter()
+        .map(|t| RestrictedExpression::new_string(t.clone()))
+        .collect();
+    RestrictedExpression::new_set(elements)
+}
+
+pub fn build_agent_principal_entity(agent_id: &str, tools: &[String]) -> Entity {
+    let attrs = [
+        ("enabled".into(), RestrictedExpression::new_bool(true)),
+        ("model_group".into(), RestrictedExpression::new_string("primary".into())),
+        ("tools".into(), tools_to_set(tools)),
+    ];
+    Entity::new(
+        agent_entity_uid(agent_id),
+        attrs.into_iter().collect(),
+        HashSet::new(),
+    )
+    .expect("valid agent principal entity")
+}
+
+pub fn build_mcp_principal_entity(mcp_id: &str) -> Entity {
+    Entity::new_no_attrs(entity_uid("Mcp", mcp_id), HashSet::new())
+}
+
+pub fn build_app_principal_entity(app_id: &str) -> Entity {
+    Entity::new_no_attrs(entity_uid("App", app_id), HashSet::new())
 }
 
 pub fn tool_entity_uid(tool_name: &str) -> EntityUid {
@@ -70,39 +112,8 @@ pub fn build_agent_entities(
     target_id: &str,
     target_tools: &[String],
 ) -> Entities {
-    let principal_uid = agent_entity_uid(principal_id);
-    let target_uid = agent_entity_uid(target_id);
-
-    fn tools_to_set(tools: &[String]) -> cedar_policy::RestrictedExpression {
-        let elements: Vec<cedar_policy::RestrictedExpression> = tools
-            .iter()
-            .map(|t| cedar_policy::RestrictedExpression::new_string(t.clone()))
-            .collect();
-        cedar_policy::RestrictedExpression::new_set(elements)
-    }
-
-    let agent_attrs = [
-        ("enabled".into(), cedar_policy::RestrictedExpression::new_bool(true)),
-        ("model_group".into(), cedar_policy::RestrictedExpression::new_string("primary".into())),
-        ("tools".into(), tools_to_set(principal_tools)),
-    ];
-    let principal_entity = cedar_policy::Entity::new(
-        principal_uid,
-        agent_attrs.into_iter().collect(),
-        HashSet::new(),
-    ).expect("valid principal entity");
-
-    let target_attrs = [
-        ("enabled".into(), cedar_policy::RestrictedExpression::new_bool(true)),
-        ("model_group".into(), cedar_policy::RestrictedExpression::new_string("primary".into())),
-        ("tools".into(), tools_to_set(target_tools)),
-    ];
-    let target_entity = cedar_policy::Entity::new(
-        target_uid,
-        target_attrs.into_iter().collect(),
-        HashSet::new(),
-    ).expect("valid target entity");
-
+    let principal_entity = build_agent_principal_entity(principal_id, principal_tools);
+    let target_entity = build_agent_principal_entity(target_id, target_tools);
     Entities::from_entities([principal_entity, target_entity], None)
         .unwrap_or_else(|_| Entities::empty())
 }
@@ -199,5 +210,61 @@ mod tests {
         let (id, desc) = extract_annotations(text);
         assert!(id.is_none());
         assert!(desc.is_none());
+    }
+
+    #[test]
+    fn schema_validates_default_network_access_managed_policy() {
+        let schema = build_schema();
+        let policy = cedar_policy::Policy::from_json(
+            Some(cedar_policy::PolicyId::new("default-network-access")),
+            serde_json::json!({
+                "effect": "permit",
+                "principal": { "op": "All" },
+                "action": { "op": "==", "entity": { "type": "Policy::Action", "id": "connect" } },
+                "resource": { "op": "All" },
+                "annotations": {},
+                "conditions": []
+            }),
+        )
+        .expect("default-network-access policy parses");
+
+        let mut policy_set = cedar_policy::PolicySet::new();
+        policy_set.add(policy).expect("add policy to set");
+
+        let validator = cedar_policy::Validator::new((*schema).clone());
+        let result = validator.validate(&policy_set, cedar_policy::ValidationMode::default());
+        assert!(
+            result.validation_passed(),
+            "default-network-access must validate against the schema, got: {:?}",
+            result.validation_errors().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn schema_validates_mcp_principal() {
+        let schema = build_schema();
+        let text = r#"permit(principal == Policy::Mcp::"x", action == Policy::Action::"connect", resource);"#;
+        let policy_set = cedar_policy::PolicySet::from_str(text).expect("parse");
+        let validator = cedar_policy::Validator::new((*schema).clone());
+        let result = validator.validate(&policy_set, cedar_policy::ValidationMode::default());
+        assert!(
+            result.validation_passed(),
+            "Mcp connect policy must validate, got: {:?}",
+            result.validation_errors().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn schema_validates_app_principal() {
+        let schema = build_schema();
+        let text = r#"permit(principal == Policy::App::"x", action == Policy::Action::"read", resource == Policy::Directory::"/data");"#;
+        let policy_set = cedar_policy::PolicySet::from_str(text).expect("parse");
+        let validator = cedar_policy::Validator::new((*schema).clone());
+        let result = validator.validate(&policy_set, cedar_policy::ValidationMode::default());
+        assert!(
+            result.validation_passed(),
+            "App read policy must validate, got: {:?}",
+            result.validation_errors().collect::<Vec<_>>()
+        );
     }
 }

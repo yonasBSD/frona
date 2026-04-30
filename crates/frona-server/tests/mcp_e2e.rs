@@ -55,26 +55,31 @@ fn make_server(id: &str, binary: &str, workspace: &str) -> McpServer {
         active_transport: "stdio".into(),
         status: McpServerStatus::Installed,
         tool_cache: vec![],
-        workspace_dir: workspace.to_string(),
-        extra_read_paths: vec![],
-        extra_write_paths: vec![],
-        installed_at: now,
+        workspace_dir: workspace.to_string(),        installed_at: now,
         last_started_at: None,
         updated_at: now,
     }
 }
 
-fn test_manager(tmp: &std::path::Path) -> Arc<McpManager> {
+async fn test_manager(tmp: &std::path::Path) -> Arc<McpManager> {
     let sandbox = Arc::new(SandboxManager::new(
         tmp.join("sandbox"),
         true,
         Arc::new(SystemResourceManager::new(80.0, 80.0, 90.0, 90.0)),
     ));
+    let db = surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(()).await.unwrap();
+    frona::db::init::setup_schema(&db).await.unwrap();
+    let policy_schema = frona::policy::schema::build_schema();
+    let policy_repo: Arc<dyn frona::policy::repository::PolicyRepository> =
+        Arc::new(frona::db::repo::generic::SurrealRepo::<frona::policy::models::Policy>::new(db));
+    let tool_manager = Arc::new(frona::tool::manager::ToolManager::new(false));
+    let policy_service = frona::policy::service::PolicyService::new(policy_repo, policy_schema, tool_manager);
     Arc::new(McpManager::new(
         sandbox,
         tmp.join("workspaces").to_string_lossy().into_owned(),
         4100,
         4200,
+        policy_service,
     ))
 }
 
@@ -86,7 +91,7 @@ async fn spawn_handshake_and_tool_call() {
     let workspace = tmp.path().join("ws1");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    let manager = test_manager(tmp.path());
+    let manager = test_manager(tmp.path()).await;
     let server = make_server("s1", &binary, &workspace.to_string_lossy());
 
     let tools = manager
@@ -144,7 +149,7 @@ async fn health_check_detects_killed_process() {
     let workspace = tmp.path().join("ws2");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    let manager = test_manager(tmp.path());
+    let manager = test_manager(tmp.path()).await;
     let server = make_server("s2", &binary, &workspace.to_string_lossy());
 
     manager
@@ -182,7 +187,7 @@ async fn tools_for_user_returns_filtered_tools() {
     let workspace = tmp.path().join("ws3");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    let manager = test_manager(tmp.path());
+    let manager = test_manager(tmp.path()).await;
     let server = make_server("s3", &binary, &workspace.to_string_lossy());
 
     manager

@@ -279,10 +279,8 @@ fn check_needs_approval(existing: &Option<App>, manifest_value: &Value) -> bool 
         || old.effective_kind() != new.effective_kind()
         || old.static_dir != new.static_dir
         || old.effective_expose() != new.effective_expose()
-        || old.network_destinations != new.network_destinations
+        || old.sandbox_policy != new.sandbox_policy
         || old.credentials != new.credentials
-        || old.read_paths != new.read_paths
-        || old.write_paths != new.write_paths
 }
 
 #[cfg(test)]
@@ -359,9 +357,9 @@ mod tests {
     }
 
     #[test]
-    fn approval_required_when_network_destinations_change() {
+    fn approval_required_when_sandbox_policy_changes() {
         let old = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py"});
-        let new = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py", "network_destinations": [{"host": "evil.com", "port": 443}]});
+        let new = serde_json::json!({"id": "test", "name": "Test", "command": "python app.py", "sandbox_policy": {"network_destinations": ["evil.com:443"]}});
         let app = make_app(old);
         assert!(check_needs_approval(&Some(app), &new));
     }

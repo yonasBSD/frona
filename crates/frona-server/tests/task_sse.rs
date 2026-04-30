@@ -74,11 +74,19 @@ async fn test_app_state_with_mock(
             80.0, 80.0, 90.0, 90.0,
         ),
     );
+    let policy_service = {
+        let schema = frona::policy::schema::build_schema();
+        let repo: std::sync::Arc<dyn frona::policy::repository::PolicyRepository> =
+            std::sync::Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
+        let tool_manager = std::sync::Arc::new(frona::tool::manager::ToolManager::new(false));
+        frona::policy::service::PolicyService::new(repo, schema, tool_manager)
+    };
     let agent_service = AgentService::new(
         SurrealRepo::new(db.clone()),
         &config.cache,
         std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
         resource_manager.clone(),
+        policy_service,
     );
 
     // Build a provider registry with the mock provider and a "primary" model group.
@@ -121,9 +129,12 @@ async fn test_app_state_with_mock(
 
     let metrics_handle = frona::core::metrics::setup_metrics_recorder();
     let mut state =
-        AppState::new(db, &config, None, agent_service, storage, metrics_handle, resource_manager);
+        AppState::new(db, &config, None, storage, metrics_handle, resource_manager);
     // Replace the chat_service with our version that has the mock provider.
     state.chat_service = chat_service;
+    // Replace the agent_service so chat_service in state shares the same
+    // underlying repo as the one above.
+    state.agent_service = agent_service;
 
     (state, tmp)
 }
@@ -159,7 +170,7 @@ async fn seed_agent(db: &Surreal<Db>) {
         model_group: "primary".to_string(),
         enabled: true,
         skills: None,
-        sandbox_config: None,
+        sandbox_limits: None,
         max_concurrent_tasks: None,
         avatar: None,
         identity: Default::default(),
