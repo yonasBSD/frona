@@ -36,8 +36,6 @@ pub struct BuiltinSpec {
     pub id: &'static str,
     pub display_name: &'static str,
     pub description: &'static str,
-    /// Whether the user can toggle this provider per agent. Non-configurable providers
-    /// are always registered for every agent (e.g. messaging, memory, identity).
     pub configurable: bool,
 }
 
@@ -46,37 +44,37 @@ pub const BUILTIN_PROVIDERS: &[BuiltinSpec] = &[
         id: "human_in_the_loop",
         display_name: "human_in_the_loop",
         description: "Ask the user clarifying questions or request user takeover when the agent cannot proceed on its own.",
-        configurable: false,
+        configurable: true,
     },
     BuiltinSpec {
         id: "messaging",
         display_name: "messaging",
         description: "Send markdown messages and attachments to the user in the active chat.",
-        configurable: false,
+        configurable: true,
     },
     BuiltinSpec {
         id: "file",
         display_name: "file",
         description: "Produce files in the agent's workspace and attach them to messages or task results.",
-        configurable: false,
+        configurable: true,
     },
     BuiltinSpec {
         id: "identity",
         display_name: "identity",
         description: "Read and update the agent's own identity attributes — name, persona, preferences.",
-        configurable: false,
+        configurable: true,
     },
     BuiltinSpec {
         id: "memory",
         display_name: "memory",
         description: "Store long-term memories about the user and the agent that persist across chats.",
-        configurable: false,
+        configurable: true,
     },
     BuiltinSpec {
         id: "agent",
         display_name: "agent",
         description: "Create new agents. Only available to the system agent.",
-        configurable: false,
+        configurable: true,
     },
     BuiltinSpec {
         id: "task",
