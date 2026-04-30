@@ -692,7 +692,7 @@ function McpServerPage() {
                   <div className="divide-y divide-border -my-1">
                   {allCustomKeys.map((key) => {
                     const grant = activeGrants.find((g) => g.query === key);
-                    const pending = !grant && pendingCreds.find((p) => p.query === key);
+                    const pending = !grant ? pendingCreds.find((p) => p.query === key) : undefined;
                     const isCred = !!grant || !!pending;
                     return (
                     <div key={key} className="flex items-start gap-2 py-3">
