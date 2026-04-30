@@ -5,7 +5,46 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { api } from "@/lib/api-client";
 import { useNavigation } from "@/lib/navigation-context";
-import type { Agent } from "@/lib/types";
+import type { Agent, SandboxLimits, SandboxPolicy } from "@/lib/types";
+
+/** Legacy "merged" shape the SandboxSection still edits. We project it from
+ *  the agent's `sandbox_policy` (Cedar-evaluated) + `sandbox_limits` on load,
+ *  and split it back into `{ sandbox_policy, sandbox_limits }` on save. */
+interface SandboxFormShape {
+  network_access: boolean;
+  allowed_network_destinations: string[];
+  timeout_secs?: number;
+  max_cpu_pct?: number;
+  max_memory_pct?: number;
+  shared_paths: string[];
+}
+
+function fromAgent(agent: Agent): SandboxFormShape {
+  const p = agent.sandbox_policy ?? {};
+  const l = agent.sandbox_limits;
+  return {
+    network_access: p.network_access ?? true,
+    allowed_network_destinations: p.network_destinations ?? [],
+    shared_paths: [...new Set([...(p.read_paths ?? []), ...(p.write_paths ?? [])])],
+    max_cpu_pct: l?.max_cpu_pct,
+    max_memory_pct: l?.max_memory_pct,
+    timeout_secs: l?.timeout_secs,
+  };
+}
+
+function toRequest(s: SandboxFormShape): { sandbox_policy: SandboxPolicy; sandbox_limits?: SandboxLimits } {
+  const sandbox_policy: SandboxPolicy = {
+    network_access: s.network_access,
+    network_destinations: s.allowed_network_destinations.filter(Boolean),
+    read_paths: s.shared_paths.filter(Boolean),
+    write_paths: s.shared_paths.filter(Boolean),
+  };
+  const limits =
+    s.max_cpu_pct !== undefined && s.max_memory_pct !== undefined && s.timeout_secs !== undefined
+      ? { max_cpu_pct: s.max_cpu_pct, max_memory_pct: s.max_memory_pct, timeout_secs: s.timeout_secs }
+      : undefined;
+  return { sandbox_policy, sandbox_limits: limits };
+}
 import { agentDisplayName } from "@/lib/types";
 import { ProfileSection } from "@/components/agents/configure/profile-section";
 import { InstructionsSection } from "@/components/agents/configure/instructions-section";
@@ -71,12 +110,19 @@ function AgentSettings() {
     setSaving(true);
     setError(null);
     try {
-      const payload = { ...patch };
+      const payload: Record<string, unknown> = { ...patch };
       if (typeof payload.prompt === "string" && payload.prompt === agent.default_prompt) {
         payload.prompt = null;
       }
       if (payload.skills === null) {
         payload.skills = ["*"];
+      }
+      if (payload.sandbox_form !== undefined) {
+        const form = payload.sandbox_form as SandboxFormShape;
+        const split = toRequest(form);
+        payload.sandbox_policy = split.sandbox_policy;
+        if (split.sandbox_limits) payload.sandbox_limits = split.sandbox_limits;
+        delete payload.sandbox_form;
       }
       const updated = await api.put<Agent>(`/api/agents/${agentId}`, payload);
       setAgent(updated);
@@ -211,8 +257,8 @@ function AgentSettings() {
             )}
             {activeSection === "sandbox" && (
               <SandboxSection
-                sandbox={merged.sandbox_config as { network_access: boolean; allowed_network_destinations: string[]; timeout_secs: number; shared_paths: string[] } | null}
-                onChange={(v) => update({ sandbox_config: v })}
+                sandbox={(patch.sandbox_form as SandboxFormShape | undefined) ?? fromAgent(merged)}
+                onChange={(v) => update({ sandbox_form: v })}
                 onValidChange={setSandboxValid}
               />
             )}

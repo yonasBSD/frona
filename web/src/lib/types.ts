@@ -29,6 +29,22 @@ export interface SsoStatus {
   disable_local_auth: boolean;
 }
 
+export interface SandboxPolicy {
+  read_paths?: string[];
+  write_paths?: string[];
+  network_access?: boolean;
+  network_destinations?: string[];
+  bind_ports?: number[];
+  denied_paths?: string[];
+  blocked_networks?: string[];
+}
+
+export interface SandboxLimits {
+  max_cpu_pct: number;
+  max_memory_pct: number;
+  timeout_secs: number;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -39,11 +55,9 @@ export interface Agent {
   skills: string[];
   avatar: string | null;
   identity: Record<string, string>;
-  sandbox_config: {
-    network_access: boolean;
-    allowed_network_destinations: string[];
-    timeout_secs: number;
-  } | null;
+  /** Evaluated sandbox access — read-only on responses. */
+  sandbox_policy: SandboxPolicy;
+  sandbox_limits: SandboxLimits | null;
   prompt: string | null;
   default_prompt: string;
   is_shared: boolean;
@@ -58,6 +72,9 @@ export interface CreateAgentRequest {
   model_group?: string;
   tools?: string[];
   skills?: string[];
+  /** Sent on create; materialized into Cedar policies server-side. */
+  sandbox_policy?: SandboxPolicy;
+  sandbox_limits?: SandboxLimits;
 }
 
 export interface UpdateAgentRequest {
@@ -67,6 +84,9 @@ export interface UpdateAgentRequest {
   enabled?: boolean;
   tools?: string[];
   skills?: string[];
+  /** When set, re-materializes Cedar policies for this agent. */
+  sandbox_policy?: SandboxPolicy;
+  sandbox_limits?: SandboxLimits;
 }
 
 export interface SpaceResponse {

@@ -27,8 +27,6 @@ interface McpServer {
   command: string;
   args: string[];
   tool_count: number;
-  extra_read_paths: string[];
-  extra_write_paths: string[];
   installed_at: string;
   last_started_at: string | null;
 }

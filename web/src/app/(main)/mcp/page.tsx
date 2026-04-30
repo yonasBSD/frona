@@ -26,8 +26,12 @@ interface McpServer {
     { Http: { args: string[]; env: Record<string, string>; port_env_var: string | null; endpoint_path: string | null; url: string | null } }
   >;
   env: Record<string, string>;
-  extra_read_paths: string[];
-  extra_write_paths: string[];
+  sandbox_policy: {
+    network_access?: boolean;
+    network_destinations?: string[];
+    read_paths?: string[];
+    write_paths?: string[];
+  };
   installed_at: string;
   last_started_at: string | null;
 }
@@ -174,9 +178,14 @@ function McpServerPage() {
       setDescription(s.description ?? "");
       setEnvValues(s.env ?? {});
       setSandboxConfig({
-        network_access: true,
-        allowed_network_destinations: [],
-        shared_paths: [...s.extra_read_paths, ...s.extra_write_paths],
+        network_access: s.sandbox_policy.network_access ?? true,
+        allowed_network_destinations: s.sandbox_policy.network_destinations ?? [],
+        shared_paths: [
+          ...new Set([
+            ...(s.sandbox_policy.read_paths ?? []),
+            ...(s.sandbox_policy.write_paths ?? []),
+          ]),
+        ],
       });
       setEnvDefsByTransport(byTransport);
       setVaultConnections(connMap);
@@ -265,8 +274,14 @@ function McpServerPage() {
       await api.patch(`/api/mcp/servers/${serverId}`, {
         description: description !== (server.description ?? "") ? description : undefined,
         extra_env: Object.keys(extra_env).length > 0 ? extra_env : undefined,
-        extra_read_paths: sandboxConfig?.shared_paths,
-        extra_write_paths: [],
+        sandbox_policy: sandboxConfig
+          ? {
+              network_access: sandboxConfig.network_access,
+              network_destinations: sandboxConfig.allowed_network_destinations.filter(Boolean),
+              read_paths: (sandboxConfig.shared_paths ?? []).filter(Boolean),
+              write_paths: (sandboxConfig.shared_paths ?? []).filter(Boolean),
+            }
+          : undefined,
       });
       for (const id of deletedGrantIds) {
         await api.delete(`/api/vaults/grants/${id}`);

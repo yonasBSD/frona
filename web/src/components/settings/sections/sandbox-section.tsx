@@ -92,8 +92,8 @@ export function SandboxSettingsSection({ sandbox, onChange }: SandboxSettingsSec
             <div className="flex items-center gap-3">
               <input
                 type="number"
-                value={sandbox.max_agent_cpu_pct}
-                onChange={(e) => onChange({ ...sandbox, max_agent_cpu_pct: Number(e.target.value) })}
+                value={sandbox.max_cpu_pct}
+                onChange={(e) => onChange({ ...sandbox, max_cpu_pct: Number(e.target.value) })}
                 min={1}
                 max={100}
                 placeholder="80"
@@ -101,7 +101,7 @@ export function SandboxSettingsSection({ sandbox, onChange }: SandboxSettingsSec
               />
               {sysInfo && (
                 <span className="text-xs text-text-tertiary">
-                  {parseFloat(((sandbox.max_agent_cpu_pct / 100) * sysInfo.cpus).toFixed(1))} of {sysInfo.cpus} cores
+                  {parseFloat(((sandbox.max_cpu_pct / 100) * sysInfo.cpus).toFixed(1))} of {sysInfo.cpus} cores
                 </span>
               )}
             </div>
@@ -131,8 +131,8 @@ export function SandboxSettingsSection({ sandbox, onChange }: SandboxSettingsSec
             <div className="flex items-center gap-3">
               <input
                 type="number"
-                value={sandbox.max_agent_memory_pct}
-                onChange={(e) => onChange({ ...sandbox, max_agent_memory_pct: Number(e.target.value) })}
+                value={sandbox.max_memory_pct}
+                onChange={(e) => onChange({ ...sandbox, max_memory_pct: Number(e.target.value) })}
                 min={1}
                 max={100}
                 placeholder="80"
@@ -140,7 +140,7 @@ export function SandboxSettingsSection({ sandbox, onChange }: SandboxSettingsSec
               />
               {sysInfo && (
                 <span className="text-xs text-text-tertiary">
-                  {formatBytes((sandbox.max_agent_memory_pct / 100) * sysInfo.total_memory_bytes)} of {formatBytes(sysInfo.total_memory_bytes)}
+                  {formatBytes((sandbox.max_memory_pct / 100) * sysInfo.total_memory_bytes)} of {formatBytes(sysInfo.total_memory_bytes)}
                 </span>
               )}
             </div>

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api-client";
-import { getConfig, type ServerConfig } from "@/lib/config-types";
+import { getConfig, type SandboxConfig } from "@/lib/config-types";
 import { SectionHeader, SectionPanel, Toggle, Field, HelpTip } from "@/components/settings/field";
 import { ShieldCheckIcon, TrashIcon, PlusIcon, FolderOpenIcon } from "@heroicons/react/24/outline";
 import { FileBrowserModal } from "@/components/chat/file-browser-modal";
@@ -53,11 +53,11 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
   const { user } = useAuth();
   const current = sandbox ?? DEFAULT_SANDBOX;
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
-  const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
+  const [serverConfig, setServerConfig] = useState<SandboxConfig | null>(null);
 
   useEffect(() => {
     api.get<SystemInfo>("/api/system/info").then(setSysInfo).catch(() => {});
-    getConfig().then((c) => setServerConfig(c.server)).catch(() => {});
+    getConfig().then((c) => setServerConfig(c.sandbox)).catch(() => {});
   }, []);
 
   const driver = sysInfo?.sandbox_driver ?? "disabled";
@@ -142,12 +142,12 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
                 }}
                 min={1}
                 max={100}
-                placeholder={serverConfig ? String(serverConfig.sandbox_max_agent_memory_pct) : ""}
+                placeholder={serverConfig ? String(serverConfig.max_memory_pct) : ""}
                 className="block w-24 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
               />
               {sysInfo && serverConfig && (
                 <span className="text-xs text-text-tertiary">
-                  {formatBytes(((current.max_memory_pct ?? serverConfig.sandbox_max_agent_memory_pct) / 100) * sysInfo.total_memory_bytes)} of {formatBytes(sysInfo.total_memory_bytes)}
+                  {formatBytes(((current.max_memory_pct ?? serverConfig.max_memory_pct) / 100) * sysInfo.total_memory_bytes)} of {formatBytes(sysInfo.total_memory_bytes)}
                 </span>
               )}
             </div>
@@ -163,12 +163,12 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
                 }}
                 min={1}
                 max={100}
-                placeholder={serverConfig ? String(serverConfig.sandbox_max_agent_cpu_pct) : ""}
+                placeholder={serverConfig ? String(serverConfig.max_cpu_pct) : ""}
                 className="block w-24 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
               />
               {sysInfo && serverConfig && (
                 <span className="text-xs text-text-tertiary">
-                  {parseFloat((((current.max_cpu_pct ?? serverConfig.sandbox_max_agent_cpu_pct) / 100) * sysInfo.cpus).toFixed(1))} of {sysInfo.cpus} cores
+                  {parseFloat((((current.max_cpu_pct ?? serverConfig.max_cpu_pct) / 100) * sysInfo.cpus).toFixed(1))} of {sysInfo.cpus} cores
                 </span>
               )}
             </div>
@@ -184,7 +184,7 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
             }}
             min={0}
             max={300}
-            placeholder={serverConfig ? String(serverConfig.sandbox_timeout_secs) : ""}
+            placeholder={serverConfig ? String(serverConfig.timeout_secs) : ""}
             className="block w-24 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
           />
         </Field>

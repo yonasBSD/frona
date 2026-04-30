@@ -17,11 +17,13 @@ export interface ServerConfig {
 
 export interface SandboxConfig {
   disabled: boolean;
-  max_agent_cpu_pct: number;
-  max_agent_memory_pct: number;
+  /** Flattened from `default_limits: SandboxLimits` server-side, so the
+      JSON shape stays one level deep. */
+  max_cpu_pct: number;
+  max_memory_pct: number;
+  timeout_secs: number;
   max_total_cpu_pct: number;
   max_total_memory_pct: number;
-  timeout_secs: number;
   default_network_access: boolean;
 }
 
