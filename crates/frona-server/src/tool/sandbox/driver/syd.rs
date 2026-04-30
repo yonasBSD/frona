@@ -244,11 +244,17 @@ impl SydArgsBuilder {
             self.args.push("-m".into());
             self.args.push("sandbox/net:on".into());
 
-            // Allow ephemeral port binding (port 0) for outbound connections
+            // Allow ephemeral port binding (port 0) for outbound connections.
             self.args.push("-m".into());
             self.args.push("allow/net/bind+0.0.0.0/0!0".into());
             self.args.push("-m".into());
             self.args.push("allow/net/bind+::/0!0".into());
+            // Allow unnamed unix socketpairs — glibc's DNS resolver opens one
+            // to talk to nscd / systemd-resolved before reaching the network.
+            // Without this, getaddrinfo() fails with "thread failed to start"
+            // and even allowed destinations can't be resolved.
+            self.args.push("-m".into());
+            self.args.push("allow/net/bind+!unnamed".into());
 
             for ip in dns_servers {
                 let cidr = if ip.is_ipv4() { 32 } else { 128 };
@@ -409,6 +415,8 @@ mod tests {
         // Ephemeral bind always allowed when destinations are set
         assert!(args.contains(&"allow/net/bind+0.0.0.0/0!0".to_string()));
         assert!(args.contains(&"allow/net/bind+::/0!0".to_string()));
+        // Unnamed unix socketpair (used by glibc DNS resolver IPC).
+        assert!(args.contains(&"allow/net/bind+!unnamed".to_string()));
     }
 
     #[test]
