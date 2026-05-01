@@ -5,14 +5,19 @@ import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api-client";
 import { getConfig, type SandboxConfig } from "@/lib/config-types";
 import { SectionHeader, SectionPanel, Toggle, Field, HelpTip } from "@/components/settings/field";
-import { ShieldCheckIcon, TrashIcon, PlusIcon, FolderOpenIcon } from "@heroicons/react/24/outline";
+import { ShieldCheckIcon, TrashIcon, PlusIcon, FolderOpenIcon, UserIcon, CpuChipIcon } from "@heroicons/react/24/outline";
 import { FileBrowserModal } from "@/components/chat/file-browser-modal";
-import type { Attachment } from "@/lib/types";
+import type { Agent, Attachment } from "@/lib/types";
 
 interface SystemInfo {
   cpus: number;
   total_memory_bytes: number;
   sandbox_driver: string;
+}
+
+interface SharedPath {
+  path: string;
+  write: boolean;
 }
 
 interface SandboxSettings {
@@ -21,7 +26,7 @@ interface SandboxSettings {
   timeout_secs?: number;
   max_cpu_pct?: number;
   max_memory_pct?: number;
-  shared_paths: string[];
+  shared_paths: SharedPath[];
 }
 
 interface SandboxSectionProps {
@@ -41,6 +46,26 @@ function formatBytes(bytes: number): string {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1_048_576).toFixed(0)} MB`;
 }
 
+type Virtual = { kind: "user" | "agent"; owner: string; relative: string };
+
+function parseVirtual(path: string): Virtual | null {
+  for (const kind of ["user", "agent"] as const) {
+    const prefix = `${kind}://`;
+    if (path.startsWith(prefix)) {
+      const rest = path.slice(prefix.length);
+      const slash = rest.indexOf("/");
+      const owner = slash === -1 ? rest : rest.slice(0, slash);
+      const relative = slash === -1 ? "" : rest.slice(slash + 1);
+      return { kind, owner, relative };
+    }
+  }
+  return null;
+}
+
+function buildVirtual(v: Virtual): string {
+  return `${v.kind}://${v.owner}/${v.relative}`;
+}
+
 function isValidDest(value: string): boolean {
   if (!value) return true;
   const hostname = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
@@ -54,11 +79,16 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
   const current = sandbox ?? DEFAULT_SANDBOX;
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
   const [serverConfig, setServerConfig] = useState<SandboxConfig | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
     api.get<SystemInfo>("/api/system/info").then(setSysInfo).catch(() => {});
     getConfig().then((c) => setServerConfig(c.sandbox)).catch(() => {});
+    api.get<Agent[]>("/api/agents").then(setAgents).catch(() => {});
   }, []);
+
+  const agentNameById = (id: string): string =>
+    agents.find((a) => a.id === id)?.name ?? id;
 
   const driver = sysInfo?.sandbox_driver ?? "disabled";
   const supportsNetworkDestinations = driver === "macos" || driver === "syd";
@@ -92,7 +122,21 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
 
   const updateSharedPath = (index: number, value: string) => {
     const updated = [...current.shared_paths];
-    updated[index] = value;
+    updated[index] = { ...updated[index], path: value };
+    onChange({ ...current, shared_paths: updated });
+  };
+
+  const updateSharedRelative = (index: number, relative: string) => {
+    const entry = current.shared_paths[index];
+    const v = parseVirtual(entry.path);
+    if (!v) return;
+    const next = buildVirtual({ ...v, relative: relative.replace(/^\/+/, "") });
+    updateSharedPath(index, next);
+  };
+
+  const toggleSharedWrite = (index: number, write: boolean) => {
+    const updated = [...current.shared_paths];
+    updated[index] = { ...updated[index], write };
     onChange({ ...current, shared_paths: updated });
   };
 
@@ -106,7 +150,7 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
   const addSharedPath = () => {
     onChange({
       ...current,
-      shared_paths: [...current.shared_paths, ""],
+      shared_paths: [...current.shared_paths, { path: "", write: false }],
     });
   };
 
@@ -118,9 +162,12 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
       if (kind === "agent") return `agent://${id}/${a.path}`;
       return `user://${user?.username ?? id}/${a.path}`;
     });
-    const unique = paths.filter((p) => !current.shared_paths.includes(p));
-    if (unique.length > 0) {
-      onChange({ ...current, shared_paths: [...current.shared_paths, ...unique] });
+    const existingPaths = new Set(current.shared_paths.map((e) => e.path));
+    const additions = paths
+      .filter((p) => !existingPaths.has(p))
+      .map((path) => ({ path, write: false }));
+    if (additions.length > 0) {
+      onChange({ ...current, shared_paths: [...current.shared_paths, ...additions] });
     }
     setBrowseOpen(false);
   };
@@ -235,25 +282,62 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
       )}
 
       {sandboxEnabled && (
-        <SectionPanel title="Shared Files" helpTip="Files or directories the agent can always read inside the sandbox">
+        <SectionPanel title="Shared Files" helpTip="Files or directories the agent can read inside the sandbox. Toggle Write to also grant write access.">
           <div className="space-y-1">
             <div className="grid grid-cols-2 gap-2">
-              {current.shared_paths.map((p, i) => (
-                <div key={i} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1.5">
-                  <input
-                    value={p}
-                    onChange={(e) => updateSharedPath(i, e.target.value)}
-                    placeholder="e.g. /data/shared"
-                    className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
-                  />
-                  <button
-                    onClick={() => removeSharedPath(i)}
-                    className="shrink-0 rounded p-0.5 text-text-tertiary hover:text-text-primary transition"
-                  >
-                    <TrashIcon className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
+              {current.shared_paths.map((entry, i) => {
+                const v = parseVirtual(entry.path);
+                const ownerLabel = v
+                  ? v.kind === "agent"
+                    ? agentNameById(v.owner)
+                    : v.owner
+                  : null;
+                const OwnerIcon = v?.kind === "agent" ? CpuChipIcon : UserIcon;
+                return (
+                  <div key={i} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1.5">
+                    {v ? (
+                      <>
+                        <span
+                          className="flex shrink-0 items-center gap-1 rounded bg-surface-tertiary px-1.5 py-0.5 text-xs text-text-secondary"
+                          title={`${v.kind}://${v.owner}/`}
+                        >
+                          <OwnerIcon className="h-3 w-3" />
+                          {ownerLabel}
+                        </span>
+                        <span className="text-text-tertiary text-sm select-none">/</span>
+                        <input
+                          value={v.relative}
+                          onChange={(e) => updateSharedRelative(i, e.target.value)}
+                          placeholder="path/within"
+                          className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+                        />
+                      </>
+                    ) : (
+                      <input
+                        value={entry.path}
+                        onChange={(e) => updateSharedPath(i, e.target.value)}
+                        placeholder="e.g. /data/shared"
+                        className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+                      />
+                    )}
+                    <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-text-secondary select-none">
+                      <input
+                        type="checkbox"
+                        checked={entry.write}
+                        onChange={(e) => toggleSharedWrite(i, e.target.checked)}
+                        className="h-3.5 w-3.5 accent-accent"
+                      />
+                      Write
+                    </label>
+                    <button
+                      onClick={() => removeSharedPath(i)}
+                      className="shrink-0 rounded p-0.5 text-text-tertiary hover:text-text-primary transition"
+                    >
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
             <div className="flex items-center gap-3 mt-2">
               <button
@@ -280,6 +364,8 @@ export function SandboxSection({ sandbox, onChange, onValidChange }: SandboxSect
           open={browseOpen}
           onClose={() => setBrowseOpen(false)}
           onSelect={handleBrowseSelect}
+          allowFolders
+          confirmLabel="Select"
         />
       )}
     </div>

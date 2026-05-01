@@ -236,6 +236,51 @@
   height: auto !important;
 }
 
+/* Modal context: SVAR wraps .wx-content-wrapper in two spans and uses many
+   non-flex intermediate divs, so the height chain doesn't reach .wx-scroll
+   on its own. Collapse the spans with display:contents and force every
+   level into a flex column so .wx-scroll can be the sole bounded scroller. */
+.filemanager-container.filemanager-modal,
+.filemanager-container.filemanager-modal > .wx-theme,
+.filemanager-container.filemanager-modal .wx-filemanager {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 !important;
+  min-height: 0 !important;
+  height: 100% !important;
+}
+.filemanager-container.filemanager-modal .wx-filemanager > span,
+.filemanager-container.filemanager-modal .wx-filemanager > span > span {
+  display: contents !important;
+}
+.filemanager-container.filemanager-modal .wx-content {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+  height: auto !important;
+}
+.filemanager-container.filemanager-modal .wx-content-item-fit,
+.filemanager-container.filemanager-modal .wx-content .wx-wrapper,
+.filemanager-container.filemanager-modal .wx-list,
+.filemanager-container.filemanager-modal .wx-upload-area,
+.filemanager-container.filemanager-modal .wx-grid,
+.filemanager-container.filemanager-modal .wx-table-box {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 !important;
+  min-height: 0 !important;
+  height: auto !important;
+}
+.filemanager-container.filemanager-modal .wx-scroll {
+  flex: 1 !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+}
+.filemanager-container.filemanager-modal .wx-body {
+  height: auto !important;
+  overflow: visible !important;
+}
+
 /* Padding on the file details/content panel */
 .filemanager-container .wx-content {
   padding: 8px 12px !important;

@@ -114,7 +114,7 @@ function McpServerPage() {
   const [sandboxConfig, setSandboxConfig] = useState<{
     network_access: boolean;
     allowed_network_destinations: string[];
-    shared_paths: string[];
+    shared_paths: { path: string; write: boolean }[];
   } | null>(null);
 
   const reload = useCallback(async () => {
@@ -177,16 +177,22 @@ function McpServerPage() {
       setServer(s);
       setDescription(s.description ?? "");
       setEnvValues(s.env ?? {});
-      setSandboxConfig({
-        network_access: s.sandbox_policy.network_access ?? true,
-        allowed_network_destinations: s.sandbox_policy.network_destinations ?? [],
-        shared_paths: [
-          ...new Set([
-            ...(s.sandbox_policy.read_paths ?? []),
-            ...(s.sandbox_policy.write_paths ?? []),
-          ]),
-        ],
-      });
+      {
+        const reads = s.sandbox_policy.read_paths ?? [];
+        const writes = new Set(s.sandbox_policy.write_paths ?? []);
+        const seen = new Set<string>();
+        const shared_paths: { path: string; write: boolean }[] = [];
+        for (const path of [...reads, ...(s.sandbox_policy.write_paths ?? [])]) {
+          if (seen.has(path)) continue;
+          seen.add(path);
+          shared_paths.push({ path, write: writes.has(path) });
+        }
+        setSandboxConfig({
+          network_access: s.sandbox_policy.network_access ?? true,
+          allowed_network_destinations: s.sandbox_policy.network_destinations ?? [],
+          shared_paths,
+        });
+      }
       setEnvDefsByTransport(byTransport);
       setVaultConnections(connMap);
       setVaultGrants(resolvedVaultGrants);
@@ -275,12 +281,15 @@ function McpServerPage() {
         description: description !== (server.description ?? "") ? description : undefined,
         extra_env: Object.keys(extra_env).length > 0 ? extra_env : undefined,
         sandbox_policy: sandboxConfig
-          ? {
-              network_access: sandboxConfig.network_access,
-              network_destinations: sandboxConfig.allowed_network_destinations.filter(Boolean),
-              read_paths: (sandboxConfig.shared_paths ?? []).filter(Boolean),
-              write_paths: (sandboxConfig.shared_paths ?? []).filter(Boolean),
-            }
+          ? (() => {
+              const entries = (sandboxConfig.shared_paths ?? []).filter((e) => e.path);
+              return {
+                network_access: sandboxConfig.network_access,
+                network_destinations: sandboxConfig.allowed_network_destinations.filter(Boolean),
+                read_paths: entries.map((e) => e.path),
+                write_paths: entries.filter((e) => e.write).map((e) => e.path),
+              };
+            })()
           : undefined,
       });
       for (const id of deletedGrantIds) {

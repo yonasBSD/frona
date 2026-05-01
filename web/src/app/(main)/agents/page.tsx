@@ -9,23 +9,40 @@ import type { Agent, SandboxLimits, SandboxPolicy } from "@/lib/types";
 
 /** Legacy "merged" shape the SandboxSection still edits. We project it from
  *  the agent's `sandbox_policy` (Cedar-evaluated) + `sandbox_limits` on load,
- *  and split it back into `{ sandbox_policy, sandbox_limits }` on save. */
+ *  and split it back into `{ sandbox_policy, sandbox_limits }` on save.
+ *
+ *  `shared_paths` carries an explicit per-entry write flag so users can grant
+ *  read-only or read-write access independently. */
+interface SharedPath {
+  path: string;
+  write: boolean;
+}
+
 interface SandboxFormShape {
   network_access: boolean;
   allowed_network_destinations: string[];
   timeout_secs?: number;
   max_cpu_pct?: number;
   max_memory_pct?: number;
-  shared_paths: string[];
+  shared_paths: SharedPath[];
 }
 
 function fromAgent(agent: Agent): SandboxFormShape {
   const p = agent.sandbox_policy ?? {};
   const l = agent.sandbox_limits;
+  const reads = p.read_paths ?? [];
+  const writes = new Set(p.write_paths ?? []);
+  const seen = new Set<string>();
+  const shared_paths: SharedPath[] = [];
+  for (const path of [...reads, ...(p.write_paths ?? [])]) {
+    if (seen.has(path)) continue;
+    seen.add(path);
+    shared_paths.push({ path, write: writes.has(path) });
+  }
   return {
     network_access: p.network_access ?? true,
     allowed_network_destinations: p.network_destinations ?? [],
-    shared_paths: [...new Set([...(p.read_paths ?? []), ...(p.write_paths ?? [])])],
+    shared_paths,
     max_cpu_pct: l?.max_cpu_pct,
     max_memory_pct: l?.max_memory_pct,
     timeout_secs: l?.timeout_secs,
@@ -33,11 +50,12 @@ function fromAgent(agent: Agent): SandboxFormShape {
 }
 
 function toRequest(s: SandboxFormShape): { sandbox_policy: SandboxPolicy; sandbox_limits?: SandboxLimits } {
+  const entries = s.shared_paths.filter((e) => e.path);
   const sandbox_policy: SandboxPolicy = {
     network_access: s.network_access,
     network_destinations: s.allowed_network_destinations.filter(Boolean),
-    read_paths: s.shared_paths.filter(Boolean),
-    write_paths: s.shared_paths.filter(Boolean),
+    read_paths: entries.map((e) => e.path),
+    write_paths: entries.filter((e) => e.write).map((e) => e.path),
   };
   const limits =
     s.max_cpu_pct !== undefined && s.max_memory_pct !== undefined && s.timeout_secs !== undefined

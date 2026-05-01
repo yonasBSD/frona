@@ -31,9 +31,15 @@ interface FileBrowserModalProps {
   open: boolean;
   onClose: () => void;
   onSelect: (attachments: Attachment[]) => void;
+  /** Include folder selections in the result. Off by default (chat
+   *  attachments are file-only); the sandbox Shared Files picker turns this
+   *  on so users can grant access to whole directories. */
+  allowFolders?: boolean;
+  /** Label for the confirm button. Defaults to "Attach" for chat composer. */
+  confirmLabel?: string;
 }
 
-export function FileBrowserModal({ open, onClose, onSelect }: FileBrowserModalProps) {
+export function FileBrowserModal({ open, onClose, onSelect, allowFolders = false, confirmLabel = "Attach" }: FileBrowserModalProps) {
   const { user } = useAuth();
   const { resolved } = useTheme();
 
@@ -169,7 +175,9 @@ export function FileBrowserModal({ open, onClose, onSelect }: FileBrowserModalPr
     const attachments: Attachment[] = [];
     for (const id of selectedIds) {
       const file = api.getFile(id);
-      if (!file || file.type === "folder") continue;
+      if (!file) continue;
+      const isFolder = file.type === "folder";
+      if (isFolder && !allowFolders) continue;
 
       const info = getFileOwnerPath(id, user.id, agentsRef.current);
       if (!info) continue;
@@ -177,7 +185,7 @@ export function FileBrowserModal({ open, onClose, onSelect }: FileBrowserModalPr
       const filename = id.split("/").pop() || "file";
       attachments.push({
         filename,
-        content_type: detectContentType(filename),
+        content_type: isFolder ? "inode/directory" : detectContentType(filename),
         size_bytes: file.size ?? 0,
         owner: info.owner,
         path: info.path,
@@ -217,11 +225,11 @@ export function FileBrowserModal({ open, onClose, onSelect }: FileBrowserModalPr
               disabled={selectedCount === 0}
               className="w-28 py-1.5 text-sm font-medium rounded-md bg-accent text-surface hover:bg-accent-hover disabled:opacity-30 transition text-center"
             >
-              Attach{selectedCount > 0 ? ` (${selectedCount})` : ""}
+              {confirmLabel}{selectedCount > 0 ? ` (${selectedCount})` : ""}
             </button>
           </div>
         </div>
-        <div className="flex-1 min-h-0 filemanager-container">
+        <div className="flex-1 min-h-0 filemanager-container filemanager-modal">
           {loading && data.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <p className="text-sm text-text-tertiary">Loading files...</p>
