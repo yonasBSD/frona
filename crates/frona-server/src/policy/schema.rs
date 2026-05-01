@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn schema_validates_app_principal() {
         let schema = build_schema();
-        let text = r#"permit(principal == Policy::App::"x", action == Policy::Action::"read", resource == Policy::Directory::"/data");"#;
+        let text = r#"permit(principal == Policy::App::"x", action == Policy::Action::"read", resource == Policy::Path::"/data");"#;
         let policy_set = cedar_policy::PolicySet::from_str(text).expect("parse");
         let validator = cedar_policy::Validator::new((*schema).clone());
         let result = validator.validate(&policy_set, cedar_policy::ValidationMode::default());

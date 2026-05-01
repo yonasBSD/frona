@@ -19,7 +19,7 @@ pub(crate) async fn rename_user_file(
 ) -> Result<(), ApiError> {
     let trimmed = req.path.trim_start_matches('/');
     let vpath = VirtualPath::user(&auth.username, trimmed);
-    let resolved = state.storage_service.resolve(&vpath)?;
+    let resolved = state.storage_service.resolve_virtual_path(&vpath)?;
 
     if !resolved.exists() {
         return Err(ApiError(AppError::NotFound(
@@ -67,14 +67,14 @@ fn resolve_file_virtual_path(
             )));
         }
         let vpath = VirtualPath::parse(path)?;
-        storage.resolve(&vpath).map_err(ApiError)
+        storage.resolve_virtual_path(&vpath).map_err(ApiError)
     } else if path.starts_with("agent://") {
         let vpath = VirtualPath::parse(path)?;
-        storage.resolve(&vpath).map_err(ApiError)
+        storage.resolve_virtual_path(&vpath).map_err(ApiError)
     } else {
         let trimmed = path.trim_start_matches('/');
         let vpath = VirtualPath::user(&auth.username, trimmed);
-        storage.resolve(&vpath).map_err(ApiError)
+        storage.resolve_virtual_path(&vpath).map_err(ApiError)
     }
 }
 
@@ -207,7 +207,7 @@ pub(crate) async fn create_user_folder(
     validate_relative_path(trimmed)?;
 
     let vpath = VirtualPath::user(&auth.username, trimmed);
-    let resolved = state.storage_service.resolve(&vpath)?;
+    let resolved = state.storage_service.resolve_virtual_path(&vpath)?;
 
     fs::create_dir_all(&resolved)
         .await

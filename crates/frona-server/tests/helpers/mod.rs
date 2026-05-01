@@ -20,7 +20,8 @@ pub fn test_policy_service(db: &Surreal<Db>) -> PolicyService {
     let repo: Arc<dyn frona::policy::repository::PolicyRepository> =
         Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
     let tool_manager = Arc::new(ToolManager::new(false));
-    PolicyService::new(repo, schema, tool_manager)
+    let storage = frona::storage::StorageService::new(&frona::core::config::Config::default());
+    PolicyService::new(repo, schema, tool_manager, storage)
 }
 use rig::completion::request::ToolDefinition as RigToolDefinition;
 use rig::completion::{AssistantContent, Message as RigMessage};

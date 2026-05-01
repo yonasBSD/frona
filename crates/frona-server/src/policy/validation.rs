@@ -31,7 +31,7 @@ pub fn validate_entities(
     let tool_group_type = entity_type_name("ToolGroup");
     let tool_type = entity_type_name("Tool");
     let action_type = entity_type_name("Action");
-    let directory_type = entity_type_name("Directory");
+    let path_type = entity_type_name("Path");
     let network_dest_type = entity_type_name("NetworkDestination");
 
     let tool_ids: Vec<&str> = tool_definitions.iter().map(|d| d.id.as_str()).collect();
@@ -57,11 +57,11 @@ pub fn validate_entities(
                         uid.id().unescaped()
                     ));
                 }
-                if uid.type_name() == &directory_type {
-                    let path = uid.id().unescaped();
-                    if !path.starts_with('/') {
+                if uid.type_name() == &path_type {
+                    let raw = uid.id().unescaped();
+                    if !is_valid_policy_path(raw) {
                         warnings.push(format!(
-                            "Directory '{path}' must be an absolute path (start with /)"
+                            "Path '{raw}' must be an absolute path (start with /) or a virtual path (user://name/... or agent://id/...)"
                         ));
                     }
                 }
@@ -89,6 +89,13 @@ pub fn validate_entities(
     }
 
     Ok(warnings)
+}
+
+pub fn is_valid_policy_path(raw: &str) -> bool {
+    if raw.starts_with('/') {
+        return true;
+    }
+    crate::storage::path::VirtualPath::parse(raw).is_ok()
 }
 
 fn is_valid_network_destination(dest: &str) -> bool {
@@ -184,7 +191,7 @@ mod tests {
     #[test]
     fn test_valid_directory() {
         let result = validate_syntax(
-            r#"permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/data");"#,
+            r#"permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/data");"#,
         );
         assert!(result.is_ok());
     }

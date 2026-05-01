@@ -285,7 +285,7 @@ pub async fn resolve_attachment_path(
     };
 
     storage_service
-        .resolve(&vpath)
+        .resolve_virtual_path(&vpath)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| attachment.path.clone())
 }

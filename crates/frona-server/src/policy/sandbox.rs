@@ -1,5 +1,8 @@
 use cedar_policy::{Entities, Entity, PolicySet};
 
+use crate::core::error::AppError;
+use crate::storage::StorageService;
+use crate::storage::path::{Namespace, VirtualPath};
 use crate::tool::sandbox::driver::SandboxConfig;
 
 use super::schema::{action_entity_uid, entity_type_name};
@@ -41,6 +44,79 @@ impl SandboxPolicy {
             ..Self::default()
         }
     }
+
+    /// Validates each entry of `read_paths`, `write_paths`, and `denied_paths`
+    /// against ownership rules, before reconciling into Cedar policies. An
+    /// entry must be either:
+    ///
+    /// - An absolute filesystem path (`/...`).
+    /// - A `user://{name}/...` URI where `name == requester_username`.
+    /// - An `agent://{id}/...` URI where `is_owned_agent(id) == true`.
+    pub fn validate_paths(
+        &self,
+        requester_username: &str,
+        is_owned_agent: impl Fn(&str) -> bool,
+    ) -> Result<(), AppError> {
+        for list in [&self.read_paths, &self.write_paths, &self.denied_paths] {
+            for raw in list {
+                validate_path_entry(raw, requester_username, &is_owned_agent)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Translates `user://...` and `agent://...` entries in `read_paths`,
+    /// `write_paths`, and `denied_paths` into absolute host paths via
+    /// `StorageService`. Absolute paths pass through unchanged. Entries that
+    /// fail to parse or resolve are dropped with a warning.
+    pub fn resolve_virtual_paths(&mut self, storage: &StorageService) {
+        for list in [&mut self.read_paths, &mut self.write_paths, &mut self.denied_paths] {
+            *list = list
+                .iter()
+                .filter_map(|raw| match storage.resolve(raw) {
+                    Ok(p) => Some(p.to_string_lossy().into_owned()),
+                    Err(_) => {
+                        tracing::warn!(path = %raw, "dropping unresolvable sandbox path entry");
+                        None
+                    }
+                })
+                .collect();
+        }
+    }
+}
+
+fn validate_path_entry(
+    raw: &str,
+    requester_username: &str,
+    is_owned_agent: &impl Fn(&str) -> bool,
+) -> Result<(), AppError> {
+    if raw.starts_with('/') {
+        return Ok(());
+    }
+    if raw.starts_with("user://") || raw.starts_with("agent://") {
+        let parsed = VirtualPath::parse(raw)
+            .map_err(|e| AppError::Validation(format!("invalid sandbox path '{raw}': {e}")))?;
+        match &parsed.namespace {
+            Namespace::User(name) => {
+                if name != requester_username {
+                    return Err(AppError::Validation(format!(
+                        "sandbox path '{raw}' references files owned by another user"
+                    )));
+                }
+            }
+            Namespace::Agent(id) => {
+                if !is_owned_agent(id) {
+                    return Err(AppError::Validation(format!(
+                        "sandbox path '{raw}' references an agent you don't own"
+                    )));
+                }
+            }
+        }
+        return Ok(());
+    }
+    Err(AppError::Validation(format!(
+        "sandbox path '{raw}' must be absolute (start with /) or a user:// / agent:// URI"
+    )))
 }
 
 const SANDBOX_ACTIONS: &[(&str, RuleKind)] = &[
@@ -87,7 +163,7 @@ pub fn evaluate_sandbox_policy(
         let action_uid = action_entity_uid(action_name);
 
         let resource_type = match kind {
-            RuleKind::Read | RuleKind::Write => entity_type_name("Directory"),
+            RuleKind::Read | RuleKind::Write => entity_type_name("Path"),
             RuleKind::Connect | RuleKind::Bind => entity_type_name("NetworkDestination"),
         };
 
@@ -310,7 +386,7 @@ mod tests {
     #[test]
     fn test_eval_simple_permit_read() {
         let p = eval(
-            r#"permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/tmp");"#,
+            r#"permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/tmp");"#,
             "a", &[],
         );
         assert!(p.read_paths.contains(&"/tmp".to_string()));
@@ -319,7 +395,7 @@ mod tests {
     #[test]
     fn test_eval_tool_conditional_with_matching_tool() {
         let p = eval(
-            r#"permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/browser-data")
+            r#"permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/browser-data")
                when { principal.tools.contains("browser") };"#,
             "a", &["browser"],
         );
@@ -329,7 +405,7 @@ mod tests {
     #[test]
     fn test_eval_tool_conditional_without_matching_tool() {
         let p = eval(
-            r#"permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/browser-data")
+            r#"permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/browser-data")
                when { principal.tools.contains("browser") };"#,
             "a", &["web_search"],
         );
@@ -338,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_eval_agent_specific() {
-        let policies = r#"permit(principal == Policy::Agent::"a", action == Policy::Action::"write", resource == Policy::Directory::"/a-data");"#;
+        let policies = r#"permit(principal == Policy::Agent::"a", action == Policy::Action::"write", resource == Policy::Path::"/a-data");"#;
         assert!(eval(policies, "a", &[]).write_paths.contains(&"/a-data".to_string()));
         assert!(eval(policies, "b", &[]).write_paths.is_empty());
     }
@@ -346,8 +422,8 @@ mod tests {
     #[test]
     fn test_eval_permit_and_forbid_nested() {
         let p = eval(r#"
-            permit(principal, action == Policy::Action::"write", resource == Policy::Directory::"/workspace");
-            forbid(principal, action == Policy::Action::"write", resource == Policy::Directory::"/workspace/secrets");
+            permit(principal, action == Policy::Action::"write", resource == Policy::Path::"/workspace");
+            forbid(principal, action == Policy::Action::"write", resource == Policy::Path::"/workspace/secrets");
         "#, "a", &[]);
         assert!(p.write_paths.contains(&"/workspace".to_string()));
         assert!(p.denied_paths.contains(&"/workspace/secrets".to_string()));
@@ -379,8 +455,8 @@ mod tests {
     #[test]
     fn test_eval_mixed_tools_multiple_dirs() {
         let policies = r#"
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/shared");
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/browser-data")
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/shared");
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/browser-data")
                 when { principal.tools.contains("browser") };
             permit(principal, action == Policy::Action::"connect", resource == Policy::NetworkDestination::"api.example.com")
                 when { principal.tools.contains("web_search") };
@@ -399,8 +475,8 @@ mod tests {
     #[test]
     fn test_eval_many_agents_isolated() {
         let policies = r#"
-            permit(principal == Policy::Agent::"alice", action == Policy::Action::"write", resource == Policy::Directory::"/alice-home");
-            permit(principal == Policy::Agent::"bob", action == Policy::Action::"write", resource == Policy::Directory::"/bob-home");
+            permit(principal == Policy::Agent::"alice", action == Policy::Action::"write", resource == Policy::Path::"/alice-home");
+            permit(principal == Policy::Agent::"bob", action == Policy::Action::"write", resource == Policy::Path::"/bob-home");
         "#;
         assert_eq!(eval(policies, "alice", &[]).write_paths, vec!["/alice-home"]);
         assert_eq!(eval(policies, "bob", &[]).write_paths, vec!["/bob-home"]);
@@ -412,7 +488,7 @@ mod tests {
     #[test]
     fn test_eval_permit_with_unless() {
         let policies = r#"
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/data")
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/data")
                 unless { principal.tools.contains("restricted") };
         "#;
         assert!(eval(policies, "a", &["browser"]).read_paths.contains(&"/data".to_string()));
@@ -422,7 +498,7 @@ mod tests {
     #[test]
     fn test_eval_multiple_when_conditions() {
         let policies = r#"
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/secure")
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/secure")
                 when { principal.tools.contains("browser") }
                 when { principal.tools.contains("auth") };
         "#;
@@ -433,7 +509,7 @@ mod tests {
     #[test]
     fn test_eval_when_boolean_or() {
         let policies = r#"
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/media")
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/media")
                 when { principal.tools.contains("browser") || principal.tools.contains("player") };
         "#;
         assert!(eval(policies, "a", &["browser"]).read_paths.contains(&"/media".to_string()));
@@ -444,7 +520,7 @@ mod tests {
     #[test]
     fn test_eval_tool_containsall() {
         let policies = r#"
-            permit(principal, action == Policy::Action::"write", resource == Policy::Directory::"/deploy")
+            permit(principal, action == Policy::Action::"write", resource == Policy::Path::"/deploy")
                 when { principal.tools.containsAll(["cli", "deploy"]) };
         "#;
         assert!(eval(policies, "a", &["cli"]).write_paths.is_empty());
@@ -454,7 +530,7 @@ mod tests {
     #[test]
     fn test_eval_tool_containsany() {
         let policies = r#"
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/logs")
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/logs")
                 when { principal.tools.containsAny(["admin_tool", "monitoring"]) };
         "#;
         assert!(eval(policies, "a", &["browser"]).read_paths.is_empty());
@@ -476,10 +552,10 @@ mod tests {
     #[test]
     fn test_eval_multiple_forbids_stack() {
         let p = eval(r#"
-            permit(principal, action == Policy::Action::"write", resource == Policy::Directory::"/workspace");
-            forbid(principal, action == Policy::Action::"write", resource == Policy::Directory::"/workspace/secrets");
-            forbid(principal, action == Policy::Action::"write", resource == Policy::Directory::"/workspace/config");
-            forbid(principal, action == Policy::Action::"write", resource == Policy::Directory::"/workspace/.env");
+            permit(principal, action == Policy::Action::"write", resource == Policy::Path::"/workspace");
+            forbid(principal, action == Policy::Action::"write", resource == Policy::Path::"/workspace/secrets");
+            forbid(principal, action == Policy::Action::"write", resource == Policy::Path::"/workspace/config");
+            forbid(principal, action == Policy::Action::"write", resource == Policy::Path::"/workspace/.env");
         "#, "a", &[]);
         assert_eq!(p.write_paths, vec!["/workspace"]);
         assert_eq!(p.denied_paths.len(), 3);
@@ -488,8 +564,8 @@ mod tests {
     #[test]
     fn test_eval_read_permitted_write_forbidden_same_path() {
         let p = eval(r#"
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/config");
-            forbid(principal, action == Policy::Action::"write", resource == Policy::Directory::"/config");
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/config");
+            forbid(principal, action == Policy::Action::"write", resource == Policy::Path::"/config");
         "#, "a", &[]);
         assert!(p.read_paths.contains(&"/config".to_string()));
         assert!(p.denied_paths.contains(&"/config".to_string()));
@@ -498,8 +574,8 @@ mod tests {
     #[test]
     fn test_eval_all_four_actions() {
         let p = eval(r#"
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/r");
-            permit(principal, action == Policy::Action::"write", resource == Policy::Directory::"/w");
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/r");
+            permit(principal, action == Policy::Action::"write", resource == Policy::Path::"/w");
             permit(principal, action == Policy::Action::"connect", resource == Policy::NetworkDestination::"api.com");
             permit(principal, action == Policy::Action::"bind", resource == Policy::NetworkDestination::"8080");
         "#, "a", &[]);
@@ -548,7 +624,7 @@ mod tests {
         let policies = r#"
             permit(principal, action == Policy::Action::"read", resource);
             forbid(principal, action == Policy::Action::"read", resource)
-                unless { resource == Policy::Directory::"/public"
+                unless { resource == Policy::Path::"/public"
                       || principal.tools.contains("admin_tool") };
         "#;
         let normal = eval(policies, "a", &["browser"]);
@@ -612,21 +688,140 @@ mod tests {
         assert_eq!(config.allowed_network_destinations, vec!["existing-dest", "policy-dest"]);
     }
 
+    // --- validate_paths tests ---
+
+    fn no_owned_agents(_id: &str) -> bool {
+        false
+    }
+
+    #[test]
+    fn validate_paths_accepts_absolute() {
+        let policy = SandboxPolicy {
+            read_paths: vec!["/data".into(), "/var".into()],
+            write_paths: vec!["/output".into()],
+            denied_paths: vec!["/secrets".into()],
+            ..Default::default()
+        };
+        assert!(policy.validate_paths("mina", no_owned_agents).is_ok());
+    }
+
+    #[test]
+    fn validate_paths_accepts_owned_user_uri() {
+        let policy = SandboxPolicy {
+            read_paths: vec!["user://mina/foo.csv".into()],
+            ..Default::default()
+        };
+        assert!(policy.validate_paths("mina", no_owned_agents).is_ok());
+    }
+
+    #[test]
+    fn validate_paths_rejects_other_user_uri() {
+        let policy = SandboxPolicy {
+            read_paths: vec!["user://other/foo.csv".into()],
+            ..Default::default()
+        };
+        assert!(policy.validate_paths("mina", no_owned_agents).is_err());
+    }
+
+    #[test]
+    fn validate_paths_accepts_owned_agent_uri() {
+        let policy = SandboxPolicy {
+            write_paths: vec!["agent://my-agent/data".into()],
+            ..Default::default()
+        };
+        assert!(policy.validate_paths("mina", |id| id == "my-agent").is_ok());
+    }
+
+    #[test]
+    fn validate_paths_rejects_unowned_agent_uri() {
+        let policy = SandboxPolicy {
+            write_paths: vec!["agent://other-agent/data".into()],
+            ..Default::default()
+        };
+        assert!(policy.validate_paths("mina", |id| id == "my-agent").is_err());
+    }
+
+    #[test]
+    fn validate_paths_rejects_relative() {
+        let policy = SandboxPolicy {
+            read_paths: vec!["relative/path".into()],
+            ..Default::default()
+        };
+        assert!(policy.validate_paths("mina", no_owned_agents).is_err());
+    }
+
+    #[test]
+    fn validate_paths_rejects_unknown_scheme() {
+        let policy = SandboxPolicy {
+            read_paths: vec!["ftp://server/foo".into()],
+            ..Default::default()
+        };
+        assert!(policy.validate_paths("mina", no_owned_agents).is_err());
+    }
+
+    // --- resolve_virtual_paths tests ---
+
+    fn test_storage() -> StorageService {
+        StorageService::new(&crate::core::config::Config::default())
+    }
+
+    #[test]
+    fn resolve_virtual_paths_passes_absolute_through() {
+        let mut policy = SandboxPolicy {
+            read_paths: vec!["/data".into()],
+            ..Default::default()
+        };
+        policy.resolve_virtual_paths(&test_storage());
+        assert_eq!(policy.read_paths, vec!["/data".to_string()]);
+    }
+
+    #[test]
+    fn resolve_virtual_paths_translates_user_uri() {
+        let mut policy = SandboxPolicy {
+            read_paths: vec!["user://mina/foo.csv".into()],
+            ..Default::default()
+        };
+        policy.resolve_virtual_paths(&test_storage());
+        assert_eq!(policy.read_paths.len(), 1);
+        assert!(policy.read_paths[0].ends_with("data/files/mina/foo.csv"));
+    }
+
+    #[test]
+    fn resolve_virtual_paths_translates_agent_uri() {
+        let mut policy = SandboxPolicy {
+            write_paths: vec!["agent://dev/output.csv".into()],
+            ..Default::default()
+        };
+        policy.resolve_virtual_paths(&test_storage());
+        assert_eq!(policy.write_paths.len(), 1);
+        assert!(policy.write_paths[0].ends_with("data/workspaces/dev/output.csv"));
+    }
+
+    #[test]
+    fn resolve_virtual_paths_drops_unparseable_entries() {
+        let mut policy = SandboxPolicy {
+            read_paths: vec!["bad-entry".into(), "/keepme".into()],
+            ..Default::default()
+        };
+        policy.resolve_virtual_paths(&test_storage());
+        assert_eq!(policy.read_paths, vec!["/keepme".to_string()]);
+    }
+
     // --- complex real-world scenario ---
 
     #[test]
     fn test_eval_complex_real_world() {
         let policies = r#"
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/tmp");
-            permit(principal, action == Policy::Action::"write", resource == Policy::Directory::"/tmp");
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/browser-profiles")
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/tmp");
+            permit(principal, action == Policy::Action::"write", resource == Policy::Path::"/tmp");
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/browser-profiles")
                 when { principal.tools.contains("browser") };
             permit(principal, action == Policy::Action::"connect", resource == Policy::NetworkDestination::"0.0.0.0/0!0-65535")
                 when { principal.tools.contains("browser") || principal.tools.contains("web_search") };
             forbid(principal, action == Policy::Action::"connect", resource == Policy::NetworkDestination::"10.0.0.0/8")
                 unless { principal.tools.contains("admin_tool") };
-            permit(principal == Policy::Agent::"deployer", action == Policy::Action::"write", resource == Policy::Directory::"/deploy");
-            forbid(principal, action == Policy::Action::"write", resource == Policy::Directory::"/deploy/secrets")
+            permit(principal == Policy::Agent::"deployer", action == Policy::Action::"write", resource == Policy::Path::"/deploy");
+            forbid(principal, action == Policy::Action::"write", resource == Policy::Path::"/deploy/secrets")
                 unless { principal.tools.containsAll(["deploy", "auth"]) };
         "#;
 

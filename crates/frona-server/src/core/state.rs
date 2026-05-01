@@ -265,6 +265,7 @@ impl AppState {
             policy_repo,
             policy_schema,
             tool_manager.clone(),
+            storage.clone(),
             config.sandbox.disabled,
         );
 

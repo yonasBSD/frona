@@ -39,7 +39,15 @@ impl StorageService {
         Workspace::new(vec![user_path], None)
     }
 
-    pub fn resolve(&self, path: &VirtualPath) -> Result<PathBuf, AppError> {
+    pub fn resolve(&self, path: &str) -> Result<PathBuf, AppError> {
+        if path.starts_with('/') {
+            return Ok(PathBuf::from(path));
+        }
+        let parsed = VirtualPath::parse(path)?;
+        self.resolve_virtual_path(&parsed)
+    }
+
+    pub fn resolve_virtual_path(&self, path: &VirtualPath) -> Result<PathBuf, AppError> {
         let resolved = match &path.namespace {
             Namespace::User(name) => {
                 let resolved = self.files_path.join(name).join(&path.relative);
@@ -217,7 +225,7 @@ mod tests {
     fn resolve_user_path() {
         let svc = test_service();
         let vp = VirtualPath::user("uid-123", "report.pdf");
-        let result = svc.resolve(&vp).unwrap();
+        let result = svc.resolve_virtual_path(&vp).unwrap();
         assert!(result.is_absolute());
         assert!(result.ends_with("data/files/uid-123/report.pdf"));
     }
@@ -226,7 +234,7 @@ mod tests {
     fn resolve_agent_path() {
         let svc = test_service();
         let vp = VirtualPath::agent("dev", "output.csv");
-        let result = svc.resolve(&vp).unwrap();
+        let result = svc.resolve_virtual_path(&vp).unwrap();
         assert!(result.is_absolute());
         assert!(result.ends_with("data/workspaces/dev/output.csv"));
     }
@@ -235,7 +243,7 @@ mod tests {
     fn resolve_agent_nested_path() {
         let svc = test_service();
         let vp = VirtualPath::agent("dev", "subdir/nested/file.txt");
-        let result = svc.resolve(&vp).unwrap();
+        let result = svc.resolve_virtual_path(&vp).unwrap();
         assert!(result.is_absolute());
         assert!(result.ends_with("data/workspaces/dev/subdir/nested/file.txt"));
     }
@@ -244,7 +252,7 @@ mod tests {
     fn resolve_path_traversal_rejected() {
         let svc = test_service();
         let vp = VirtualPath::user("uid", "../../../etc/passwd");
-        let result = svc.resolve(&vp);
+        let result = svc.resolve_virtual_path(&vp);
         assert!(result.is_err());
     }
 

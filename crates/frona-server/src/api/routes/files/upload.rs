@@ -149,7 +149,7 @@ pub(crate) async fn presign_file(
             "Invalid owner prefix".into(),
         )));
     };
-    let _ = state.storage_service.resolve(&vpath)?;
+    let _ = state.storage_service.resolve_virtual_path(&vpath)?;
 
     let url = state
         .presign_service

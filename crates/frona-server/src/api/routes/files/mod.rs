@@ -83,7 +83,7 @@ impl FromRequestParts<AppState> for FileAuth {
 }
 
 pub(super) async fn serve_file(vpath: &VirtualPath, state: &AppState) -> Result<Response, ApiError> {
-    let resolved = state.storage_service.resolve(vpath)?;
+    let resolved = state.storage_service.resolve_virtual_path(vpath)?;
 
     if !resolved.exists() {
         return Err(ApiError(AppError::NotFound(

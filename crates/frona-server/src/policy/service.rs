@@ -40,6 +40,7 @@ pub struct PolicyService {
     tool_manager: Arc<crate::tool::manager::ToolManager>,
     managed_policies: Arc<RwLock<Vec<cedar_policy::Policy>>>,
     sandbox_disabled: bool,
+    storage: crate::storage::StorageService,
     /// Held during `commit()` to serialize writes. Dry-run never takes it —
     /// fingerprint check covers staleness on commit instead.
     commit_lock: Arc<AsyncMutex<()>>,
@@ -50,14 +51,16 @@ impl PolicyService {
         repo: Arc<dyn PolicyRepository>,
         schema: Arc<Schema>,
         tool_manager: Arc<crate::tool::manager::ToolManager>,
+        storage: crate::storage::StorageService,
     ) -> Self {
-        Self::with_sandbox_disabled(repo, schema, tool_manager, false)
+        Self::with_sandbox_disabled(repo, schema, tool_manager, storage, false)
     }
 
     pub fn with_sandbox_disabled(
         repo: Arc<dyn PolicyRepository>,
         schema: Arc<Schema>,
         tool_manager: Arc<crate::tool::manager::ToolManager>,
+        storage: crate::storage::StorageService,
         sandbox_disabled: bool,
     ) -> Self {
         let policy_cache = Cache::builder().max_capacity(1000).build();
@@ -71,6 +74,7 @@ impl PolicyService {
             tool_manager,
             managed_policies: Arc::new(RwLock::new(Vec::new())),
             sandbox_disabled,
+            storage,
             commit_lock: Arc::new(AsyncMutex::new(())),
         }
     }
@@ -345,10 +349,20 @@ impl PolicyService {
         Ok(response.decision() == Decision::Allow)
     }
 
+    /// Evaluates the sandbox policy for a principal.
+    ///
+    /// `resolve_paths`:
+    /// - `false` — return raw entries verbatim. Use this when surfacing the
+    ///   policy to the UI / API so users see the same `user://` / `agent://`
+    ///   identifiers they wrote.
+    /// - `true` — translate `user://` and `agent://` entries into absolute
+    ///   host paths via `StorageService`. Use this when handing the policy
+    ///   to a sandbox driver (cli, mcp, app).
     pub async fn evaluate_sandbox_policy(
         &self,
         user_id: &str,
         principal: &Principal,
+        resolve_paths: bool,
     ) -> Result<Arc<super::sandbox::SandboxPolicy>, AppError> {
         if self.sandbox_disabled {
             return Ok(Arc::new(super::sandbox::SandboxPolicy::permissive()));
@@ -356,35 +370,42 @@ impl PolicyService {
 
         let kind = principal_kind_str(&principal.kind);
         let key = format!("{user_id}:{kind}:{}", principal.id);
-        if let Some(cached) = self.sandbox_cache.get(&key).await {
-            return Ok(cached);
-        }
+        let raw = if let Some(cached) = self.sandbox_cache.get(&key).await {
+            cached
+        } else {
+            let cached = self.build_policy_set(user_id).await?;
 
-        let cached = self.build_policy_set(user_id).await?;
+            let principal_entity = match principal.kind {
+                PrincipalKind::Agent => {
+                    let tools = self
+                        .resolve_agent_tools(user_id, &principal.id, &cached.policy_set)
+                        .await?;
+                    build_agent_principal_entity(&principal.id, &tools)
+                }
+                PrincipalKind::McpServer => build_mcp_principal_entity(&principal.id),
+                PrincipalKind::App => build_app_principal_entity(&principal.id),
+                PrincipalKind::User => {
+                    return Err(AppError::Internal(
+                        "User is not a sandbox principal".into(),
+                    ));
+                }
+            };
 
-        let principal_entity = match principal.kind {
-            PrincipalKind::Agent => {
-                let tools = self
-                    .resolve_agent_tools(user_id, &principal.id, &cached.policy_set)
-                    .await?;
-                build_agent_principal_entity(&principal.id, &tools)
-            }
-            PrincipalKind::McpServer => build_mcp_principal_entity(&principal.id),
-            PrincipalKind::App => build_app_principal_entity(&principal.id),
-            PrincipalKind::User => {
-                return Err(AppError::Internal(
-                    "User is not a sandbox principal".into(),
-                ));
-            }
+            let policy = super::sandbox::evaluate_sandbox_policy(
+                &cached.policy_set,
+                principal_entity,
+            );
+            let arc = Arc::new(policy);
+            self.sandbox_cache.insert(key, arc.clone()).await;
+            arc
         };
 
-        let policy = super::sandbox::evaluate_sandbox_policy(
-            &cached.policy_set,
-            principal_entity,
-        );
-        let arc = Arc::new(policy);
-        self.sandbox_cache.insert(key, arc.clone()).await;
-        Ok(arc)
+        if !resolve_paths {
+            return Ok(raw);
+        }
+        let mut resolved = (*raw).clone();
+        resolved.resolve_virtual_paths(&self.storage);
+        Ok(Arc::new(resolved))
     }
 
     async fn resolve_agent_tools(
@@ -689,13 +710,13 @@ fn sandbox_policy_to_groups(
         .read_paths
         .iter()
         .map(|p| AccessOverride {
-            resource: EntityRef::Directory(p.clone()),
+            resource: EntityRef::Path(p.clone()),
             intent: AccessIntent::Allow,
         })
         .collect();
     for p in &sb.denied_paths {
         read_overrides.push(AccessOverride {
-            resource: EntityRef::Directory(p.clone()),
+            resource: EntityRef::Path(p.clone()),
             intent: AccessIntent::Deny,
         });
     }
@@ -710,13 +731,13 @@ fn sandbox_policy_to_groups(
         .write_paths
         .iter()
         .map(|p| AccessOverride {
-            resource: EntityRef::Directory(p.clone()),
+            resource: EntityRef::Path(p.clone()),
             intent: AccessIntent::Allow,
         })
         .collect();
     for p in &sb.denied_paths {
         write_overrides.push(AccessOverride {
-            resource: EntityRef::Directory(p.clone()),
+            resource: EntityRef::Path(p.clone()),
             intent: AccessIntent::Deny,
         });
     }

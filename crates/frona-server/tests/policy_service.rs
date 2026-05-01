@@ -72,7 +72,8 @@ async fn setup_with_extra_tools(
             .await;
     }
 
-    let service = PolicyService::new(repo, schema, tool_manager);
+    let storage = frona::storage::StorageService::new(&frona::core::config::Config::default());
+    let service = PolicyService::new(repo, schema, tool_manager, storage);
     service.sync_base_policies().await.unwrap();
     (db, service)
 }
@@ -472,7 +473,7 @@ mod reconcile {
     }
 
     fn dir(p: &str) -> EntityRef {
-        EntityRef::Directory(p.into())
+        EntityRef::Path(p.into())
     }
 
     fn netd(d: &str) -> EntityRef {
@@ -633,7 +634,7 @@ mod reconcile {
         service
             .create_policy(
                 "user-1",
-                "@id(\"u-when\")\nforbid(principal == Policy::Agent::\"a\", action == Policy::Action::\"read\", resource == Policy::Directory::\"/x\")\nwhen { principal.enabled };",
+                "@id(\"u-when\")\nforbid(principal == Policy::Agent::\"a\", action == Policy::Action::\"read\", resource == Policy::Path::\"/x\")\nwhen { principal.enabled };",
             )
             .await
             .unwrap();
@@ -664,7 +665,7 @@ mod reconcile {
         service
             .create_policy(
                 "user-1",
-                "@id(\"u-other\")\npermit(principal == Policy::Agent::\"other\", action == Policy::Action::\"read\", resource == Policy::Directory::\"/z\");",
+                "@id(\"u-other\")\npermit(principal == Policy::Agent::\"other\", action == Policy::Action::\"read\", resource == Policy::Path::\"/z\");",
             )
             .await
             .unwrap();
@@ -1106,7 +1107,7 @@ mod reconcile {
         service
             .create_policy(
                 "user-1",
-                "@id(\"u-y\")\npermit(principal == Policy::Agent::\"a\", action == Policy::Action::\"read\", resource == Policy::Directory::\"/y\");",
+                "@id(\"u-y\")\npermit(principal == Policy::Agent::\"a\", action == Policy::Action::\"read\", resource == Policy::Path::\"/y\");",
             )
             .await
             .unwrap();

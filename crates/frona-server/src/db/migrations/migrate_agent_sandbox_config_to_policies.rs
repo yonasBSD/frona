@@ -157,7 +157,7 @@ fn legacy_to_groups(
         overrides: shared_paths
             .iter()
             .map(|p| AccessOverride {
-                resource: EntityRef::Directory(p.clone()),
+                resource: EntityRef::Path(p.clone()),
                 intent: AccessIntent::Allow,
             })
             .collect(),

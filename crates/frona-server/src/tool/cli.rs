@@ -148,6 +148,7 @@ impl AgentTool for CliTool {
             .evaluate_sandbox_policy(
                 &ctx.user.id,
                 &crate::core::principal::Principal::agent(agent_id),
+                true,
             )
             .await?;
 
@@ -426,7 +427,8 @@ mod tests {
         let repo: std::sync::Arc<dyn PolicyRepository> =
             std::sync::Arc::new(SurrealRepo::<crate::policy::models::Policy>::new(db));
         let tool_manager = std::sync::Arc::new(crate::tool::manager::ToolManager::new(false));
-        PolicyService::new(repo, schema, tool_manager)
+        let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
+        PolicyService::new(repo, schema, tool_manager, storage)
     }
 
     #[tokio::test]

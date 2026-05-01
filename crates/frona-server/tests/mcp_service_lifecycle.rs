@@ -125,8 +125,9 @@ async fn build_test_harness(
     let policy_repo: Arc<dyn frona::policy::repository::PolicyRepository> =
         Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
     let policy_tool_manager = Arc::new(frona::tool::manager::ToolManager::new(false));
+    let storage = frona::storage::StorageService::new(&frona::core::config::Config::default());
     let policy_service = frona::policy::service::PolicyService::new(
-        policy_repo, policy_schema, policy_tool_manager,
+        policy_repo, policy_schema, policy_tool_manager, storage,
     );
     let manager = Arc::new(McpManager::new(sandbox_manager, workspaces_path, 4100, 4200, policy_service.clone()));
     let mcp_repo: Arc<dyn McpServerRepository> =

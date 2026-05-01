@@ -694,10 +694,9 @@ fn validate_credential_bindings(
 
 fn validate_absolute_paths(paths: &[String]) -> Result<(), AppError> {
     for p in paths {
-        let path = Path::new(p);
-        if !path.is_absolute() {
+        if !crate::policy::validation::is_valid_policy_path(p) {
             return Err(AppError::Validation(format!(
-                "sandbox path must be absolute: {p}"
+                "sandbox path '{p}' must be absolute (start with /) or a user:// / agent:// URI"
             )));
         }
     }
@@ -875,8 +874,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_absolute_paths_rejects_relative() {
+    fn validate_absolute_paths_accepts_absolute_and_virtual() {
         assert!(validate_absolute_paths(&["/abs".into()]).is_ok());
+        assert!(validate_absolute_paths(&["user://mina/foo".into()]).is_ok());
+        assert!(validate_absolute_paths(&["agent://dev/output.csv".into()]).is_ok());
         assert!(matches!(
             validate_absolute_paths(&["relative/path".into()]).unwrap_err(),
             AppError::Validation(_)

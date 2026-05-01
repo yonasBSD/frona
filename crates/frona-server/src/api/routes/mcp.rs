@@ -9,8 +9,28 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::error::ApiError;
 use crate::api::middleware::auth::{AuthPrincipal, AuthUser};
+use crate::core::error::AppError;
 use crate::core::state::AppState;
 use crate::tool::mcp::models::{McpServerInstall, McpServerStatus, McpServerUpdate};
+
+async fn validate_request_sandbox_paths(
+    state: &AppState,
+    auth: &AuthUser,
+    policy: Option<&crate::policy::sandbox::SandboxPolicy>,
+) -> Result<(), AppError> {
+    let Some(policy) = policy else {
+        return Ok(());
+    };
+    let owned_agents: std::collections::HashSet<String> = state
+        .agent_service
+        .list(&auth.user_id)
+        .await?
+        .into_iter()
+        .filter(|a| a.user_id.as_deref() == Some(auth.user_id.as_str()))
+        .map(|a| a.id)
+        .collect();
+    policy.validate_paths(&auth.username, |id| owned_agents.contains(id))
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -96,7 +116,7 @@ async fn to_response(
     let principal = crate::core::principal::Principal::mcp_server(&server.id);
     let evaluated = state
         .policy_service
-        .evaluate_sandbox_policy(user_id, &principal)
+        .evaluate_sandbox_policy(user_id, &principal, false)
         .await
         .map_err(ApiError::from)?
         .as_ref()
@@ -125,6 +145,7 @@ async fn install_server(
     State(state): State<AppState>,
     Json(req): Json<McpServerInstall>,
 ) -> Result<Json<McpServerResponse>, ApiError> {
+    validate_request_sandbox_paths(&state, &auth, req.sandbox_policy.as_ref()).await?;
     let server = state.mcp_service.install(&auth.user_id, req).await?;
     let resp = to_response(&state, &auth.user_id, server).await?;
     Ok(Json(resp))
@@ -136,6 +157,7 @@ async fn update_server(
     Path(id): Path<String>,
     Json(req): Json<McpServerUpdate>,
 ) -> Result<Json<UpdateResponse>, ApiError> {
+    validate_request_sandbox_paths(&state, &auth, req.sandbox_policy.as_ref()).await?;
     let result = state.mcp_service.update(&auth.user_id, &id, req).await?;
     let server = to_response(&state, &auth.user_id, result.server).await?;
     Ok(Json(UpdateResponse {

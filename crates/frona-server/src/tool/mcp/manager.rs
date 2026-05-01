@@ -103,6 +103,7 @@ impl McpManager {
             .evaluate_sandbox_policy(
                 &server.user_id,
                 &crate::core::principal::Principal::mcp_server(&server.id),
+                true,
             )
             .await?;
 

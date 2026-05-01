@@ -73,7 +73,8 @@ async fn test_manager(tmp: &std::path::Path) -> Arc<McpManager> {
     let policy_repo: Arc<dyn frona::policy::repository::PolicyRepository> =
         Arc::new(frona::db::repo::generic::SurrealRepo::<frona::policy::models::Policy>::new(db));
     let tool_manager = Arc::new(frona::tool::manager::ToolManager::new(false));
-    let policy_service = frona::policy::service::PolicyService::new(policy_repo, policy_schema, tool_manager);
+    let storage = frona::storage::StorageService::new(&frona::core::config::Config::default());
+    let policy_service = frona::policy::service::PolicyService::new(policy_repo, policy_schema, tool_manager, storage);
     Arc::new(McpManager::new(
         sandbox,
         tmp.join("workspaces").to_string_lossy().into_owned(),

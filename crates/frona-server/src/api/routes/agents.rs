@@ -25,6 +25,25 @@ pub fn router() -> Router<AppState> {
         .route("/api/agents/{id}/avatar", put(upload_avatar))
 }
 
+async fn validate_request_sandbox_paths(
+    state: &AppState,
+    auth: &AuthUser,
+    policy: Option<&crate::policy::sandbox::SandboxPolicy>,
+) -> Result<(), AppError> {
+    let Some(policy) = policy else {
+        return Ok(());
+    };
+    let owned_agents: std::collections::HashSet<String> = state
+        .agent_service
+        .list(&auth.user_id)
+        .await?
+        .into_iter()
+        .filter(|a| a.user_id.as_deref() == Some(auth.user_id.as_str()))
+        .map(|a| a.id)
+        .collect();
+    policy.validate_paths(&auth.username, |id| owned_agents.contains(id))
+}
+
 async fn sync_agent_tools(
     state: &AppState,
     user_id: &str,
@@ -59,6 +78,7 @@ async fn to_response(state: &AppState, user_id: &str, agent: Agent) -> Result<Ag
         .evaluate_sandbox_policy(
             user_id,
             &crate::core::principal::Principal::agent(&agent.id),
+            false,
         )
         .await?
         .as_ref()
@@ -72,6 +92,7 @@ async fn create_agent(
     Json(req): Json<CreateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let tools = req.tools.clone();
+    validate_request_sandbox_paths(&state, &auth, req.sandbox_policy.as_ref()).await?;
     let agent = state.agent_service.create(&auth.user_id, req).await?;
 
     if let Some(tool_list) = tools {
@@ -142,6 +163,7 @@ async fn update_agent(
     Json(req): Json<UpdateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let tools = req.tools.clone();
+    validate_request_sandbox_paths(&state, &auth, req.sandbox_policy.as_ref()).await?;
     let agent = state.agent_service.update(&auth.user_id, &id, req).await?;
 
     if let Some(tool_list) = tools {

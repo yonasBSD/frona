@@ -24,7 +24,7 @@ pub enum EntityRef {
     Mcp(String),
     App(String),
     User(String),
-    Directory(String),
+    Path(String),
     Tool(String),
     ToolGroup(String),
     NetworkDestination(String),
@@ -37,7 +37,7 @@ impl EntityRef {
             Self::Mcp(_) => "Policy::Mcp",
             Self::App(_) => "Policy::App",
             Self::User(_) => "Policy::User",
-            Self::Directory(_) => "Policy::Directory",
+            Self::Path(_) => "Policy::Path",
             Self::Tool(_) => "Policy::Tool",
             Self::ToolGroup(_) => "Policy::ToolGroup",
             Self::NetworkDestination(_) => "Policy::NetworkDestination",
@@ -50,7 +50,7 @@ impl EntityRef {
             | Self::Mcp(s)
             | Self::App(s)
             | Self::User(s)
-            | Self::Directory(s)
+            | Self::Path(s)
             | Self::Tool(s)
             | Self::ToolGroup(s)
             | Self::NetworkDestination(s) => s,
@@ -564,19 +564,19 @@ pub fn eval_request(
 pub fn sentinel_resource(entity_type: &str) -> EntityRef {
     let id = "___reconcile_sentinel___".to_string();
     match entity_type {
-        "Policy::Directory" => EntityRef::Directory(id),
+        "Policy::Path" => EntityRef::Path(id),
         "Policy::NetworkDestination" => EntityRef::NetworkDestination(id),
         "Policy::Tool" => EntityRef::Tool(id),
-        _ => EntityRef::Directory(id),
+        _ => EntityRef::Path(id),
     }
 }
 
 pub fn resource_type_for_action(action: &str) -> &'static str {
     match action {
-        "read" | "write" => "Policy::Directory",
+        "read" | "write" => "Policy::Path",
         "connect" | "bind" => "Policy::NetworkDestination",
         "invoke_tool" => "Policy::Tool",
-        _ => "Policy::Directory",
+        _ => "Policy::Path",
     }
 }
 
@@ -1151,7 +1151,7 @@ mod tests {
     }
 
     fn dir(p: &str) -> EntityRef {
-        EntityRef::Directory(p.into())
+        EntityRef::Path(p.into())
     }
 
     fn parse_one(text: &str) -> Policy {
@@ -1180,7 +1180,7 @@ mod tests {
     #[test]
     fn entity_ref_to_cedar_type() {
         assert_eq!(EntityRef::Agent("a".into()).cedar_type(), "Policy::Agent");
-        assert_eq!(EntityRef::Directory("/x".into()).cedar_type(), "Policy::Directory");
+        assert_eq!(EntityRef::Path("/x".into()).cedar_type(), "Policy::Path");
     }
 
     #[test]
@@ -1258,7 +1258,7 @@ mod tests {
     fn is_owned_recognizes_per_resource_simple() {
         let p = parse_one(
             r#"@id("x")
-            permit(principal == Policy::Agent::"a", action == Policy::Action::"read", resource == Policy::Directory::"/x");"#,
+            permit(principal == Policy::Agent::"a", action == Policy::Action::"read", resource == Policy::Path::"/x");"#,
         );
         assert!(is_owned(&p, &agent("a"), "read", false));
     }
@@ -1305,7 +1305,7 @@ mod tests {
     fn is_owned_rejects_when_clause() {
         let p = parse_one(
             r#"@id("x")
-            permit(principal == Policy::Agent::"a", action == Policy::Action::"read", resource == Policy::Directory::"/x")
+            permit(principal == Policy::Agent::"a", action == Policy::Action::"read", resource == Policy::Path::"/x")
             when { principal.enabled };"#,
         );
         assert!(!is_owned(&p, &agent("a"), "read", false));
@@ -1315,7 +1315,7 @@ mod tests {
     fn is_owned_rejects_principal_in_group() {
         let p = parse_one(
             r#"@id("x")
-            permit(principal in Policy::User::"alice", action == Policy::Action::"read", resource == Policy::Directory::"/x");"#,
+            permit(principal in Policy::User::"alice", action == Policy::Action::"read", resource == Policy::Path::"/x");"#,
         );
         assert!(!is_owned(&p, &agent("a"), "read", false));
     }
@@ -1324,7 +1324,7 @@ mod tests {
     fn is_owned_rejects_wildcard_principal() {
         let p = parse_one(
             r#"@id("x")
-            permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/x");"#,
+            permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/x");"#,
         );
         assert!(!is_owned(&p, &agent("a"), "read", false));
     }
@@ -1333,7 +1333,7 @@ mod tests {
     fn is_owned_rejects_system_scoped_row() {
         let p = parse_one(
             r#"@id("x")
-            permit(principal == Policy::Agent::"a", action == Policy::Action::"read", resource == Policy::Directory::"/x");"#,
+            permit(principal == Policy::Agent::"a", action == Policy::Action::"read", resource == Policy::Path::"/x");"#,
         );
         assert!(!is_owned(&p, &agent("a"), "read", true));
     }
@@ -1343,7 +1343,7 @@ mod tests {
         let p = parse_one(
             r#"@id("x")
             forbid(principal == Policy::Agent::"a", action == Policy::Action::"connect", resource)
-            unless { resource == Policy::NetworkDestination::"gmail.com" || resource == Policy::Directory::"/x" };"#,
+            unless { resource == Policy::NetworkDestination::"gmail.com" || resource == Policy::Path::"/x" };"#,
         );
         assert!(!is_owned(&p, &agent("a"), "connect", false));
     }
@@ -1352,7 +1352,7 @@ mod tests {
     fn is_owned_rejects_wrong_action() {
         let p = parse_one(
             r#"@id("x")
-            permit(principal == Policy::Agent::"a", action == Policy::Action::"write", resource == Policy::Directory::"/x");"#,
+            permit(principal == Policy::Agent::"a", action == Policy::Action::"write", resource == Policy::Path::"/x");"#,
         );
         assert!(!is_owned(&p, &agent("a"), "read", false));
     }
@@ -1384,7 +1384,7 @@ mod tests {
         );
         assert!(text.contains("permit"));
         assert!(text.contains("Policy::Agent"));
-        assert!(text.contains("Policy::Directory"));
+        assert!(text.contains("Policy::Path"));
     }
 
     #[test]

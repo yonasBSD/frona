@@ -9,10 +9,10 @@
 //   unless { <expr> } — permit/forbid only applies if expr is false
 //
 // Common patterns:
-//   permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/data");
+//   permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/data");
 //   forbid(principal == Policy::Agent::"x", action == Policy::Action::"connect", resource)
 //       unless { resource == Policy::NetworkDestination::"gmail.com" };
-//   permit(principal, action == Policy::Action::"read", resource == Policy::Directory::"/browser-data")
+//   permit(principal, action == Policy::Action::"read", resource == Policy::Path::"/browser-data")
 //       when { principal.tools.contains("browser") };
 
 namespace Policy {
@@ -52,7 +52,7 @@ namespace Policy {
     //
     // Example:
     //   permit(principal == Policy::App::"my-app", action == Policy::Action::"read",
-    //          resource == Policy::Directory::"/data");
+    //          resource == Policy::Path::"/data");
     entity App in [User];
 
     // A group of related tools (e.g., "browser", "search", "cli", "task").
@@ -134,17 +134,22 @@ namespace Policy {
         },
     };
 
-    // A filesystem directory for sandbox read/write rules.
+    // A filesystem path or virtual path for sandbox read/write rules.
     //
-    // The ID must be an absolute path starting with /.
+    // ID formats:
+    //   Absolute filesystem path:
+    //     Policy::Path::"/data"
+    //     Policy::Path::"/workspace/output"
+    //     Policy::Path::"/tmp"
     //
-    // Reference format: Policy::Directory::"/absolute/path"
+    //   Virtual path (resolved to a host path at sandbox apply-time):
+    //     Policy::Path::"user://{username}/{relative}"
+    //     Policy::Path::"agent://{agent_id}/{relative}"
     //
-    // Examples:
-    //   Policy::Directory::"/data"
-    //   Policy::Directory::"/workspace/output"
-    //   Policy::Directory::"/tmp"
-    entity Directory;
+    // Virtual paths reference user-owned files and agent workspaces; the
+    // sandbox layer resolves them to concrete host paths via StorageService
+    // before handing them to the platform sandbox driver.
+    entity Path;
 
     // A network destination for sandbox connect/bind rules.
     //
@@ -160,51 +165,51 @@ namespace Policy {
     // Reference format: Policy::NetworkDestination::"destination"
     entity NetworkDestination;
 
-    // Grant sandbox read access to a directory.
+    // Grant sandbox read access to a path.
     //
-    // Principal: Agent | Mcp | App    Resource: Directory
+    // Principal: Agent | Mcp | App    Resource: Path
     //
     // Examples:
     //   // All sandbox principals can read /tmp
     //   permit(principal, action == Policy::Action::"read",
-    //          resource == Policy::Directory::"/tmp");
+    //          resource == Policy::Path::"/tmp");
     //
     //   // Only agents with the browser tool can read browser profiles
     //   permit(principal, action == Policy::Action::"read",
-    //          resource == Policy::Directory::"/browser-profiles")
+    //          resource == Policy::Path::"/browser-profiles")
     //       when { principal.tools.contains("browser") };
     //
     //   // An MCP server can read its data directory
     //   permit(principal == Policy::Mcp::"github-mcp", action == Policy::Action::"read",
-    //          resource == Policy::Directory::"/var/mcp/github");
+    //          resource == Policy::Path::"/var/mcp/github");
     action read appliesTo {
         principal: [Agent, Mcp, App],
-        resource: [Directory],
+        resource: [Path],
         context: {
             is_task?: Bool,
         },
     };
 
-    // Grant sandbox write access to a directory.
+    // Grant sandbox write access to a path.
     //
-    // Principal: Agent | Mcp | App    Resource: Directory
+    // Principal: Agent | Mcp | App    Resource: Path
     //
     // Use forbid to deny write to subdirectories, with unless for exceptions.
     //
     // Examples:
     //   // Allow write to workspace, deny secrets subdirectory
     //   permit(principal, action == Policy::Action::"write",
-    //          resource == Policy::Directory::"/workspace");
+    //          resource == Policy::Path::"/workspace");
     //   forbid(principal, action == Policy::Action::"write",
-    //          resource == Policy::Directory::"/workspace/secrets");
+    //          resource == Policy::Path::"/workspace/secrets");
     //
     //   // Deny secrets unless agent has admin_tool
     //   forbid(principal, action == Policy::Action::"write",
-    //          resource == Policy::Directory::"/workspace/secrets")
+    //          resource == Policy::Path::"/workspace/secrets")
     //       unless { principal.tools.contains("admin_tool") };
     action write appliesTo {
         principal: [Agent, Mcp, App],
-        resource: [Directory],
+        resource: [Path],
         context: {
             is_task?: Bool,
         },

@@ -74,7 +74,7 @@ pub(crate) async fn delete_user_file(
     }
 
     let vpath = VirtualPath::user(&username, &filename);
-    let resolved = state.storage_service.resolve(&vpath)?;
+    let resolved = state.storage_service.resolve_virtual_path(&vpath)?;
 
     if !resolved.exists() {
         return Err(ApiError(AppError::NotFound(

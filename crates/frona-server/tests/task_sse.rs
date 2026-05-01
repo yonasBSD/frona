@@ -79,7 +79,8 @@ async fn test_app_state_with_mock(
         let repo: std::sync::Arc<dyn frona::policy::repository::PolicyRepository> =
             std::sync::Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
         let tool_manager = std::sync::Arc::new(frona::tool::manager::ToolManager::new(false));
-        frona::policy::service::PolicyService::new(repo, schema, tool_manager)
+        let storage = frona::storage::StorageService::new(&config);
+        frona::policy::service::PolicyService::new(repo, schema, tool_manager, storage)
     };
     let agent_service = AgentService::new(
         SurrealRepo::new(db.clone()),

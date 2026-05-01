@@ -322,6 +322,7 @@ impl AppManager {
             .evaluate_sandbox_policy(
                 user_id,
                 &crate::core::principal::Principal::app(&manifest.id),
+                true,
             )
             .await?;
 
@@ -428,7 +429,8 @@ mod tests {
         let repo: Arc<dyn crate::policy::repository::PolicyRepository> =
             Arc::new(crate::db::repo::generic::SurrealRepo::<crate::policy::models::Policy>::new(db));
         let tool_manager = Arc::new(crate::tool::manager::ToolManager::new(false));
-        crate::policy::service::PolicyService::new(repo, schema, tool_manager)
+        let storage = crate::storage::StorageService::new(&crate::core::config::Config::default());
+        crate::policy::service::PolicyService::new(repo, schema, tool_manager, storage)
     }
 
     async fn test_manager(port_start: u16, port_end: u16) -> AppManager {

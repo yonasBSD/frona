@@ -22,7 +22,8 @@ fn test_policy_service(db: &Surreal<Db>) -> PolicyService {
     let schema = frona::policy::schema::build_schema();
     let repo: Arc<dyn frona::policy::repository::PolicyRepository> =
         Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
-    PolicyService::new(repo, schema, Arc::new(ToolManager::new(false)))
+    let storage = frona::storage::StorageService::new(&frona::core::config::Config::default());
+    PolicyService::new(repo, schema, Arc::new(ToolManager::new(false)), storage)
 }
 
 async fn test_db() -> Surreal<Db> {
