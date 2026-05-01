@@ -336,7 +336,7 @@ function McpServerPage() {
     setActionLoading(true);
     try {
       await api.delete(`/api/mcp/servers/${serverId}`);
-      router.push("/settings?tab=mcp");
+      router.push("/settings#mcp");
     } catch { /* ignore */ }
     finally { setActionLoading(false); }
   };
@@ -381,7 +381,7 @@ function McpServerPage() {
           className="flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition mb-4"
         >
           <ArrowLeftIcon className="h-4 w-4" />
-          Back to MCP
+          Back to Settings
         </button>
 
         <div className="flex items-center gap-2 mb-4">
