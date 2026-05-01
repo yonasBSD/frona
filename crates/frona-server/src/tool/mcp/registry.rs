@@ -1,14 +1,17 @@
 //! MCP registry client backed by the `fronalabs/mcp-registry-database` release
-//! artifact. Downloads the compressed dump into the MCP cache directory, refreshes
-//! only when the remote `content_sha256` changes, and delegates all parsing and
-//! searching to the [`metadata`](super::metadata) module (which streams the
-//! on-disk file instead of caching it in memory).
+//! artifact. Downloads the compressed dump, decompresses it once into the MCP
+//! cache directory as `servers.json`, refreshes only when the remote
+//! `content_sha256` changes, and serves queries from an in-memory cache of the
+//! parsed `Vec<RegistryServerEntry>` (24-hour TTL, busted on refresh).
 
 use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use tokio::sync::RwLock;
 use tokio::task;
 
 use super::metadata::{self, PrebuiltMetadata, RegistryServerEntry};
@@ -18,6 +21,8 @@ pub const PREBUILT_METADATA_URL: &str =
     "https://github.com/fronalabs/mcp-registry-database/releases/latest/download/metadata.json";
 pub const PREBUILT_SERVERS_URL: &str =
     "https://github.com/fronalabs/mcp-registry-database/releases/latest/download/servers.json.xz";
+
+const CACHE_TTL: Duration = Duration::from_secs(86400);
 
 #[async_trait]
 pub trait McpRegistryClient: Send + Sync {
@@ -35,11 +40,17 @@ pub trait McpRegistryClient: Send + Sync {
     ) -> Result<RegistryServerEntry, AppError>;
 }
 
+struct CachedDump {
+    entries: Arc<Vec<RegistryServerEntry>>,
+    loaded_at: Instant,
+}
+
 pub struct PrebuiltMcpRegistryClient {
     metadata_url: String,
     servers_url: String,
     cache_dir: PathBuf,
     http: reqwest::Client,
+    cache: RwLock<Option<CachedDump>>,
 }
 
 impl PrebuiltMcpRegistryClient {
@@ -49,6 +60,7 @@ impl PrebuiltMcpRegistryClient {
             servers_url: PREBUILT_SERVERS_URL.to_string(),
             cache_dir,
             http: reqwest::Client::new(),
+            cache: RwLock::new(None),
         }
     }
 
@@ -59,6 +71,7 @@ impl PrebuiltMcpRegistryClient {
             servers_url,
             cache_dir,
             http: reqwest::Client::new(),
+            cache: RwLock::new(None),
         }
     }
 
@@ -67,11 +80,12 @@ impl PrebuiltMcpRegistryClient {
     }
 
     fn servers_path(&self) -> PathBuf {
-        self.cache_dir.join("servers.json.xz")
+        self.cache_dir.join("servers.json")
     }
 
-    /// Downloads the dump if the remote `content_sha256` differs from the local
-    /// one. No-op when they match. Must be called before any query method.
+    /// Downloads + decompresses the dump if the remote `content_sha256` differs
+    /// from the local one. No-op when they match. Must be called before any
+    /// query method. Busts the in-memory cache when a new dump is written.
     pub async fn ensure_fresh(&self) -> Result<(), AppError> {
         fs::create_dir_all(&self.cache_dir).map_err(|e| {
             AppError::Tool(format!("creating MCP registry cache dir failed: {e}"))
@@ -80,7 +94,7 @@ impl PrebuiltMcpRegistryClient {
         let servers_path = self.servers_path();
         if let Ok(meta) = fs::metadata(&servers_path)
             && let Ok(modified) = meta.modified()
-            && modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400)
+            && modified.elapsed().unwrap_or_default() < CACHE_TTL
         {
             return Ok(());
         }
@@ -120,7 +134,7 @@ impl PrebuiltMcpRegistryClient {
             return Ok(());
         }
 
-        let servers_bytes = self
+        let compressed = self
             .http
             .get(&self.servers_url)
             .send()
@@ -130,16 +144,59 @@ impl PrebuiltMcpRegistryClient {
             .map_err(|e| AppError::Tool(format!("MCP registry dump HTTP error: {e}")))?
             .bytes()
             .await
-            .map_err(|e| AppError::Tool(format!("reading MCP registry dump body failed: {e}")))?;
+            .map_err(|e| AppError::Tool(format!("reading MCP registry dump body failed: {e}")))?
+            .to_vec();
 
-        atomic_write(&servers_path, &servers_bytes)?;
+        let json_bytes = task::spawn_blocking(move || -> Result<Vec<u8>, AppError> {
+            let mut decoder = xz2::read::XzDecoder::new(compressed.as_slice());
+            let mut out = Vec::new();
+            decoder.read_to_end(&mut out).map_err(|e| {
+                AppError::Tool(format!("decompressing MCP registry dump failed: {e}"))
+            })?;
+            Ok(out)
+        })
+        .await
+        .map_err(|e| AppError::Tool(format!("MCP registry decompress task failed: {e}")))??;
+
+        atomic_write(&servers_path, &json_bytes)?;
         atomic_write(&self.metadata_path(), &remote_meta_bytes)?;
+        self.invalidate_cache().await;
         Ok(())
     }
 
     fn read_local_metadata(&self) -> Option<PrebuiltMetadata> {
         let bytes = fs::read(self.metadata_path()).ok()?;
         serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Returns the parsed dump, loading + caching it on first use. Subsequent
+    /// calls within the TTL hand back a cheap `Arc` clone.
+    async fn entries(&self) -> Result<Arc<Vec<RegistryServerEntry>>, AppError> {
+        {
+            let cache = self.cache.read().await;
+            if let Some(c) = cache.as_ref()
+                && c.loaded_at.elapsed() < CACHE_TTL
+            {
+                return Ok(c.entries.clone());
+            }
+        }
+
+        let path = self.servers_path();
+        let entries = task::spawn_blocking(move || metadata::load_dump(&path))
+            .await
+            .map_err(|e| AppError::Tool(format!("MCP registry load task failed: {e}")))??;
+        let entries = Arc::new(entries);
+
+        let mut cache = self.cache.write().await;
+        *cache = Some(CachedDump {
+            entries: entries.clone(),
+            loaded_at: Instant::now(),
+        });
+        Ok(entries)
+    }
+
+    async fn invalidate_cache(&self) {
+        *self.cache.write().await = None;
     }
 }
 
@@ -174,21 +231,16 @@ impl McpRegistryClient for PrebuiltMcpRegistryClient {
         limit: usize,
     ) -> Result<Vec<RegistryServerEntry>, AppError> {
         self.ensure_fresh().await?;
-        let path = self.servers_path();
-        let query = query.to_string();
-        task::spawn_blocking(move || metadata::search_dump(&path, &query, limit))
-            .await
-            .map_err(|e| AppError::Tool(format!("MCP registry search task failed: {e}")))?
+        let entries = self.entries().await?;
+        Ok(metadata::search_entries(&entries, query, limit))
     }
 
     async fn fetch(&self, name: &str) -> Result<RegistryServerEntry, AppError> {
         self.ensure_fresh().await?;
-        let path = self.servers_path();
-        let name_owned = name.to_string();
-        let found = task::spawn_blocking(move || metadata::fetch_dump(&path, &name_owned))
-            .await
-            .map_err(|e| AppError::Tool(format!("MCP registry fetch task failed: {e}")))??;
-        found.ok_or_else(|| AppError::Tool(format!("MCP registry has no server named {name}")))
+        let entries = self.entries().await?;
+        metadata::fetch_entry(&entries, name)
+            .cloned()
+            .ok_or_else(|| AppError::Tool(format!("MCP registry has no server named {name}")))
     }
 
     async fn fetch_version(
@@ -222,26 +274,47 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"second");
     }
 
-    #[test]
-    fn local_metadata_round_trips() {
+    #[tokio::test]
+    async fn entries_caches_parsed_dump_across_calls() {
         let dir = tempdir().unwrap();
         let client = PrebuiltMcpRegistryClient::with_urls(
             dir.path().to_path_buf(),
-            String::new(),
-            String::new(),
+            "http://invalid.invalid/metadata.json".into(),
+            "http://invalid.invalid/servers.json.xz".into(),
         );
-        assert!(client.read_local_metadata().is_none());
+
+        let payload = serde_json::json!([
+            {
+                "name": "a/one",
+                "description": "first",
+                "version": "1.0.0",
+                "packages": [{
+                    "registry_type": "npm",
+                    "identifier": "a/one",
+                    "transport": { "type": "stdio" }
+                }]
+            }
+        ]);
         fs::write(
-            dir.path().join("metadata.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "content_sha256": "deadbeef",
-                "counts": {}
-            }))
-            .unwrap(),
+            client.servers_path(),
+            serde_json::to_vec(&payload).unwrap(),
         )
         .unwrap();
-        let meta = client.read_local_metadata().unwrap();
-        assert_eq!(meta.content_sha256, "deadbeef");
-    }
 
+        let first = client.entries().await.unwrap();
+        let second = client.entries().await.unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "second call must return the cached Arc, not reparse the file",
+        );
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].name, "a/one");
+
+        client.invalidate_cache().await;
+        let third = client.entries().await.unwrap();
+        assert!(
+            !Arc::ptr_eq(&first, &third),
+            "after invalidation the next call must reparse",
+        );
+    }
 }

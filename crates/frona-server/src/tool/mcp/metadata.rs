@@ -1,19 +1,16 @@
-//! Data model + streaming reader for the prebuilt MCP registry dump.
+//! Data model + reader for the prebuilt MCP registry dump.
 //!
-//! The dump is a top-level JSON array of [`RegistryServerEntry`], xz-compressed.
-//! Queries walk the compressed file through a `serde::de::SeqAccess` visitor
-//! one entry at a time instead of parsing the full catalog into memory.
+//! The dump is a top-level JSON array of [`RegistryServerEntry`] stored
+//! uncompressed on disk. [`load_dump`] parses the whole file into a `Vec`;
+//! [`search_entries`] and [`fetch_entry`] operate on a borrowed slice so
+//! callers can hold the parsed catalog in memory.
 
-use std::fmt;
 use std::fs::File;
-use std::io::{BufReader, Read};
-use std::marker::PhantomData;
+use std::io::BufReader;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use serde::de::{DeserializeOwned, Deserializer as _, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
-use xz2::read::XzDecoder;
 
 use crate::core::error::AppError;
 
@@ -50,7 +47,7 @@ pub struct RegistryServerEntry {
     pub enrichment: Option<Enrichment>,
 
     /// Quality score baked in by the build pipeline (see `scripts/ranking.py`
-    /// in `fronalabs/mcp-registry-database`). `search_dump` sorts by this
+    /// in `fronalabs/mcp-registry-database`). `search_entries` sorts by this
     /// descending before applying the limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
@@ -185,23 +182,35 @@ pub struct PrebuiltMetadata {
     pub counts: serde_json::Value,
 }
 
-/// Stream the compressed dump at `path`, collect every entry whose name,
-/// description, or title contain `query` (case-insensitive substring), sort
-/// the matches by `score` descending, and return the top `limit`. An empty
-/// query matches every entry.
-pub fn search_dump(
-    path: &Path,
+/// Parse the JSON dump at `path` into a `Vec`. Intended to be called from a
+/// blocking context (e.g. `tokio::task::spawn_blocking`); the caller should
+/// cache the result rather than re-parsing per query.
+pub fn load_dump(path: &Path) -> Result<Vec<RegistryServerEntry>, AppError> {
+    let file = File::open(path).map_err(|e| {
+        AppError::Tool(format!(
+            "MCP registry cache not ready at {}: {e}",
+            path.display()
+        ))
+    })?;
+    let reader = BufReader::new(file);
+    serde_json::from_reader(reader)
+        .map_err(|e| AppError::Tool(format!("parsing MCP registry dump failed: {e}")))
+}
+
+/// Filter `entries` by case-insensitive substring match on name, description,
+/// or title; sort by `score` descending; return the top `limit` (cloned). An
+/// empty query matches every entry.
+pub fn search_entries(
+    entries: &[RegistryServerEntry],
     query: &str,
     limit: usize,
-) -> Result<Vec<RegistryServerEntry>, AppError> {
+) -> Vec<RegistryServerEntry> {
     let needle = query.to_lowercase();
-    let mut hits: Vec<RegistryServerEntry> = Vec::new();
-    stream_dump(path, |entry| {
-        if matches_query(&entry, &needle) {
-            hits.push(entry);
-        }
-        true
-    })?;
+    let mut hits: Vec<RegistryServerEntry> = entries
+        .iter()
+        .filter(|e| matches_query(e, &needle))
+        .cloned()
+        .collect();
     hits.sort_by(|a, b| {
         b.score
             .unwrap_or(0.0)
@@ -210,35 +219,15 @@ pub fn search_dump(
             .then_with(|| a.name.cmp(&b.name))
     });
     hits.truncate(limit);
-    Ok(hits)
+    hits
 }
 
-/// Stream the compressed dump at `path`, returning the first entry whose
-/// `name` exactly equals `name`, or `None` if not present.
-pub fn fetch_dump(path: &Path, name: &str) -> Result<Option<RegistryServerEntry>, AppError> {
-    let mut found: Option<RegistryServerEntry> = None;
-    stream_dump(path, |entry| {
-        if entry.name == name {
-            found = Some(entry);
-            return false;
-        }
-        true
-    })?;
-    Ok(found)
-}
-
-fn stream_dump<F>(path: &Path, on_item: F) -> Result<(), AppError>
-where
-    F: FnMut(RegistryServerEntry) -> bool,
-{
-    let file = File::open(path).map_err(|e| {
-        AppError::Tool(format!(
-            "MCP registry cache not ready at {}: {e}",
-            path.display()
-        ))
-    })?;
-    let reader = XzDecoder::new(BufReader::new(file));
-    stream_json_array::<_, RegistryServerEntry, _>(reader, on_item)
+/// Find the entry whose `name` exactly equals `name`.
+pub fn fetch_entry<'a>(
+    entries: &'a [RegistryServerEntry],
+    name: &str,
+) -> Option<&'a RegistryServerEntry> {
+    entries.iter().find(|e| e.name == name)
 }
 
 fn matches_query(entry: &RegistryServerEntry, needle_lc: &str) -> bool {
@@ -257,58 +246,6 @@ fn matches_query(entry: &RegistryServerEntry, needle_lc: &str) -> bool {
         return true;
     }
     false
-}
-
-/// Stream a top-level JSON array from `reader`, calling `on_item` for each
-/// element. Return `false` from `on_item` to stop collecting; the remaining
-/// array tail is drained as `IgnoredAny` so the deserializer finishes cleanly.
-fn stream_json_array<R, T, F>(reader: R, on_item: F) -> Result<(), AppError>
-where
-    R: Read,
-    T: DeserializeOwned,
-    F: FnMut(T) -> bool,
-{
-    struct ArrVisitor<T, F>(F, PhantomData<T>);
-
-    impl<'de, T, F> Visitor<'de> for ArrVisitor<T, F>
-    where
-        T: DeserializeOwned,
-        F: FnMut(T) -> bool,
-    {
-        type Value = ();
-
-        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "a JSON array of registry servers")
-        }
-
-        fn visit_seq<A>(mut self, mut seq: A) -> Result<(), A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut stopped = false;
-            loop {
-                if stopped {
-                    if seq.next_element::<serde::de::IgnoredAny>()?.is_none() {
-                        break;
-                    }
-                } else {
-                    match seq.next_element::<T>()? {
-                        Some(item) => {
-                            if !(self.0)(item) {
-                                stopped = true;
-                            }
-                        }
-                        None => break,
-                    }
-                }
-            }
-            Ok(())
-        }
-    }
-
-    let mut de = serde_json::Deserializer::from_reader(reader);
-    de.deserialize_seq(ArrVisitor(on_item, PhantomData))
-        .map_err(|e| AppError::Tool(format!("streaming MCP registry dump failed: {e}")))
 }
 
 #[cfg(test)]
@@ -346,14 +283,11 @@ mod tests {
         })
     }
 
-    fn write_dump(dir: &Path, entries: &[serde_json::Value]) -> std::path::PathBuf {
-        let path = dir.join("servers.json.xz");
-        let json = serde_json::to_vec(entries).unwrap();
-        let mut enc = xz2::write::XzEncoder::new(Vec::new(), 9);
-        std::io::Write::write_all(&mut enc, &json).unwrap();
-        let bytes = enc.finish().unwrap();
-        fs::write(&path, bytes).unwrap();
-        path
+    fn parse_entries(values: &[serde_json::Value]) -> Vec<RegistryServerEntry> {
+        values
+            .iter()
+            .map(|v| serde_json::from_value(v.clone()).unwrap())
+            .collect()
     }
 
     #[test]
@@ -369,71 +303,60 @@ mod tests {
     }
 
     #[test]
-    fn search_dump_matches_substring() {
+    fn load_dump_reads_uncompressed_json() {
         let dir = tempdir().unwrap();
-        let path = write_dump(
-            dir.path(),
-            &[
-                sample_entry("io.example.a/github-mcp", "GitHub integration"),
-                sample_entry("io.example.b/gmail-mcp", "Gmail client"),
-                sample_entry("io.example.c/slack", "Chat integration"),
-            ],
-        );
+        let path = dir.path().join("servers.json");
+        let payload = serde_json::to_vec(&[
+            sample_entry("a/one", "first"),
+            sample_entry("b/two", "second"),
+        ])
+        .unwrap();
+        fs::write(&path, payload).unwrap();
 
-        let hits = search_dump(&path, "github", 10).unwrap();
+        let entries = load_dump(&path).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "a/one");
+        assert_eq!(entries[1].name, "b/two");
+    }
+
+    #[test]
+    fn search_entries_matches_substring() {
+        let entries = parse_entries(&[
+            sample_entry("io.example.a/github-mcp", "GitHub integration"),
+            sample_entry("io.example.b/gmail-mcp", "Gmail client"),
+            sample_entry("io.example.c/slack", "Chat integration"),
+        ]);
+
+        let hits = search_entries(&entries, "github", 10);
         assert_eq!(hits.len(), 1);
         assert!(hits[0].name.contains("github-mcp"));
 
-        let match_all = search_dump(&path, "", 2).unwrap();
+        let match_all = search_entries(&entries, "", 2);
         assert_eq!(match_all.len(), 2, "limit caps the match-all case");
     }
 
     #[test]
-    fn search_dump_stops_early_at_limit() {
-        let dir = tempdir().unwrap();
-        let path = write_dump(
-            dir.path(),
-            &[
-                sample_entry("a/one", "shared"),
-                sample_entry("b/two", "shared"),
-                sample_entry("c/three", "shared"),
-                sample_entry("d/four", "shared"),
-            ],
-        );
-        let hits = search_dump(&path, "shared", 2).unwrap();
-        assert_eq!(hits.len(), 2);
-    }
-
-    #[test]
-    fn search_dump_sorts_by_score_desc_before_limit() {
-        let dir = tempdir().unwrap();
-        let path = write_dump(
-            dir.path(),
-            &[
-                sample_entry_scored("a/low", "shared", 1.0),
-                sample_entry_scored("b/high", "shared", 50.0),
-                sample_entry_scored("c/mid", "shared", 20.0),
-                sample_entry_scored("d/top", "shared", 99.0),
-            ],
-        );
-        let hits = search_dump(&path, "shared", 2).unwrap();
+    fn search_entries_sorts_by_score_desc_before_limit() {
+        let entries = parse_entries(&[
+            sample_entry_scored("a/low", "shared", 1.0),
+            sample_entry_scored("b/high", "shared", 50.0),
+            sample_entry_scored("c/mid", "shared", 20.0),
+            sample_entry_scored("d/top", "shared", 99.0),
+        ]);
+        let hits = search_entries(&entries, "shared", 2);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].name, "d/top");
         assert_eq!(hits[1].name, "b/high");
     }
 
     #[test]
-    fn fetch_dump_finds_exact_name() {
-        let dir = tempdir().unwrap();
-        let path = write_dump(
-            dir.path(),
-            &[
-                sample_entry("x/y", "first"),
-                sample_entry("x/z", "second"),
-            ],
-        );
-        let hit = fetch_dump(&path, "x/z").unwrap().unwrap();
+    fn fetch_entry_finds_exact_name() {
+        let entries = parse_entries(&[
+            sample_entry("x/y", "first"),
+            sample_entry("x/z", "second"),
+        ]);
+        let hit = fetch_entry(&entries, "x/z").unwrap();
         assert_eq!(hit.description, "second");
-        assert!(fetch_dump(&path, "not/here").unwrap().is_none());
+        assert!(fetch_entry(&entries, "not/here").is_none());
     }
 }
