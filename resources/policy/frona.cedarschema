@@ -134,6 +134,81 @@ namespace Policy {
         },
     };
 
+    // A platform/channel kind (e.g. "sms", "email", "telegram", "slack").
+    // Used as a parent of SignalSource to enable coarse channel-level rules
+    // via the `in` operator.
+    //
+    // Reference format: Policy::Channel::"<channel>"
+    entity Channel;
+
+    // A user-owned contact, with all known reach handles aggregated into a
+    // single Set so policies don't need to enumerate phone/email/username.
+    //
+    // Attributes:
+    //   resource.handles  — Set<String> of all known handles
+    //                       (e.g. {"+15551234", "sarah@example.com"})
+    //   resource.name     — Display name
+    //
+    // Reference format: Policy::Contact::"<contact_id>"
+    entity Contact in [User] {
+        handles: Set<String>,
+        name: String,
+    };
+
+    // An external source from which a Signal task receives candidate events
+    // (e.g. an SMS gateway, an email sender, a Telegram contact). Used as the
+    // resource for `receive_signal` authorization.
+    //
+    // Hierarchy: SignalSource in [Channel] — coarse channel targeting via `in`.
+    //
+    // Attributes:
+    //   resource.connector_id    — Adapter / space binding instance id
+    //                              (e.g. "space-personal-gmail"). Identifies
+    //                              the specific connector that produced the
+    //                              candidate, distinguishing multiple
+    //                              instances of the same channel kind.
+    //   resource.sender   — Raw sender handle on the wire ("+15551234",
+    //                              "2fa@bank.com"). "" if unknown.
+    //   resource.contact         — Optional Contact reference; present only
+    //                              when the candidate's sender resolved to a
+    //                              known Contact. Use `resource has contact`
+    //                              to guard.
+    //
+    // Reference format: Policy::SignalSource::"<connector_id>:<sender>"
+    //
+    // Examples:
+    //   // Block all email signals via `in`
+    //   forbid(principal, action == Policy::Action::"receive_signal",
+    //          resource in Policy::Channel::"email");
+    //
+    //   // Block a specific bank's 2FA across any handle the contact owns
+    //   forbid(principal, action == Policy::Action::"receive_signal", resource)
+    //       when {
+    //         resource has contact &&
+    //         "2fa@bank.com" in resource.contact.handles
+    //       };
+    //
+    //   // Block all signals from a quarantined connector
+    //   forbid(principal, action == Policy::Action::"receive_signal", resource)
+    //       when { resource.connector_id == "space-old-slack-deprecated" };
+    entity SignalSource in [Channel] {
+        connector_id: String,
+        sender: String,
+        contact?: Contact,
+    };
+
+    // Authorize an agent to receive a candidate event from a given external
+    // source. Evaluated by SignalService for every matched watch before firing.
+    //
+    // Principal: Agent that owns the Signal task    Resource: SignalSource
+    //
+    // Default policy fixture allows all `receive_signal` actions; operators
+    // add `forbid` policies for sensitive sources.
+    action receive_signal appliesTo {
+        principal: [Agent],
+        resource: [SignalSource],
+    };
+
     // A filesystem path or virtual path for sandbox read/write rules.
     //
     // ID formats:

@@ -31,6 +31,20 @@ pub enum PolicyAction {
     InvokeTool { tool_name: String, tool_group: String },
     DelegateTask { target_agent_id: String },
     SendMessage { target_agent_id: String },
+    ReceiveSignal {
+        connector_id: String,
+        channel_id: String,
+        sender: Option<String>,
+        contact: Option<SignalContact>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct SignalContact {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub handles: Vec<String>,
 }
 
 impl PolicyAction {
@@ -39,6 +53,7 @@ impl PolicyAction {
             PolicyAction::InvokeTool { .. } => "invoke_tool",
             PolicyAction::DelegateTask { .. } => "delegate_task",
             PolicyAction::SendMessage { .. } => "send_message",
+            PolicyAction::ReceiveSignal { .. } => "receive_signal",
         }
     }
 }

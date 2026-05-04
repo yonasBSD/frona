@@ -266,6 +266,14 @@ impl PolicyService {
             PolicyAction::InvokeTool { tool_name, .. } => tool_entity_uid(tool_name),
             PolicyAction::DelegateTask { target_agent_id } => agent_entity_uid(target_agent_id),
             PolicyAction::SendMessage { target_agent_id } => agent_entity_uid(target_agent_id),
+            PolicyAction::ReceiveSignal {
+                connector_id,
+                sender,
+                ..
+            } => super::schema::signal_source_entity_uid(
+                connector_id,
+                sender.as_deref().unwrap_or(""),
+            ),
         };
 
         let context = Context::empty();
@@ -292,6 +300,32 @@ impl PolicyService {
                     }
                 }
                 build_agent_entities(&agent.id, &principal_tools, target_agent_id, &target_tools)
+            }
+            PolicyAction::ReceiveSignal {
+                connector_id,
+                channel_id,
+                sender,
+                contact,
+            } => {
+                let all_defs = self.tool_manager.definitions(user_id).await;
+                let mut agent_tools = Vec::new();
+                for def in &all_defs {
+                    let resource = PolicyResource::Tool {
+                        id: def.id.clone(),
+                        group: def.provider_id.clone(),
+                    };
+                    if self.is_permitted(&agent.id, &resource, &cached.policy_set)? {
+                        agent_tools.push(def.id.clone());
+                    }
+                }
+                super::schema::build_signal_source_entities(
+                    &agent.id,
+                    &agent_tools,
+                    connector_id,
+                    channel_id,
+                    sender.as_deref(),
+                    contact.as_ref(),
+                )
             }
         };
 

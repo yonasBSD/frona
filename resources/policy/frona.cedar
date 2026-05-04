@@ -37,3 +37,11 @@ permit(
   action == Policy::Action::"send_message",
   resource
 );
+
+@id("receive-signal")
+@description("Allow all agents to receive signals from any source by default; operators add forbid policies for sensitive sources")
+permit(
+  principal,
+  action == Policy::Action::"receive_signal",
+  resource
+);
