@@ -43,6 +43,7 @@ pub fn principal_entity_uid(principal: &Principal) -> EntityUid {
         PrincipalKind::Agent => "Agent",
         PrincipalKind::McpServer => "Mcp",
         PrincipalKind::App => "App",
+        PrincipalKind::Channel => "Channel",
     };
     entity_uid(type_name, &principal.id)
 }

@@ -423,6 +423,11 @@ impl PolicyService {
                         "User is not a sandbox principal".into(),
                     ));
                 }
+                PrincipalKind::Channel => {
+                    return Err(AppError::Internal(
+                        "Channel is not a sandbox principal".into(),
+                    ));
+                }
             };
 
             let policy = super::sandbox::evaluate_sandbox_policy(
@@ -730,6 +735,7 @@ fn principal_kind_str(kind: &PrincipalKind) -> &'static str {
         PrincipalKind::Agent => "agent",
         PrincipalKind::McpServer => "mcp_server",
         PrincipalKind::App => "app",
+        PrincipalKind::Channel => "channel",
     }
 }
 
