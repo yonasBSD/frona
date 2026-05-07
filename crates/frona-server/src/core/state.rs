@@ -213,6 +213,7 @@ impl AppState {
         let token_service = TokenService::new(
             Arc::new(token_repo),
             jwt_service,
+            user_service.clone(),
             config.auth.access_token_expiry_secs,
             config.auth.refresh_token_expiry_secs,
         );
