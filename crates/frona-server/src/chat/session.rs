@@ -114,7 +114,7 @@ impl ChatSessionContext {
             .provider_registry()
             .resolve_model_group(&agent_config.model_group)?;
 
-        let stored_messages = state.chat_service.get_stored_messages(&chat.id).await;
+        let stored_messages = state.chat_service.get_stored_messages(&chat.id).await?;
         let tool_calls = state.chat_service
             .get_tool_calls(&chat.id)
             .await

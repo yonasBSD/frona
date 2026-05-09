@@ -121,7 +121,7 @@ pub(crate) async fn stream_message(
         }
     }
 
-    let stored_messages = state.chat_service.get_stored_messages(&chat_id).await;
+    let stored_messages = state.chat_service.get_stored_messages(&chat_id).await?;
     let (chat_summary, context_messages) = state
         .memory_service
         .get_conversation_context(&chat_id)
@@ -226,11 +226,20 @@ pub(crate) async fn stream_message(
 
         if !still_pending {
             tokio::spawn(async move {
-                let stored_messages = chat_service.get_stored_messages(&chat_id_clone).await;
-                let tool_calls = chat_service
-                    .get_tool_calls(&chat_id_clone)
-                    .await
-                    .unwrap_or_default();
+                let stored_messages = match chat_service.get_stored_messages(&chat_id_clone).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::error!(chat_id = %chat_id_clone, error = %e, "failed to load stored messages for resume; aborting");
+                        return;
+                    }
+                };
+                let tool_calls = match chat_service.get_tool_calls(&chat_id_clone).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::error!(chat_id = %chat_id_clone, error = %e, "failed to load tool calls for resume; aborting");
+                        return;
+                    }
+                };
                 let rig_history = pending_conv_builder.build(&stored_messages, &tool_calls, &pending_conv_ctx).await;
 
                 let handle = spawn_inference(InferenceRequest {

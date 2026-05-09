@@ -384,11 +384,22 @@ impl TaskExecutor {
     }
 
     async fn find_lifecycle_event(&self, chat_id: &str) -> Option<LifecycleAction> {
-        let messages = self.app_state.chat_service.get_stored_messages(chat_id).await;
+        let messages = match self.app_state.chat_service.get_stored_messages(chat_id).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(chat_id, error = %e, "find_lifecycle_event: failed to load stored messages");
+                return None;
+            }
+        };
 
         let deliverables = {
-            let tool_calls = self.app_state.chat_service
-                .get_tool_calls(chat_id).await.unwrap_or_default();
+            let tool_calls = match self.app_state.chat_service.get_tool_calls(chat_id).await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!(chat_id, error = %e, "find_lifecycle_event: failed to load tool calls");
+                    return None;
+                }
+            };
             tool_calls.into_iter().rev().find_map(|te| {
                 match te.tool_data {
                     Some(MessageTool::TaskCompletion { deliverables, .. }) if !deliverables.is_empty() => {
@@ -669,7 +680,7 @@ impl TaskExecutor {
         task: &Task,
         chat_id: &str,
     ) -> Result<(), AppError> {
-        let stored_messages = self.app_state.chat_service.get_stored_messages(chat_id).await;
+        let stored_messages = self.app_state.chat_service.get_stored_messages(chat_id).await?;
         if !stored_messages.is_empty() {
             return Ok(());
         }

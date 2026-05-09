@@ -129,7 +129,7 @@ async fn save_initial_message_saves_on_first_run() {
         .await
         .unwrap();
 
-    let messages = state.chat_service.get_stored_messages(&chat_id).await;
+    let messages = state.chat_service.get_stored_messages(&chat_id).await.unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].content, "Do something");
 }
@@ -150,7 +150,7 @@ async fn save_initial_message_skips_on_resume() {
         .await
         .unwrap();
 
-    let messages = state.chat_service.get_stored_messages(&chat_id).await;
+    let messages = state.chat_service.get_stored_messages(&chat_id).await.unwrap();
     assert_eq!(messages.len(), 1);
 }
 
@@ -212,7 +212,7 @@ async fn handle_error_marks_failed_and_delivers() {
     let source_messages = state
         .chat_service
         .get_stored_messages(&source_chat.id)
-        .await;
+        .await.unwrap();
     assert_eq!(source_messages.len(), 1);
     assert!(source_messages[0].content.contains("something broke"));
 }
@@ -253,7 +253,7 @@ async fn lifecycle_complete_event_detected() {
         .unwrap();
 
     // Verify the System message was saved
-    let messages = state.chat_service.get_stored_messages(&source_chat.id).await;
+    let messages = state.chat_service.get_stored_messages(&source_chat.id).await.unwrap();
     let system_msgs: Vec<_> = messages
         .iter()
         .filter(|m| m.role == MessageRole::System)
@@ -302,7 +302,7 @@ async fn lifecycle_defer_event_detected() {
         .await
         .unwrap();
 
-    let messages = state.chat_service.get_stored_messages(&task_chat.id).await;
+    let messages = state.chat_service.get_stored_messages(&task_chat.id).await.unwrap();
     let system_msgs: Vec<_> = messages
         .iter()
         .filter(|m| m.role == MessageRole::System)
@@ -398,7 +398,7 @@ async fn deliver_to_source_sends_to_delegation() {
     let messages = state
         .chat_service
         .get_stored_messages(&source_chat.id)
-        .await;
+        .await.unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].content, "All done");
 }
@@ -442,7 +442,7 @@ async fn deliver_to_source_sends_to_direct_with_source_chat() {
     let messages = state
         .chat_service
         .get_stored_messages(&source_chat.id)
-        .await;
+        .await.unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].content, "Self-task result");
 }
@@ -537,7 +537,7 @@ async fn deliver_to_source_signal_only_sends_empty_content() {
     let messages = state
         .chat_service
         .get_stored_messages(&source_chat.id)
-        .await;
+        .await.unwrap();
     assert_eq!(messages.len(), 1);
     assert!(messages[0].content.is_empty(), "Signal-only completion should have empty content");
 }
@@ -590,7 +590,7 @@ async fn deliver_to_source_saves_message_to_user_chat() {
     let messages = state
         .chat_service
         .get_stored_messages(&user_chat.id)
-        .await;
+        .await.unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].content, "Done");
 }
@@ -637,7 +637,7 @@ async fn lifecycle_event_saved_after_assistant_message() {
         .unwrap();
 
     // Verify ordering: assistant message comes before system event
-    let messages = state.chat_service.get_stored_messages(&chat.id).await;
+    let messages = state.chat_service.get_stored_messages(&chat.id).await.unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].role, MessageRole::Agent);
     assert_eq!(messages[0].content, "Here is my answer.");

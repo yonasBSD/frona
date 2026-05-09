@@ -409,7 +409,7 @@ impl ChatService {
             model_ref: model_group.main.clone(),
             user_id: user_id.to_string(),
         };
-        let tool_calls = self.get_tool_calls(chat_id).await.unwrap_or_default();
+        let tool_calls = self.get_tool_calls(chat_id).await?;
         let mut rig_history = conv_builder.build(&stored_messages, &tool_calls, &conv_ctx).await;
 
         rig_history.push(RigMessage::user(&req.content));
@@ -1092,11 +1092,8 @@ impl ChatService {
         Ok(())
     }
 
-    pub async fn get_stored_messages(&self, chat_id: &str) -> Vec<Message> {
-        self.message_repo
-            .find_by_chat_id(chat_id)
-            .await
-            .unwrap_or_default()
+    pub async fn get_stored_messages(&self, chat_id: &str) -> Result<Vec<Message>, AppError> {
+        self.message_repo.find_by_chat_id(chat_id).await
     }
 
     pub async fn find_chats_by_space_id(&self, space_id: &str) -> Result<Vec<Chat>, AppError> {

@@ -100,7 +100,7 @@ impl AnnotateTool {
         let recent = self
             .chat_service
             .get_stored_messages(&ctx.chat.id)
-            .await
+            .await?
             .into_iter()
             .rev()
             .find(|m| {
