@@ -90,6 +90,10 @@ pub struct MessageDelivery {
     pub sent_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivered_at: Option<DateTime<Utc>>,
+    /// Cursor: `0..tool_count` walks each tool call's `turn_text`;
+    /// `tool_count` is the trailing `Message.content`.
+    #[serde(default)]
+    pub tool_index: u32,
 }
 
 impl MessageDelivery {
@@ -102,6 +106,7 @@ impl MessageDelivery {
             last_error: None,
             sent_at: None,
             delivered_at: None,
+            tool_index: 0,
         }
     }
 }
@@ -125,8 +130,6 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub external_msg_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_address: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<MessageDelivery>,
@@ -147,7 +150,6 @@ impl Message {
             contact_id: None,
             status: None,
             reasoning: None,
-            external_msg_id: None,
             from_address: None,
             delivery: None,
             metadata: BTreeMap::new(),
@@ -165,7 +167,6 @@ pub struct MessageBuilder {
     contact_id: Option<String>,
     status: Option<MessageStatus>,
     reasoning: Option<Reasoning>,
-    external_msg_id: Option<String>,
     from_address: Option<String>,
     delivery: Option<MessageDelivery>,
     metadata: BTreeMap<String, serde_json::Value>,
@@ -207,11 +208,6 @@ impl MessageBuilder {
         self
     }
 
-    pub fn external_msg_id(mut self, id: impl Into<String>) -> Self {
-        self.external_msg_id = Some(id.into());
-        self
-    }
-
     pub fn from_address(mut self, addr: impl Into<String>) -> Self {
         self.from_address = Some(addr.into());
         self
@@ -234,7 +230,6 @@ impl MessageBuilder {
             contact_id: self.contact_id,
             status: self.status,
             reasoning: self.reasoning,
-            external_msg_id: self.external_msg_id,
             from_address: self.from_address,
             delivery: self.delivery,
             metadata: self.metadata,
@@ -316,8 +311,6 @@ pub struct MessageResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub external_msg_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub from_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery: Option<MessageDelivery>,
@@ -341,7 +334,6 @@ impl From<Message> for MessageResponse {
             contact_id: msg.contact_id,
             status: msg.status,
             reasoning: msg.reasoning.map(|r| r.content),
-            external_msg_id: msg.external_msg_id,
             from_address: msg.from_address,
             delivery: msg.delivery,
             tool_calls: vec![],
@@ -431,6 +423,26 @@ mod tests {
 
         let response: MessageResponse = msg.into();
         assert!(response.reasoning.is_none());
+    }
+
+    #[test]
+    fn message_delivery_pending_initializes_tool_index_zero() {
+        let now = Utc::now();
+        let d = MessageDelivery::pending(now);
+        assert_eq!(d.tool_index, 0);
+        assert_eq!(d.state, DeliveryState::Pending);
+        assert_eq!(d.attempts, 0);
+    }
+
+    #[test]
+    fn message_delivery_deserializes_without_tool_index_field() {
+        let json = serde_json::json!({
+            "state": "pending",
+            "attempts": 2,
+        });
+        let d: MessageDelivery = serde_json::from_value(json).unwrap();
+        assert_eq!(d.tool_index, 0);
+        assert_eq!(d.attempts, 2);
     }
 
     #[test]

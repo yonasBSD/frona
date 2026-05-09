@@ -38,6 +38,33 @@ impl From<TelegramConfig> for TelegramAdapter {
     }
 }
 
+impl TelegramAdapter {
+    async fn send_bubble(&self, chat: &Chat, text: &str) -> Result<String, AppError> {
+        let (chat_id, thread_id) = parse_external_id(external_chat_id(chat)?)?;
+        let (rendered, parse_mode) = match telegram_markdown_v2::convert(text) {
+            Ok(v2) => (v2, Some(ParseMode::MarkdownV2)),
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "telegram MarkdownV2 conversion failed; falling back to plain text",
+                );
+                (super::markdown::to_plain(text), None)
+            }
+        };
+        let mut send = self.bot.send_message(Recipient::Id(chat_id), rendered);
+        if let Some(mode) = parse_mode {
+            send = send.parse_mode(mode);
+        }
+        if let Some(t) = thread_id {
+            send = send.message_thread_id(t);
+        }
+        let sent = send
+            .await
+            .map_err(|e| AppError::Internal(format!("Telegram sendMessage failed: {e}")))?;
+        Ok(sent.id.0.to_string())
+    }
+}
+
 #[async_trait]
 impl ChannelAdapter for TelegramAdapter {
     async fn on_connect(&self, ctx: &ChannelCtx) -> Result<(), AppError> {
@@ -68,38 +95,33 @@ impl ChannelAdapter for TelegramAdapter {
         Ok(())
     }
 
+    async fn on_tool(
+        &self,
+        tool_call: &crate::inference::tool_call::ToolCall,
+        _msg: &Message,
+        chat: &Chat,
+        _ctx: &ChannelCtx,
+    ) -> Result<(), AppError> {
+        let Some(text) = tool_call.turn_text.as_deref() else { return Ok(()) };
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        self.send_bubble(chat, text).await?;
+        Ok(())
+    }
+
     async fn on_send(
         &self,
         msg: &Message,
+        _tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
         _ctx: &ChannelCtx,
-    ) -> Result<String, AppError> {
-        let (chat_id, thread_id) = parse_external_id(external_chat_id(chat)?)?;
-
-        let (text, parse_mode) = match telegram_markdown_v2::convert(&msg.content) {
-            Ok(v2) => (v2, Some(ParseMode::MarkdownV2)),
-            Err(e) => {
-                tracing::debug!(
-                    msg_id = %msg.id,
-                    error = %e,
-                    "telegram MarkdownV2 conversion failed; falling back to plain text",
-                );
-                (super::markdown::to_plain(&msg.content), None)
-            }
-        };
-
-        let mut send = self.bot.send_message(Recipient::Id(chat_id), text);
-        if let Some(mode) = parse_mode {
-            send = send.parse_mode(mode);
+    ) -> Result<(), AppError> {
+        if msg.content.trim().is_empty() {
+            return Ok(());
         }
-        if let Some(t) = thread_id {
-            send = send.message_thread_id(t);
-        }
-        let sent = send
-            .await
-            .map_err(|e| AppError::Internal(format!("Telegram sendMessage failed: {e}")))?;
-
-        Ok(sent.id.0.to_string())
+        self.send_bubble(chat, &msg.content).await?;
+        Ok(())
     }
 
     async fn on_inference_active(
@@ -167,7 +189,6 @@ struct InboundUpdate {
 
 #[derive(Debug, Deserialize)]
 struct InboundMessage {
-    message_id: i64,
     #[serde(default)]
     message_thread_id: Option<i64>,
     chat: InboundChat,
@@ -237,7 +258,6 @@ async fn emit_inbound_update(
 
     let event = ExternalMessage {
         external_chat_id,
-        external_msg_id: Some(message.message_id.to_string()),
         sender_address,
         sender_external_id: Some(from.id.to_string()),
         sender_display_name: Some(display_name),

@@ -156,7 +156,6 @@ async fn telegram_webhook_creates_entities_with_metadata() {
         .find(|m| m["role"] == "user")
         .expect("user message persisted");
     assert_eq!(user_msg["content"], "hello");
-    assert_eq!(user_msg["external_msg_id"], "42");
 }
 
 #[tokio::test]
@@ -587,8 +586,25 @@ struct CapturedSend {
     content: String,
 }
 
+#[derive(Default)]
+#[allow(dead_code)] // msg_id is recorded for diagnostic purposes; only some tests assert on it.
+struct CapturedToolCall {
+    msg_id: String,
+    tool_call_id: String,
+    turn_text: Option<String>,
+}
+
+#[derive(Default)]
+struct StubConfig {
+    render_tool_segments: bool,
+    fail_on_tool: Option<(String, String)>,
+    fail_on_send: Option<String>,
+}
+
 struct StubAdapter {
     captured: std::sync::Arc<StdMutex<Vec<CapturedSend>>>,
+    tool_calls: std::sync::Arc<StdMutex<Vec<CapturedToolCall>>>,
+    config: std::sync::Arc<StdMutex<StubConfig>>,
 }
 
 #[async_trait::async_trait]
@@ -605,19 +621,59 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
     ) -> Result<(), frona::core::error::AppError> {
         Ok(())
     }
+    async fn on_tool(
+        &self,
+        tc: &frona::inference::tool_call::ToolCall,
+        msg: &frona::chat::message::models::Message,
+        _chat: &frona::chat::models::Chat,
+        _ctx: &frona::chat::channel::ChannelCtx,
+    ) -> Result<(), frona::core::error::AppError> {
+        let injected = {
+            let mut cfg = self.config.lock().unwrap();
+            if let Some((id, _)) = &cfg.fail_on_tool {
+                if id == &tc.id {
+                    cfg.fail_on_tool.take()
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some((_, err)) = injected {
+            return Err(frona::core::error::AppError::Internal(err));
+        }
+        let render = self.config.lock().unwrap().render_tool_segments;
+        if !render {
+            return Ok(());
+        }
+        self.tool_calls.lock().unwrap().push(CapturedToolCall {
+            msg_id: msg.id.clone(),
+            tool_call_id: tc.id.clone(),
+            turn_text: tc.turn_text.clone(),
+        });
+        Ok(())
+    }
     async fn on_send(
         &self,
         msg: &frona::chat::message::models::Message,
+        _tool_calls: &[frona::inference::tool_call::ToolCall],
         chat: &frona::chat::models::Chat,
         _ctx: &frona::chat::channel::ChannelCtx,
-    ) -> Result<String, frona::core::error::AppError> {
-        let sid = format!("ext-{}", msg.id);
+    ) -> Result<(), frona::core::error::AppError> {
+        let injected = self.config.lock().unwrap().fail_on_send.take();
+        if let Some(err) = injected {
+            return Err(frona::core::error::AppError::Internal(err));
+        }
+        if msg.content.trim().is_empty() {
+            return Ok(());
+        }
         self.captured.lock().unwrap().push(CapturedSend {
             msg_id: msg.id.clone(),
             chat_id: chat.id.clone(),
             content: msg.content.clone(),
         });
-        Ok(sid)
+        Ok(())
     }
     async fn on_webhook(
         &self,
@@ -632,7 +688,6 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
         let text = params.get("text").cloned().unwrap_or_default();
         let event = frona::chat::channel::models::ExternalMessage {
             external_chat_id: format!("test:{from}"),
-            external_msg_id: Some("ext-in-1".into()),
             sender_address: from.clone(),
             sender_external_id: Some(from.clone()),
             sender_display_name: Some(from),
@@ -649,6 +704,18 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
 
 struct StubFactory {
     captured: std::sync::Arc<StdMutex<Vec<CapturedSend>>>,
+    tool_calls: std::sync::Arc<StdMutex<Vec<CapturedToolCall>>>,
+    config: std::sync::Arc<StdMutex<StubConfig>>,
+}
+
+impl StubFactory {
+    fn new(captured: std::sync::Arc<StdMutex<Vec<CapturedSend>>>) -> Self {
+        Self {
+            captured,
+            tool_calls: std::sync::Arc::new(StdMutex::new(Vec::new())),
+            config: std::sync::Arc::new(StdMutex::new(StubConfig::default())),
+        }
+    }
 }
 
 impl frona::chat::channel::ChannelFactory for StubFactory {
@@ -666,6 +733,8 @@ impl frona::chat::channel::ChannelFactory for StubFactory {
     ) -> Result<Box<dyn frona::chat::channel::ChannelAdapter>, frona::core::error::AppError> {
         Ok(Box::new(StubAdapter {
             captured: self.captured.clone(),
+            tool_calls: self.tool_calls.clone(),
+            config: self.config.clone(),
         }))
     }
 }
@@ -698,9 +767,9 @@ async fn inbound_webhook_persists_message_via_stub_adapter() {
     let captured = std::sync::Arc::new(StdMutex::new(Vec::<CapturedSend>::new()));
     state
         .channel_registry
-        .register_factory(std::sync::Arc::new(StubFactory {
-            captured: captured.clone(),
-        }));
+        .register_factory(std::sync::Arc::new(StubFactory::new(
+            captured.clone()
+)));
 
     let app = build_app(state.clone());
     let resp = app
@@ -790,9 +859,9 @@ async fn agent_message_completion_dispatches_to_outbound_adapter() {
     let captured = std::sync::Arc::new(StdMutex::new(Vec::<CapturedSend>::new()));
     state
         .channel_registry
-        .register_factory(std::sync::Arc::new(StubFactory {
-            captured: captured.clone(),
-        }));
+        .register_factory(std::sync::Arc::new(StubFactory::new(
+            captured.clone()
+)));
 
     let app = build_app(state.clone());
     let resp = app
@@ -885,7 +954,6 @@ async fn agent_message_completion_dispatches_to_outbound_adapter() {
         msg.delivery.as_ref().map(|d| d.state),
         Some(frona::chat::message::models::DeliveryState::Sent),
     );
-    assert_eq!(msg.external_msg_id.as_deref(), Some(format!("ext-{}", executing.id).as_str()));
 }
 
 #[tokio::test]
@@ -901,9 +969,9 @@ async fn empty_agent_message_skips_adapter_and_marks_sent() {
     let captured = std::sync::Arc::new(StdMutex::new(Vec::<CapturedSend>::new()));
     state
         .channel_registry
-        .register_factory(std::sync::Arc::new(StubFactory {
-            captured: captured.clone(),
-        }));
+        .register_factory(std::sync::Arc::new(StubFactory::new(
+            captured.clone()
+)));
 
     let app = build_app(state.clone());
     let resp = app
@@ -993,4 +1061,377 @@ async fn empty_agent_message_skips_adapter_and_marks_sent() {
         captured.lock().unwrap().is_empty(),
         "adapter.on_send must NOT be called for an empty agent message",
     );
+}
+
+struct SegmentTestSetup {
+    state: frona::core::state::AppState,
+    chat: frona::chat::models::Chat,
+    agent_id: String,
+    captured: std::sync::Arc<StdMutex<Vec<CapturedSend>>>,
+    tool_calls_recorder: std::sync::Arc<StdMutex<Vec<CapturedToolCall>>>,
+    config: std::sync::Arc<StdMutex<StubConfig>>,
+    _tmp: tempfile::TempDir,
+}
+
+async fn setup_segment_test(prefix: &str) -> SegmentTestSetup {
+    use frona::core::repository::Repository;
+
+    let (state, _tmp) = test_app_state().await;
+    let (token, user_id) = register_user(
+        &state,
+        prefix,
+        &format!("{prefix}@example.com"),
+        "password123",
+    )
+    .await;
+    let agent = create_agent(&state, &token, &format!("{prefix}_agent")).await;
+    let agent_id = agent["id"].as_str().unwrap().to_string();
+
+    let captured = std::sync::Arc::new(StdMutex::new(Vec::<CapturedSend>::new()));
+    let factory = std::sync::Arc::new(StubFactory::new(captured.clone()));
+    let tool_calls_recorder = factory.tool_calls.clone();
+    let config = factory.config.clone();
+    state.channel_registry.register_factory(factory);
+
+    let app = build_app(state.clone());
+    let resp = app
+        .oneshot(auth_post_json(
+            "/api/spaces",
+            &token,
+            serde_json::json!({"name": format!("{prefix} Space")}),
+        ))
+        .await
+        .unwrap();
+    let space_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let now = chrono::Utc::now();
+    let channel = frona::chat::channel::Channel {
+        id: format!("channel:{}", uuid::Uuid::new_v4()),
+        user_id: user_id.clone(),
+        space_id: space_id.clone(),
+        provider: "test".into(),
+        agent_id: agent_id.clone(),
+        config: Default::default(),
+        dispatch_mode: frona::chat::channel::DispatchMode::Message,
+        status: frona::chat::channel::ChannelStatus::Disconnected,
+        error_message: None,
+        last_started_at: None,
+        user_address: None,
+        created_at: now,
+        updated_at: now,
+    };
+    SurrealRepo::<frona::chat::channel::Channel>::new(state.db.clone())
+        .create(&channel)
+        .await
+        .unwrap();
+    state
+        .channel_manager
+        .start_channel(&state, &channel)
+        .await
+        .unwrap();
+
+    let chat = state
+        .chat_service
+        .upsert_channel_chat(
+            &user_id,
+            &space_id,
+            &agent_id,
+            &channel.id,
+            &format!("test:{prefix}"),
+            None,
+        )
+        .await
+        .unwrap();
+    let chat = state.chat_service.find_chat(&chat.id).await.unwrap().unwrap();
+
+    SegmentTestSetup {
+        state,
+        chat,
+        agent_id,
+        captured,
+        tool_calls_recorder,
+        config,
+        _tmp,
+    }
+}
+
+async fn create_executing_msg(
+    state: &frona::core::state::AppState,
+    chat_id: &str,
+    agent_id: &str,
+) -> frona::chat::message::models::Message {
+    let resp = state
+        .chat_service
+        .create_executing_agent_message(
+            chat_id,
+            agent_id,
+            Some(frona::chat::message::models::MessageDelivery::pending(
+                chrono::Utc::now(),
+            )),
+        )
+        .await
+        .unwrap();
+    state
+        .chat_service
+        .find_message(&resp.id)
+        .await
+        .unwrap()
+        .expect("message just created")
+}
+
+async fn insert_tool_call(
+    state: &frona::core::state::AppState,
+    chat_id: &str,
+    msg_id: &str,
+    turn: u32,
+    turn_text: Option<&str>,
+) -> frona::inference::tool_call::ToolCall {
+    let id = uuid::Uuid::new_v4().to_string();
+    state
+        .chat_service
+        .begin_tool_call(
+            &id,
+            chat_id,
+            msg_id,
+            turn,
+            &format!("provider-{id}"),
+            "stub_tool",
+            &serde_json::json!({}),
+            None,
+            turn_text.map(String::from),
+        )
+        .await
+        .unwrap()
+}
+
+async fn complete_msg(
+    state: &frona::core::state::AppState,
+    msg_id: &str,
+    content: &str,
+) {
+    state
+        .chat_service
+        .complete_agent_message(msg_id, content.to_string(), vec![], None)
+        .await
+        .unwrap();
+}
+
+async fn reload_msg(
+    state: &frona::core::state::AppState,
+    msg_id: &str,
+) -> frona::chat::message::models::Message {
+    state
+        .chat_service
+        .find_message(msg_id)
+        .await
+        .unwrap()
+        .expect("message must exist")
+}
+
+async fn poll_delivery_state(
+    state: &frona::core::state::AppState,
+    msg_id: &str,
+    target: frona::chat::message::models::DeliveryState,
+) {
+    let svc = state.chat_service.clone();
+    let id = msg_id.to_string();
+    poll_until(&format!("delivery state == {target:?} for {msg_id}"), || {
+        let svc = svc.clone();
+        let id = id.clone();
+        async move {
+            svc.find_message(&id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|m| m.delivery.map(|d| d.state))
+                == Some(target)
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn segments_happy_path_tools_then_trailing() {
+    let setup = setup_segment_test("seg_happy").await;
+    setup.config.lock().unwrap().render_tool_segments = true;
+
+    let msg = create_executing_msg(&setup.state, &setup.chat.id, &setup.agent_id).await;
+    let tc0 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 0, Some("first")).await;
+    let tc1 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 1, Some("second")).await;
+
+    complete_msg(&setup.state, &msg.id, "tail").await;
+    poll_delivery_state(&setup.state, &msg.id, frona::chat::message::models::DeliveryState::Sent).await;
+
+    {
+        let tool_calls_seen = setup.tool_calls_recorder.lock().unwrap();
+        assert_eq!(tool_calls_seen.len(), 2, "on_tool fires once per tool segment");
+        assert_eq!(tool_calls_seen[0].tool_call_id, tc0.id);
+        assert_eq!(tool_calls_seen[0].turn_text.as_deref(), Some("first"));
+        assert_eq!(tool_calls_seen[1].tool_call_id, tc1.id);
+    }
+    {
+        let sends = setup.captured.lock().unwrap();
+        assert_eq!(sends.len(), 1, "on_send fires once for trailing");
+        assert_eq!(sends[0].content, "tail");
+    }
+
+    let final_msg = reload_msg(&setup.state, &msg.id).await;
+    assert_eq!(final_msg.delivery.unwrap().tool_index, 2, "cursor at final_index after trailing sent");
+}
+
+#[tokio::test]
+async fn segments_skip_empty_turn_text_at_manager() {
+    let setup = setup_segment_test("seg_skip").await;
+    setup.config.lock().unwrap().render_tool_segments = true;
+
+    let msg = create_executing_msg(&setup.state, &setup.chat.id, &setup.agent_id).await;
+    insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 0, Some("")).await;
+    insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 1, None).await;
+    let tc2 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 2, Some("real")).await;
+
+    complete_msg(&setup.state, &msg.id, "tail").await;
+    poll_delivery_state(&setup.state, &msg.id, frona::chat::message::models::DeliveryState::Sent).await;
+
+    {
+        let seen = setup.tool_calls_recorder.lock().unwrap();
+        assert_eq!(seen.len(), 1, "on_tool only invoked for non-empty turn_text");
+        assert_eq!(seen[0].tool_call_id, tc2.id);
+    }
+
+    let final_msg = reload_msg(&setup.state, &msg.id).await;
+    assert_eq!(final_msg.delivery.unwrap().tool_index, 3, "cursor at final_index after walking 3 tools");
+}
+
+#[tokio::test]
+async fn segments_empty_trailing_drains_to_sent() {
+    let setup = setup_segment_test("seg_drain").await;
+    setup.config.lock().unwrap().render_tool_segments = true;
+
+    let msg = create_executing_msg(&setup.state, &setup.chat.id, &setup.agent_id).await;
+    insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 0, Some("only this")).await;
+
+    complete_msg(&setup.state, &msg.id, "").await;
+    poll_delivery_state(&setup.state, &msg.id, frona::chat::message::models::DeliveryState::Sent).await;
+
+    assert_eq!(setup.tool_calls_recorder.lock().unwrap().len(), 1);
+    assert!(
+        setup.captured.lock().unwrap().is_empty(),
+        "on_send returns None for empty trailing → no captured send",
+    );
+}
+
+#[tokio::test]
+async fn segments_transient_failure_backs_off_and_resumes() {
+    let setup = setup_segment_test("seg_transient").await;
+    setup.config.lock().unwrap().render_tool_segments = true;
+
+    let msg = create_executing_msg(&setup.state, &setup.chat.id, &setup.agent_id).await;
+    let tc0 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 0, Some("first")).await;
+    let tc1 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 1, Some("second")).await;
+
+    setup.config.lock().unwrap().fail_on_tool = Some((tc1.id.clone(), "transient blip".into()));
+
+    complete_msg(&setup.state, &msg.id, "tail").await;
+    poll_delivery_state(&setup.state, &msg.id, frona::chat::message::models::DeliveryState::Failed).await;
+
+    {
+        let seen = setup.tool_calls_recorder.lock().unwrap();
+        assert_eq!(seen.len(), 1, "only segment 0 made it through");
+        assert_eq!(seen[0].tool_call_id, tc0.id);
+    }
+    {
+        let mid = reload_msg(&setup.state, &msg.id).await.delivery.unwrap();
+        assert_eq!(mid.tool_index, 1, "cursor halted at the failed segment");
+        assert!(mid.next_attempt_at.is_some(), "transient → backoff scheduled");
+        assert_eq!(mid.attempts, 1);
+    }
+
+    {
+        use frona::core::repository::Repository;
+        let repo = SurrealRepo::<frona::chat::message::models::Message>::new(setup.state.db.clone());
+        let mut m = setup.state.chat_service.find_message(&msg.id).await.unwrap().unwrap();
+        m.delivery.as_mut().unwrap().next_attempt_at = Some(chrono::Utc::now());
+        repo.update(&m).await.unwrap();
+    }
+    let _ = setup.state.channel_manager.retry_due_deliveries().await.unwrap();
+    poll_delivery_state(&setup.state, &msg.id, frona::chat::message::models::DeliveryState::Sent).await;
+
+    let seen_after = setup.tool_calls_recorder.lock().unwrap();
+    assert_eq!(seen_after.len(), 2, "retry sent segment 1");
+    assert_eq!(seen_after[1].tool_call_id, tc1.id);
+    drop(seen_after);
+    assert_eq!(setup.captured.lock().unwrap().len(), 1, "trailing sent once");
+}
+
+#[tokio::test]
+async fn segments_permanent_failure_halts() {
+    let setup = setup_segment_test("seg_permanent").await;
+    setup.config.lock().unwrap().render_tool_segments = true;
+
+    let msg = create_executing_msg(&setup.state, &setup.chat.id, &setup.agent_id).await;
+    insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 0, Some("first")).await;
+    let tc1 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 1, Some("second")).await;
+
+    setup.config.lock().unwrap().fail_on_tool =
+        Some((tc1.id.clone(), "Forbidden: bot was blocked".into()));
+
+    complete_msg(&setup.state, &msg.id, "tail").await;
+    poll_delivery_state(&setup.state, &msg.id, frona::chat::message::models::DeliveryState::Failed).await;
+
+    let delivery = reload_msg(&setup.state, &msg.id).await.delivery.unwrap();
+    assert_eq!(delivery.tool_index, 1);
+    assert!(
+        delivery.next_attempt_at.is_none(),
+        "permanent error must drain the retry queue (next_attempt_at=None)",
+    );
+}
+
+#[tokio::test]
+async fn segments_resume_after_partial_delivery() {
+    let setup = setup_segment_test("seg_resume").await;
+    setup.config.lock().unwrap().render_tool_segments = true;
+
+    let msg = create_executing_msg(&setup.state, &setup.chat.id, &setup.agent_id).await;
+    let _tc0 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 0, Some("a")).await;
+    let _tc1 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 1, Some("b")).await;
+    let tc2 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 2, Some("c")).await;
+
+    setup.state.channel_manager.record_segment_progress(&msg.id).await.unwrap();
+    setup.state.channel_manager.record_segment_progress(&msg.id).await.unwrap();
+    assert_eq!(reload_msg(&setup.state, &msg.id).await.delivery.unwrap().tool_index, 2);
+
+    complete_msg(&setup.state, &msg.id, "tail").await;
+    poll_delivery_state(&setup.state, &msg.id, frona::chat::message::models::DeliveryState::Sent).await;
+
+    let seen = setup.tool_calls_recorder.lock().unwrap();
+    assert_eq!(seen.len(), 1, "only segment 2 was sent on resume");
+    assert_eq!(seen[0].tool_call_id, tc2.id);
+    drop(seen);
+    assert_eq!(setup.captured.lock().unwrap().len(), 1, "trailing also sent");
+}
+
+#[tokio::test]
+async fn segments_executing_excluded_from_retry_then_completed_walks_full_list() {
+    let setup = setup_segment_test("seg_exec").await;
+    setup.config.lock().unwrap().render_tool_segments = true;
+
+    let msg = create_executing_msg(&setup.state, &setup.chat.id, &setup.agent_id).await;
+    let tc0 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 0, Some("a")).await;
+    let _tc1 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 1, Some("b")).await;
+
+    let retried = setup.state.channel_manager.retry_due_deliveries().await.unwrap();
+    assert_eq!(retried, 0, "Executing must not surface in retry queue");
+    assert!(setup.tool_calls_recorder.lock().unwrap().is_empty());
+    assert!(setup.captured.lock().unwrap().is_empty());
+
+    let _tc2 = insert_tool_call(&setup.state, &setup.chat.id, &msg.id, 2, Some("c")).await;
+
+    complete_msg(&setup.state, &msg.id, "tail").await;
+    poll_delivery_state(&setup.state, &msg.id, frona::chat::message::models::DeliveryState::Sent).await;
+
+    let seen = setup.tool_calls_recorder.lock().unwrap();
+    assert_eq!(seen.len(), 3, "all 3 tool segments delivered, including the late-appended one");
+    assert_eq!(seen[0].tool_call_id, tc0.id);
+    drop(seen);
+    assert_eq!(setup.captured.lock().unwrap().len(), 1);
 }

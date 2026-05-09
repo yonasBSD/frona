@@ -367,46 +367,73 @@ impl ChannelManager {
         });
     }
 
-    pub async fn record_delivery(
+    pub async fn record_segment_progress(
         &self,
         message_id: &str,
-        result: Result<String, String>,
     ) -> Result<(), AppError> {
         let mut message = self
             .message_repo
             .find_by_id(message_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
-
         let Some(ref mut delivery) = message.delivery else {
             return Ok(());
         };
-
         let now = Utc::now();
         delivery.last_attempt_at = Some(now);
+        delivery.tool_index = delivery.tool_index.saturating_add(1);
+        delivery.last_error = None;
+        delivery.next_attempt_at = Some(now);
+        self.message_repo.update(&message).await?;
+        Ok(())
+    }
 
-        match result {
-            Ok(external_msg_id) => {
-                delivery.state = DeliveryState::Sent;
-                delivery.sent_at = Some(now);
-                delivery.next_attempt_at = None;
-                delivery.last_error = None;
-                message.external_msg_id = Some(external_msg_id);
-            }
-            Err(err) => {
-                delivery.attempts = delivery.attempts.saturating_add(1);
-                delivery.last_error = Some(err.clone());
-                let terminal =
-                    is_permanent_error(&err) || delivery.attempts >= DELIVERY_MAX_ATTEMPTS;
-                delivery.state = DeliveryState::Failed;
-                delivery.next_attempt_at = if terminal {
-                    None
-                } else {
-                    Some(now + chrono::Duration::from_std(backoff_for(delivery.attempts)).unwrap())
-                };
-            }
-        }
+    pub async fn record_segment_complete(
+        &self,
+        message_id: &str,
+    ) -> Result<(), AppError> {
+        let mut message = self
+            .message_repo
+            .find_by_id(message_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
+        let Some(ref mut delivery) = message.delivery else {
+            return Ok(());
+        };
+        let now = Utc::now();
+        delivery.state = DeliveryState::Sent;
+        delivery.sent_at = Some(now);
+        delivery.last_attempt_at = Some(now);
+        delivery.next_attempt_at = None;
+        delivery.last_error = None;
+        self.message_repo.update(&message).await?;
+        Ok(())
+    }
 
+    pub async fn record_segment_failure(
+        &self,
+        message_id: &str,
+        err: String,
+    ) -> Result<(), AppError> {
+        let mut message = self
+            .message_repo
+            .find_by_id(message_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
+        let Some(ref mut delivery) = message.delivery else {
+            return Ok(());
+        };
+        let now = Utc::now();
+        delivery.last_attempt_at = Some(now);
+        delivery.attempts = delivery.attempts.saturating_add(1);
+        delivery.last_error = Some(err.clone());
+        let terminal = is_permanent_error(&err) || delivery.attempts >= DELIVERY_MAX_ATTEMPTS;
+        delivery.state = DeliveryState::Failed;
+        delivery.next_attempt_at = if terminal {
+            None
+        } else {
+            Some(now + chrono::Duration::from_std(backoff_for(delivery.attempts)).unwrap())
+        };
         self.message_repo.update(&message).await?;
         Ok(())
     }
@@ -464,16 +491,44 @@ impl ChannelManager {
             let Some((adapter, ctx)) = self.running_adapter(channel_id).await else {
                 continue;
             };
-            if let Err(e) = self.attempt_send(&msg, &chat, adapter.as_ref(), &ctx).await {
-                tracing::warn!(
-                    msg_id = %msg.id,
-                    channel_id = %channel_id,
-                    error = %e,
-                    "delivery retry persistence failed",
-                );
-            }
+            self.attempt_all_segments(msg, chat, adapter, ctx).await;
         }
         Ok(count)
+    }
+
+    pub async fn attempt_all_segments(
+        &self,
+        msg: Message,
+        chat: crate::chat::models::Chat,
+        adapter: Arc<dyn ChannelAdapter>,
+        ctx: ChannelCtx,
+    ) {
+        let mut current = msg;
+        for _ in 0..MAX_SEGMENTS_PER_DISPATCH {
+            match self.attempt_send(&current, &chat, adapter.as_ref(), &ctx).await {
+                Ok(SegmentOutcome::Continue) => {
+                    match self.message_repo.find_by_id(&current.id).await {
+                        Ok(Some(reloaded)) => current = reloaded,
+                        Ok(None) | Err(_) => return,
+                    }
+                }
+                Ok(SegmentOutcome::Done) | Ok(SegmentOutcome::Halted) => return,
+                Err(e) => {
+                    tracing::warn!(
+                        msg_id = %current.id,
+                        channel_id = %ctx.channel.id,
+                        error = %e,
+                        "attempt_send failed mid-loop",
+                    );
+                    return;
+                }
+            }
+        }
+        tracing::warn!(
+            msg_id = %current.id,
+            channel_id = %ctx.channel.id,
+            "attempt_all_segments hit MAX_SEGMENTS_PER_DISPATCH; aborting (likely a buggy adapter or runaway tool list)",
+        );
     }
 
     async fn attempt_send(
@@ -482,23 +537,79 @@ impl ChannelManager {
         chat: &crate::chat::models::Chat,
         adapter: &dyn ChannelAdapter,
         ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<SegmentOutcome, AppError> {
         if msg.status != Some(MessageStatus::Completed) {
-            return Ok(());
+            return Ok(SegmentOutcome::Done);
         }
-        // Twilio rejects empty bodies; drain instead of retrying.
-        if msg.content.trim().is_empty() {
+        let Some(delivery) = msg.delivery.as_ref() else {
+            return Ok(SegmentOutcome::Done);
+        };
+        if matches!(delivery.state, DeliveryState::Sent | DeliveryState::Delivered) {
+            return Ok(SegmentOutcome::Done);
+        }
+
+        let tool_calls = self
+            .chat_service
+            .get_tool_calls_by_message(&msg.id)
+            .await?;
+        let final_index = tool_calls.len() as u32;
+
+        if delivery.tool_index < final_index {
+            let tc = &tool_calls[delivery.tool_index as usize];
+            let has_text = tc
+                .turn_text
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            if !has_text {
+                self.record_segment_progress(&msg.id).await?;
+                return Ok(SegmentOutcome::Continue);
+            }
             tracing::debug!(
                 channel_id = %ctx.channel.id,
                 msg_id = %msg.id,
-                "outbound skip: agent message has empty content (marking Sent to drain retry queue)",
+                tool_index = delivery.tool_index,
+                "outbound dispatch: invoking adapter.on_tool",
             );
-            return self.record_delivery(&msg.id, Ok(String::new())).await;
+            match adapter.on_tool(tc, msg, chat, ctx).await {
+                Ok(()) => {
+                    self.record_segment_progress(&msg.id).await?;
+                    Ok(SegmentOutcome::Continue)
+                }
+                Err(e) => {
+                    self.record_segment_failure(&msg.id, e.to_string()).await?;
+                    Ok(SegmentOutcome::Halted)
+                }
+            }
+        } else {
+            tracing::debug!(
+                channel_id = %ctx.channel.id,
+                msg_id = %msg.id,
+                tool_index = delivery.tool_index,
+                "outbound dispatch: invoking adapter.on_send",
+            );
+            match adapter.on_send(msg, &tool_calls, chat, ctx).await {
+                Ok(()) => {
+                    self.record_segment_complete(&msg.id).await?;
+                    Ok(SegmentOutcome::Done)
+                }
+                Err(e) => {
+                    self.record_segment_failure(&msg.id, e.to_string()).await?;
+                    Ok(SegmentOutcome::Halted)
+                }
+            }
         }
-        let result = adapter.on_send(msg, chat, ctx).await.map_err(|e| e.to_string());
-        self.record_delivery(&msg.id, result).await
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SegmentOutcome {
+    Continue,
+    Done,
+    Halted,
+}
+
+const MAX_SEGMENTS_PER_DISPATCH: usize = 256;
 
 async fn run_outbound(
     adapter: Arc<dyn ChannelAdapter>,
@@ -530,7 +641,7 @@ async fn run_outbound(
                     }
                 };
 
-                if let Err(e) = handle_outbound_event(adapter.as_ref(), &state, &space_id, &ctx, &event).await {
+                if let Err(e) = handle_outbound_event(adapter.clone(), &state, &space_id, &ctx, &event).await {
                     tracing::warn!(channel_id = %ctx.channel.id, error = %e, "channel event dispatch failed");
                 }
             }
@@ -539,7 +650,7 @@ async fn run_outbound(
 }
 
 async fn handle_outbound_event(
-    adapter: &dyn ChannelAdapter,
+    adapter: Arc<dyn ChannelAdapter>,
     state: &AppState,
     space_id: &str,
     ctx: &ChannelCtx,
@@ -594,20 +705,12 @@ async fn handle_outbound_event(
                 channel_id = %ctx.channel.id,
                 msg_id = %msg.id,
                 chat_id = %chat.id,
-                "outbound dispatch: invoking adapter.on_send",
+                "outbound dispatch: starting segmented send loop",
             );
-            if let Err(e) = state
+            state
                 .channel_manager
-                .attempt_send(&msg, &chat, adapter, ctx)
-                .await
-            {
-                tracing::warn!(
-                    channel_id = %ctx.channel.id,
-                    msg_id = %msg.id,
-                    error = %e,
-                    "failed to record delivery outcome",
-                );
-            }
+                .attempt_all_segments(msg, chat, adapter.clone(), ctx.clone())
+                .await;
             Ok(())
         }
         BroadcastEventKind::Inference(kind) => {
@@ -774,11 +877,8 @@ async fn process_inbound(
         return Ok(None);
     }
 
-    let mut builder = Message::builder(&chat.id, MessageRole::User, event.content.clone())
+    let builder = Message::builder(&chat.id, MessageRole::User, event.content.clone())
         .from_address(event.sender_address.clone());
-    if let Some(ext_msg_id) = event.external_msg_id.as_deref() {
-        builder = builder.external_msg_id(ext_msg_id);
-    }
     let mut msg = builder.build();
     if let Some(c) = &real_contact {
         msg.contact_id = Some(c.id.clone());

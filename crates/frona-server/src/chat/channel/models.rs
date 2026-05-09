@@ -131,7 +131,6 @@ pub struct UpdateChannelRequest {
 #[derive(Debug, Clone)]
 pub struct ExternalMessage {
     pub external_chat_id: String,
-    pub external_msg_id: Option<String>,
     pub sender_address: String,
     /// `None` → no real Contact, synthesized for Cedar only.
     pub sender_external_id: Option<String>,
@@ -154,12 +153,23 @@ pub trait ChannelAdapter: Send + Sync {
 
     async fn on_disconnect(&self, ctx: &ChannelCtx) -> Result<(), AppError>;
 
+    async fn on_tool(
+        &self,
+        _tool_call: &crate::inference::tool_call::ToolCall,
+        _msg: &Message,
+        _chat: &Chat,
+        _ctx: &ChannelCtx,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+
     async fn on_send(
         &self,
         msg: &Message,
+        tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<String, AppError>;
+    ) -> Result<(), AppError>;
 
     async fn on_webhook(
         &self,

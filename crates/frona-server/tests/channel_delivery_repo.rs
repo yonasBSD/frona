@@ -72,6 +72,7 @@ async fn find_due_deliveries_returns_only_eligible_rows() {
         last_error: Some("transient".into()),
         sent_at: None,
         delivered_at: None,
+        tool_index: 0,
     });
     msg_repo.create(&eligible_failed).await.unwrap();
 
@@ -87,6 +88,7 @@ async fn find_due_deliveries_returns_only_eligible_rows() {
         last_error: Some("forbidden".into()),
         sent_at: None,
         delivered_at: None,
+        tool_index: 0,
     });
     msg_repo.create(&terminal).await.unwrap();
 
@@ -99,8 +101,8 @@ async fn find_due_deliveries_returns_only_eligible_rows() {
         last_error: None,
         sent_at: Some(past),
         delivered_at: None,
+        tool_index: 0,
     });
-    sent.external_msg_id = Some("ext-42".into());
     msg_repo.create(&sent).await.unwrap();
 
     let non_channel = agent_msg(&chat.id, None);
@@ -151,6 +153,7 @@ async fn resume_deliveries_pulls_backed_off_rows_forward() {
         last_error: Some("done".into()),
         sent_at: None,
         delivered_at: None,
+        tool_index: 0,
     });
     msg_repo.create(&terminal_a).await.unwrap();
 
@@ -168,4 +171,68 @@ async fn resume_deliveries_pulls_backed_off_rows_forward() {
         "channel B's backed-off row must not be resumed by channel A");
     assert!(!due_ids.contains(&terminal_a.id.as_str()),
         "terminal Failed rows must not be swept");
+}
+
+fn executing_agent_msg(chat_id: &str, delivery: Option<MessageDelivery>) -> Message {
+    let mut msg = Message::builder(chat_id, MessageRole::Agent, "hi".into())
+        .agent_id("agent-1".into())
+        .status(MessageStatus::Executing)
+        .build();
+    msg.delivery = delivery;
+    msg
+}
+
+#[tokio::test]
+async fn find_due_deliveries_excludes_executing_messages() {
+    let db = test_db().await;
+    let chat_repo = SurrealChatRepo::new(db.clone());
+    let msg_repo = SurrealMessageRepo::new(db.clone());
+
+    let chat = channel_chat("channel:tg", "dm:1");
+    chat_repo.create(&chat).await.unwrap();
+
+    let now = Utc::now();
+    let past = now - Duration::seconds(1);
+
+    let executing = executing_agent_msg(&chat.id, Some(MessageDelivery::pending(past)));
+    msg_repo.create(&executing).await.unwrap();
+
+    let completed = agent_msg(&chat.id, Some(MessageDelivery::pending(past)));
+    msg_repo.create(&completed).await.unwrap();
+
+    let due = msg_repo.find_due_deliveries(now, 50).await.unwrap();
+    let due_ids: Vec<&str> = due.iter().map(|m| m.id.as_str()).collect();
+    assert!(due_ids.contains(&completed.id.as_str()),
+        "completed message must surface in retry queue");
+    assert!(!due_ids.contains(&executing.id.as_str()),
+        "executing message must not surface in retry queue");
+}
+
+#[tokio::test]
+async fn resume_deliveries_skips_executing_messages() {
+    let db = test_db().await;
+    let chat_repo = SurrealChatRepo::new(db.clone());
+    let msg_repo = SurrealMessageRepo::new(db.clone());
+
+    let chat = channel_chat("channel:tg", "dm:1");
+    chat_repo.create(&chat).await.unwrap();
+
+    let now = Utc::now();
+    let future = now + Duration::hours(1);
+
+    let executing = executing_agent_msg(&chat.id, Some(MessageDelivery::pending(future)));
+    let completed = agent_msg(&chat.id, Some(MessageDelivery::pending(future)));
+    msg_repo.create(&executing).await.unwrap();
+    msg_repo.create(&completed).await.unwrap();
+
+    let updated = msg_repo
+        .resume_deliveries_for_channel("channel:tg", now)
+        .await
+        .unwrap();
+    assert_eq!(updated, 1, "only the Completed message should have been touched");
+
+    let due = msg_repo.find_due_deliveries(now, 50).await.unwrap();
+    let due_ids: Vec<&str> = due.iter().map(|m| m.id.as_str()).collect();
+    assert!(due_ids.contains(&completed.id.as_str()));
+    assert!(!due_ids.contains(&executing.id.as_str()));
 }

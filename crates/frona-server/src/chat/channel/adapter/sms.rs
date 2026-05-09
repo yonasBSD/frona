@@ -73,12 +73,18 @@ impl ChannelAdapter for SmsAdapter {
     async fn on_send(
         &self,
         msg: &Message,
+        tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<String, AppError> {
+    ) -> Result<(), AppError> {
+        let body = compose_sms_body(tool_calls, &msg.content);
+
+        if body.trim().is_empty() {
+            return Ok(());
+        }
+
         let to_number = parse_external_id(external_chat_id(chat)?)?;
         let status_callback = status_callback_url(&ctx.webhook_url, &msg.id);
-        let body = markdown::to_plain(&msg.content);
 
         tracing::info!(
             channel_id = %ctx.channel.id,
@@ -86,24 +92,13 @@ impl ChannelAdapter for SmsAdapter {
             from = %self.from_number,
             to = %to_number,
             content_len = body.len(),
-            "SMS on_send: dispatching to Twilio",
+            tool_count = tool_calls.len(),
+            "SMS on_send: dispatching composed body to Twilio",
         );
-        match self
-            .twilio()
+        self.twilio()
             .send_message(&self.from_number, &to_number, &body, &status_callback)
             .await
-        {
-            Ok(sid) => {
-                tracing::debug!(
-                    channel_id = %ctx.channel.id,
-                    msg_id = %msg.id,
-                    to = %to_number,
-                    twilio_sid = %sid,
-                    "SMS on_send: Twilio accepted message (carrier delivery status will arrive via webhook)",
-                );
-                Ok(sid)
-            }
-            Err(e) => {
+            .map_err(|e| {
                 tracing::warn!(
                     channel_id = %ctx.channel.id,
                     msg_id = %msg.id,
@@ -111,9 +106,15 @@ impl ChannelAdapter for SmsAdapter {
                     error = %e,
                     "SMS on_send: Twilio synchronously rejected message",
                 );
-                Err(e)
-            }
-        }
+                e
+            })?;
+        tracing::debug!(
+            channel_id = %ctx.channel.id,
+            msg_id = %msg.id,
+            to = %to_number,
+            "SMS on_send: Twilio accepted message (carrier delivery status will arrive via webhook)",
+        );
+        Ok(())
     }
 
     async fn on_webhook(
@@ -351,7 +352,6 @@ impl TwilioWebhook {
         );
         let event = ExternalMessage {
             external_chat_id: format!("sms:{}", self.from),
-            external_msg_id: (!self.message_sid.is_empty()).then(|| self.message_sid.clone()),
             sender_address: self.from.clone(),
             sender_external_id: Some(self.from.clone()),
             sender_display_name: Some(self.from.clone()),
@@ -455,6 +455,28 @@ fn parse_external_id(s: &str) -> Result<String, AppError> {
             "unrecognised SMS external_id format: {s:?}"
         ))),
     }
+}
+
+fn compose_sms_body(
+    tool_calls: &[crate::inference::tool_call::ToolCall],
+    trailing: &str,
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for tc in tool_calls {
+        if let Some(text) = tc.turn_text.as_deref() {
+            let plain = markdown::to_plain(text);
+            let trimmed = plain.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+        }
+    }
+    let trailing_plain = markdown::to_plain(trailing);
+    let trailing_trimmed = trailing_plain.trim();
+    if !trailing_trimmed.is_empty() {
+        parts.push(trailing_trimmed.to_string());
+    }
+    parts.join("\n\n")
 }
 
 fn forbidden(detail: &str) -> Response {
@@ -740,5 +762,74 @@ mod tests {
             canonical_webhook_url(base, Some("a=1&b=2")),
             format!("{base}?a=1&b=2"),
         );
+    }
+
+    fn tool_call_with_turn_text(text: Option<&str>) -> crate::inference::tool_call::ToolCall {
+        crate::inference::tool_call::ToolCall {
+            id: "tc-1".into(),
+            chat_id: "chat-1".into(),
+            message_id: "msg-1".into(),
+            turn: 0,
+            provider_call_id: "pc-1".into(),
+            name: "any".into(),
+            arguments: serde_json::Value::Null,
+            result: String::new(),
+            success: true,
+            duration_ms: 0,
+            tool_data: None,
+            system_prompt: None,
+            description: None,
+            turn_text: text.map(String::from),
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn compose_sms_body_joins_turn_texts_and_trailing_with_blank_line() {
+        let tcs = vec![
+            tool_call_with_turn_text(Some("hello")),
+            tool_call_with_turn_text(Some("here is the result")),
+        ];
+        let body = compose_sms_body(&tcs, "anything else?");
+        assert_eq!(body, "hello\n\nhere is the result\n\nanything else?");
+    }
+
+    #[test]
+    fn compose_sms_body_skips_empty_and_whitespace_turn_texts() {
+        let tcs = vec![
+            tool_call_with_turn_text(Some("")),
+            tool_call_with_turn_text(Some("   \n  ")),
+            tool_call_with_turn_text(None),
+            tool_call_with_turn_text(Some("real")),
+        ];
+        let body = compose_sms_body(&tcs, "tail");
+        assert_eq!(body, "real\n\ntail");
+    }
+
+    #[test]
+    fn compose_sms_body_returns_only_trailing_when_no_tools() {
+        let body = compose_sms_body(&[], "just trailing");
+        assert_eq!(body, "just trailing");
+    }
+
+    #[test]
+    fn compose_sms_body_returns_only_turn_texts_when_trailing_empty() {
+        let tcs = vec![tool_call_with_turn_text(Some("a")), tool_call_with_turn_text(Some("b"))];
+        let body = compose_sms_body(&tcs, "");
+        assert_eq!(body, "a\n\nb");
+    }
+
+    #[test]
+    fn compose_sms_body_empty_when_no_input() {
+        let body = compose_sms_body(&[], "");
+        assert_eq!(body, "");
+    }
+
+    #[test]
+    fn compose_sms_body_strips_markdown_formatting() {
+        let tcs = vec![tool_call_with_turn_text(Some("**bold** here"))];
+        let body = compose_sms_body(&tcs, "");
+        assert!(!body.contains("**"));
+        assert!(body.contains("bold"));
     }
 }
