@@ -8,4 +8,4 @@ python3-venv=3.11.2-1+b1
 curl=7.88.1-10+deb12u14
 jq=1.6-2.1+deb12u1
 # Installed after NodeSource repo setup
-nodejs=22.22.0-1nodesource1
+nodejs=22.22.2-1nodesource1
