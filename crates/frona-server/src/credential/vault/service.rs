@@ -76,7 +76,7 @@ impl VaultService {
         let (encrypted, nonce) = self.encrypt_config(&req.config)?;
         let now = Utc::now();
         let connection = VaultConnection {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             name: req.name,
             provider: req.provider,
@@ -217,7 +217,7 @@ impl VaultService {
         };
 
         let grant = VaultGrant {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             connection_id: connection_id.to_string(),
             vault_item_id: vault_item_id.to_string(),
@@ -243,7 +243,7 @@ impl VaultService {
     ) -> Result<VaultAccessLog, AppError> {
         ensure_non_user_principal(&principal)?;
         let log = VaultAccessLog {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             principal,
             chat_id: chat_id.to_string(),
@@ -339,7 +339,7 @@ impl VaultService {
     ) -> Result<PrincipalCredentialBinding, AppError> {
         ensure_non_user_principal(&principal)?;
         let binding = PrincipalCredentialBinding {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             principal,
             query: query.to_string(),
@@ -678,7 +678,7 @@ impl VaultService {
         };
 
         let credential = Credential {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             name,
             provider,

@@ -1166,7 +1166,7 @@ mod tests {
     fn stored(name: &str, text: &str) -> StoredPolicy {
         let now = chrono::Utc::now();
         StoredPolicy {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: Some("u".into()),
             name: name.into(),
             description: String::new(),

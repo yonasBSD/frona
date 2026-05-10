@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use rand::Rng;
-use uuid::Uuid;
 
 use crate::chat::broadcast::{BroadcastService, EntityAction};
 use crate::core::config::Config;
@@ -102,7 +101,7 @@ impl ChannelService {
 
         let now = Utc::now();
         let channel = Channel {
-            id: format!("channel:{}", Uuid::new_v4()),
+            id: format!("channel:{}", crate::core::repository::new_id()),
             user_id: user_id.to_string(),
             space_id: req.space_id,
             provider: req.provider,

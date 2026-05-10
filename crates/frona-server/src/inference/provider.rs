@@ -414,7 +414,7 @@ fn recover_tool_calls_from_text(
 
     for tc in extracted {
         contents.push(AssistantContent::ToolCall(ToolCall::new(
-            uuid::Uuid::new_v4().to_string(),
+            crate::core::repository::new_id(),
             ToolFunction::new(tc.tool_name, tc.arguments),
         )));
     }

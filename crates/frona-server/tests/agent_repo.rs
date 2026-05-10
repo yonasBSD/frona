@@ -35,7 +35,7 @@ async fn test_db() -> Surreal<Db> {
 fn test_agent(user_id: &str) -> Agent {
     let now = Utc::now();
     Agent {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: Some(user_id.to_string()),
         name: "Test Agent".to_string(),
         description: "A test agent".to_string(),

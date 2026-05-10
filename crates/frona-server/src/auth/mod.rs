@@ -52,7 +52,7 @@ impl AuthService {
         let password_hash = self.hash_password(&req.password)?;
         let now = chrono::Utc::now();
         let user = User {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             username: req.username,
             email: req.email,
             name: req.name,

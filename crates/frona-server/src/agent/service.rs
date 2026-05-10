@@ -91,7 +91,7 @@ impl AgentService {
             }
             custom_id
         } else {
-            uuid::Uuid::new_v4().to_string()
+            crate::core::repository::new_id()
         };
 
         let now = chrono::Utc::now();

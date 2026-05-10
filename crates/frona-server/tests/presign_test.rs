@@ -65,7 +65,7 @@ fn make_attachment(owner: &str, path: &str) -> Attachment {
 
 fn make_message_response(attachments: Vec<Attachment>) -> MessageResponse {
     MessageResponse {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         chat_id: "chat-1".to_string(),
         role: MessageRole::User,
         content: "hello".to_string(),

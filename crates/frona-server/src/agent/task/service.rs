@@ -44,7 +44,7 @@ impl TaskService {
         }
 
         let task = Task {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             agent_id: req.agent_id,
             space_id: req.space_id,
@@ -89,7 +89,7 @@ impl TaskService {
         }
         let now = chrono::Utc::now();
         let task = Task {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             agent_id,
             space_id: None,
@@ -329,7 +329,7 @@ impl TaskService {
     ) -> Result<Task, AppError> {
         let now = chrono::Utc::now();
         let task = Task {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             agent_id: agent_id.to_string(),
             space_id: None,

@@ -220,7 +220,7 @@ impl MessageBuilder {
 
     pub fn build(self) -> Message {
         Message {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             chat_id: self.chat_id,
             role: self.role,
             content: self.content,

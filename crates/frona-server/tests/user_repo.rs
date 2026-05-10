@@ -17,7 +17,7 @@ async fn test_db() -> Surreal<Db> {
 fn test_user() -> User {
     let now = Utc::now();
     User {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         username: "testuser".to_string(),
         email: "test@example.com".to_string(),
         name: "Test User".to_string(),

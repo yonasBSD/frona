@@ -143,7 +143,7 @@ async fn test_build_augmented_prompt_includes_new_entries_after_compaction() {
     let compacted_until = Utc::now() - Duration::seconds(60);
     let memory_repo: SurrealRepo<Memory> = SurrealRepo::new(db.clone());
     let compacted_memory = Memory {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         source_type: MemorySourceType::Agent,
         source_id: "agent-1".to_string(),
         content: "- Previously compacted memory".to_string(),
@@ -158,7 +158,7 @@ async fn test_build_augmented_prompt_includes_new_entries_after_compaction() {
 
     let repo: SurrealMemoryEntryRepo = SurrealRepo::new(db.clone());
     let new_entry = MemoryEntry {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         agent_id: "agent-1".to_string(),
         user_id: None,
         content: "Brand new memory after compaction".to_string(),

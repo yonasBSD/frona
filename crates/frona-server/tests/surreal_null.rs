@@ -19,7 +19,7 @@ async fn test_db() -> Surreal<Db> {
 fn test_agent(user_id: Option<&str>) -> Agent {
     let now = Utc::now();
     Agent {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: user_id.map(|s| s.to_string()),
         name: "Test Agent".to_string(),
         description: "A test agent".to_string(),
@@ -42,7 +42,7 @@ fn test_agent(user_id: Option<&str>) -> Agent {
 fn test_chat(user_id: &str, space_id: Option<&str>, title: Option<&str>) -> Chat {
     let now = Utc::now();
     Chat {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: user_id.to_string(),
         space_id: space_id.map(|s| s.to_string()),
         task_id: None,

@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use uuid::Uuid;
 
 use crate::auth::UserService;
 use crate::auth::ephemeral_token::EphemeralTokenGuard;
@@ -244,7 +243,7 @@ impl McpServerService {
             .unwrap_or(&entry.name);
         let slug = sanitize_slug(slug_source);
 
-        let id = Uuid::new_v4().to_string();
+        let id = crate::core::repository::new_id();
         self.verify_grants(user_id, &id, &req.credentials).await?;
 
         let workspace_dir = Path::new(self.manager.workspaces_path())

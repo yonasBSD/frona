@@ -168,7 +168,7 @@ async fn find_resumable_excludes_cron_templates() {
 
     let now = Utc::now();
     let direct_task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -206,7 +206,7 @@ async fn find_resumable_includes_in_progress_tasks() {
 
     let now = Utc::now();
     let task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -239,7 +239,7 @@ async fn find_resumable_includes_delegation_tasks() {
 
     let now = Utc::now();
     let task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-2".to_string(),
         space_id: None,
@@ -280,7 +280,7 @@ async fn find_resumable_excludes_terminal_states() {
         .enumerate()
     {
         let task = Task {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: frona::core::repository::new_id(),
             user_id: "user-1".to_string(),
             agent_id: "agent-1".to_string(),
             space_id: None,
@@ -314,7 +314,7 @@ async fn find_resumable_orders_by_created_at_asc() {
     let mut ids = Vec::new();
     for i in 0..3 {
         let task = Task {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: frona::core::repository::new_id(),
             user_id: "user-1".to_string(),
             agent_id: "agent-1".to_string(),
             space_id: None,
@@ -352,7 +352,7 @@ async fn find_resumable_mixed_scenario() {
 
     // Pending Direct — should resume
     let pending_direct = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -373,7 +373,7 @@ async fn find_resumable_mixed_scenario() {
 
     // InProgress Delegation — should resume
     let in_progress_delegation = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-2".to_string(),
         space_id: None,
@@ -404,7 +404,7 @@ async fn find_resumable_mixed_scenario() {
 
     // Completed Direct — should NOT resume
     let completed = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -425,7 +425,7 @@ async fn find_resumable_mixed_scenario() {
 
     // Failed Direct — should NOT resume
     let failed = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -466,7 +466,7 @@ async fn find_resumable_excludes_future_run_at() {
 
     // Task with future run_at — should NOT resume
     let future_task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -487,7 +487,7 @@ async fn find_resumable_excludes_future_run_at() {
 
     // Task with past run_at — should resume
     let past_task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -508,7 +508,7 @@ async fn find_resumable_excludes_future_run_at() {
 
     // Task with no run_at — should resume
     let immediate_task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -566,7 +566,7 @@ async fn mark_in_progress_then_find_resumable() {
 
     let now = Utc::now();
     let task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -606,7 +606,7 @@ async fn completed_during_execution_not_resumable() {
 
     let now = Utc::now();
     let task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -646,7 +646,7 @@ async fn failed_during_execution_not_resumable() {
 
     let now = Utc::now();
     let task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -684,7 +684,7 @@ async fn cancelled_during_execution_not_resumable() {
 
     let now = Utc::now();
     let task = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -765,7 +765,7 @@ async fn deferred_task_found_when_due() {
 
     // Deferred task due in the past
     let deferred_due = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -786,7 +786,7 @@ async fn deferred_task_found_when_due() {
 
     // Deferred task due in the future
     let deferred_future = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,
@@ -807,7 +807,7 @@ async fn deferred_task_found_when_due() {
 
     // Immediate task (no run_at)
     let immediate = Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,

@@ -110,7 +110,7 @@ impl PolicyService {
 
         let now = chrono::Utc::now();
         let policy = Policy {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: Some(user_id.to_string()),
             name,
             description: description.unwrap_or_default(),
@@ -561,7 +561,7 @@ impl PolicyService {
                 Edit::Create { name, policy_text } => {
                     let now = chrono::Utc::now();
                     let policy = super::models::Policy {
-                        id: uuid::Uuid::new_v4().to_string(),
+                        id: crate::core::repository::new_id(),
                         user_id: Some(plan.user_id.clone()),
                         name: name.clone(),
                         description: String::new(),
@@ -677,7 +677,7 @@ impl PolicyService {
             let now = chrono::Utc::now();
 
             let record = Policy {
-                id: uuid::Uuid::new_v4().to_string(),
+                id: crate::core::repository::new_id(),
                 user_id: None,
                 name: id.to_string(),
                 description,

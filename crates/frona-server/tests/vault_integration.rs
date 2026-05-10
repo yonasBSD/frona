@@ -173,7 +173,7 @@ async fn expired_grant_is_cleaned_up() {
         Arc::new(SurrealRepo::<VaultGrant>::new(db.clone()));
 
     let expired_grant = VaultGrant {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user1".into(),
         connection_id: conn.id,
         vault_item_id: "item1".into(),

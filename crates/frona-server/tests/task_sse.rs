@@ -144,7 +144,7 @@ async fn test_app_state_with_mock(
 fn make_task() -> Task {
     let now = Utc::now();
     Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "test-agent".to_string(),
         space_id: None,

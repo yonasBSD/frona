@@ -64,11 +64,11 @@ fn agent_message(chat_id: &str, content: &str, status: Option<MessageStatus>) ->
 
 fn tool_call(chat_id: &str, message_id: &str, turn: u32, name: &str) -> ToolCall {
     ToolCall {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         chat_id: chat_id.to_string(),
         message_id: message_id.to_string(),
         turn,
-        provider_call_id: format!("call-{}", uuid::Uuid::new_v4()),
+        provider_call_id: format!("call-{}", frona::core::repository::new_id()),
         name: name.to_string(),
         arguments: serde_json::json!({"query": "test"}),
         result: "tool output".to_string(),

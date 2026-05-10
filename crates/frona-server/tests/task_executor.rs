@@ -72,7 +72,7 @@ fn make_executor(state: &AppState) -> Arc<TaskExecutor> {
 fn make_task(kind: TaskKind) -> Task {
     let now = Utc::now();
     Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         agent_id: "agent-1".to_string(),
         space_id: None,

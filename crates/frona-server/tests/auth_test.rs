@@ -25,7 +25,7 @@ async fn test_db() -> Surreal<Db> {
 fn test_user() -> User {
     let now = Utc::now();
     User {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         username: "testuser".to_string(),
         email: "test@example.com".to_string(),
         name: "Test User".to_string(),
@@ -485,7 +485,7 @@ async fn test_expired_token_not_found_by_find_active() {
 
     let now = Utc::now();
     let token = ApiToken {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: "user-1".to_string(),
         name: "short-lived".to_string(),
         token_type: TokenType::Access,

@@ -131,7 +131,7 @@ impl ChatService {
     ) -> Result<ChatResponse, AppError> {
         let now = chrono::Utc::now();
         let chat = Chat {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             space_id: req.space_id,
             task_id: req.task_id,
@@ -228,7 +228,7 @@ impl ChatService {
         }
         let now = chrono::Utc::now();
         let chat = Chat {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user_id.to_string(),
             space_id: Some(space_id.to_string()),
             task_id: None,

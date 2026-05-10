@@ -230,7 +230,7 @@ async fn execute_tool_calls(
             .and_then(|obj| obj.remove("description"))
             .and_then(|v| v.as_str().map(String::from));
 
-        let te_id = uuid::Uuid::new_v4().to_string();
+        let te_id = crate::core::repository::new_id();
 
         event_tx.send(InferenceEvent {
             kind: InferenceEventKind::ToolCall {

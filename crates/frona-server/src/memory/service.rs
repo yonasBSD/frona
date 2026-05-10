@@ -180,7 +180,7 @@ impl MemoryService {
             id: existing_memory
                 .as_ref()
                 .map(|m| m.id.clone())
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                .unwrap_or_else(crate::core::repository::new_id),
             source_type: MemorySourceType::Chat,
             source_id: chat_id.to_string(),
             content: summary,
@@ -217,7 +217,7 @@ impl MemoryService {
         tracing::debug!(agent_id = %agent_id, content = %content, "Storing agent memory entry");
 
         let entry = MemoryEntry {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             agent_id: agent_id.to_string(),
             user_id: None,
             content: content.to_string(),
@@ -237,7 +237,7 @@ impl MemoryService {
         tracing::debug!(user_id = %user_id, content = %content, "Storing user memory entry");
 
         let entry = MemoryEntry {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             agent_id: String::new(),
             user_id: Some(user_id.to_string()),
             content: content.to_string(),
@@ -374,7 +374,7 @@ impl MemoryService {
             id: existing_memory
                 .as_ref()
                 .map(|m| m.id.clone())
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                .unwrap_or_else(crate::core::repository::new_id),
             source_type: MemorySourceType::User,
             source_id: user_id.to_string(),
             content: summary,
@@ -460,7 +460,7 @@ impl MemoryService {
             id: existing_memory
                 .as_ref()
                 .map(|m| m.id.clone())
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                .unwrap_or_else(crate::core::repository::new_id),
             source_type,
             source_id: source_id.to_string(),
             content: summary,
@@ -525,7 +525,7 @@ impl MemoryService {
             id: existing_memory
                 .as_ref()
                 .map(|m| m.id.clone())
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                .unwrap_or_else(crate::core::repository::new_id),
             source_type: MemorySourceType::Space,
             source_id: space_id.to_string(),
             content: summary,

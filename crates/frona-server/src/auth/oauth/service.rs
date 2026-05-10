@@ -208,7 +208,7 @@ impl OAuthService {
         {
             let now = Utc::now();
             let identity = OAuthIdentity {
-                id: uuid::Uuid::new_v4().to_string(),
+                id: crate::core::repository::new_id(),
                 user_id: existing_user.id.clone(),
                 external_sub,
                 external_email: external_email.clone(),
@@ -229,7 +229,7 @@ impl OAuthService {
         let username = AuthService::generate_unique_username(user_service, &base_username).await?;
 
         let new_user = User {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             username,
             email: external_email
                 .clone()
@@ -245,7 +245,7 @@ impl OAuthService {
         let user = user_service.create(&new_user).await?;
 
         let identity = OAuthIdentity {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: crate::core::repository::new_id(),
             user_id: user.id.clone(),
             external_sub,
             external_email,

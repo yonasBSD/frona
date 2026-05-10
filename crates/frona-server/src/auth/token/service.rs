@@ -61,7 +61,7 @@ impl TokenService {
     ) -> Result<CreatedToken, AppError> {
         let now = Utc::now();
         let expires_at = now + Duration::seconds(req.ttl_secs as i64);
-        let token_id = uuid::Uuid::new_v4().to_string();
+        let token_id = crate::core::repository::new_id();
 
         let owner = format!("user:{}", user.id);
         let (encoding_key, kid) = keypair_svc.get_signing_key(&owner).await?;
@@ -117,7 +117,7 @@ impl TokenService {
         keypair_svc: &KeyPairService,
         user: &User,
     ) -> Result<(String, String), AppError> {
-        let pair_id = uuid::Uuid::new_v4().to_string();
+        let pair_id = crate::core::repository::new_id();
         let principal = Principal::user(&user.id);
 
         let access = self

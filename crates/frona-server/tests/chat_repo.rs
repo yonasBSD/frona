@@ -23,7 +23,7 @@ async fn test_db() -> Surreal<Db> {
 fn test_chat(user_id: &str, agent_id: &str, task_id: Option<&str>) -> Chat {
     let now = Utc::now();
     Chat {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: user_id.to_string(),
         space_id: None,
         task_id: task_id.map(|s| s.to_string()),
@@ -41,7 +41,7 @@ fn test_chat(user_id: &str, agent_id: &str, task_id: Option<&str>) -> Chat {
 fn test_chat_in_space(user_id: &str, space_id: &str) -> Chat {
     let now = Utc::now();
     Chat {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: user_id.to_string(),
         space_id: Some(space_id.to_string()),
         task_id: None,
@@ -62,7 +62,7 @@ fn test_message(chat_id: &str, content: &str) -> Message {
 
 fn test_message_at(chat_id: &str, content: &str, created_at: chrono::DateTime<Utc>) -> Message {
     Message {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         chat_id: chat_id.to_string(),
         role: MessageRole::User,
         content: content.to_string(),
@@ -340,7 +340,7 @@ async fn test_delete_by_chat_id_does_not_affect_other_chats() {
 fn test_task(user_id: &str, agent_id: &str, chat_id: Option<&str>) -> Task {
     let now = Utc::now();
     Task {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: frona::core::repository::new_id(),
         user_id: user_id.to_string(),
         agent_id: agent_id.to_string(),
         space_id: None,
