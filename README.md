@@ -4,6 +4,15 @@
     </a>
 </p>
 
+<p align="center">
+    <a href="https://github.com/fronalabs/frona/releases"><img src="https://img.shields.io/github/v/release/fronalabs/frona?style=flat-square&color=blue" alt="Latest release"></a>
+    <img src="https://img.shields.io/badge/built_with-Rust-dea584?style=flat-square&logo=rust" alt="Built with Rust">
+    <a href="https://github.com/fronalabs/frona/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BSL_1.1-blue?style=flat-square" alt="License"></a>
+    <a href="https://github.com/fronalabs/frona/stargazers"><img src="https://img.shields.io/github/stars/fronalabs/frona?style=flat-square&logo=github" alt="GitHub stars"></a>
+    <a href="https://github.com/fronalabs/frona/pkgs/container/frona"><img src="https://img.shields.io/badge/ghcr.io-fronalabs%2Ffrona-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Container image"></a>
+    <a href="https://docs.frona.ai/"><img src="https://img.shields.io/badge/docs-frona.ai-8a3ffc?style=flat-square" alt="Documentation"></a>
+</p>
+
 Frona is a personal AI assistant. You create autonomous agents that browse the web, run code, build applications, make phone calls, connect to messaging channels, delegate work to each other, and remember context across conversations, all within sandboxed environments with controlled access to your files, network, and credentials. You give them a task and they figure out how to get it done.
 
 You deploy Frona on your own infrastructure and keep full control of your data. The platform is built from the ground up with security in mind, and the engine is written in Rust. So it's fast, lightweight, and runs everything in a single process.
