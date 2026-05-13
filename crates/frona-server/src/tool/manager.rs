@@ -270,7 +270,7 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
         Arc::new(ProduceFileTool::new(
             std::path::PathBuf::from(&state.config.storage.workspaces_path), prompts.clone(),
         )),
-        Arc::new(UpdateIdentityTool::new(state.db.clone(), prompts.clone())),
+        Arc::new(UpdateIdentityTool::new(state.agent_service.clone(), prompts.clone())),
         Arc::new(StoreAgentMemoryTool::new(
             state.memory_service.clone(), state.compaction_model_group(), prompts.clone(),
         )),
