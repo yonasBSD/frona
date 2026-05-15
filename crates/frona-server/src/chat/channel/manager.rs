@@ -190,15 +190,16 @@ impl ChannelManager {
             bare_id,
         );
 
+        let cancel = state.shutdown_token.child_token();
+
         let ctx = ChannelCtx {
             space,
             channel: channel.clone(),
             emit,
             webhook_url,
             channel_manager: state.channel_manager.clone(),
+            cancel: cancel.clone(),
         };
-
-        let cancel = state.shutdown_token.child_token();
 
         let connect_result = adapter.on_connect(&ctx).await;
         let connect_error = connect_result.as_ref().err().map(|e| e.to_string());

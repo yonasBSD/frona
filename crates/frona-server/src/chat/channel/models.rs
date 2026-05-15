@@ -145,6 +145,9 @@ pub struct ChannelCtx {
     pub emit: tokio::sync::mpsc::Sender<ExternalMessage>,
     pub channel_manager: std::sync::Arc<super::ChannelManager>,
     pub webhook_url: String,
+    /// Gateway adapters that spawn long-running tasks in `on_connect` MUST
+    /// subscribe to this: it's the only signal that `stop_channel` was called.
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 #[async_trait]
