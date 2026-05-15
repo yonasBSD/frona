@@ -383,6 +383,7 @@ impl AppState {
         let channel_manager = Arc::new(crate::chat::channel::ChannelManager::new(
             message_repo_for_channel,
             chat_service.clone(),
+            channel_service.clone(),
         ));
         Self {
             db: db.clone(),

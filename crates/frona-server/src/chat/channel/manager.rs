@@ -13,6 +13,7 @@ use crate::agent::execution;
 use crate::agent::models::Agent;
 use crate::chat::broadcast::{BroadcastEvent, BroadcastEventKind, EntityAction};
 use crate::chat::message::models::{DeliveryState, Message, MessageRole, MessageStatus};
+use crate::chat::channel::service::ChannelService;
 use crate::chat::message::repository::MessageRepository;
 use crate::chat::service::ChatService;
 use crate::contact::models::Contact;
@@ -84,17 +85,34 @@ pub struct ChannelManager {
     tasks: Arc<Mutex<HashMap<String, ChannelTask>>>,
     message_repo: Arc<dyn MessageRepository>,
     chat_service: ChatService,
+    channel_service: Arc<ChannelService>,
 }
 
 impl ChannelManager {
     pub fn new(
         message_repo: Arc<dyn MessageRepository>,
         chat_service: ChatService,
+        channel_service: Arc<ChannelService>,
     ) -> Self {
         Self {
             tasks: Arc::new(Mutex::new(HashMap::new())),
             message_repo,
             chat_service,
+            channel_service,
+        }
+    }
+
+    pub async fn report_failure(&self, channel_id: &str, reason: String) {
+        if let Err(e) = self
+            .channel_service
+            .mark_status(channel_id, ChannelStatus::Failed, Some(reason))
+            .await
+        {
+            tracing::warn!(
+                channel_id = %channel_id,
+                error = %e,
+                "report_failure: could not persist Failed status",
+            );
         }
     }
 
