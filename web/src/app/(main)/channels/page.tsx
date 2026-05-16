@@ -27,6 +27,13 @@ interface UserAddress {
   paired_at: string | null;
 }
 
+interface RetryConfig {
+  max_retries: number;
+  initial_backoff_ms: number;
+  backoff_multiplier: number;
+  max_backoff_ms: number;
+}
+
 interface Channel {
   id: string;
   user_id: string;
@@ -39,6 +46,7 @@ interface Channel {
   error_message: string | null;
   last_started_at: string | null;
   user_address: UserAddress | null;
+  retry: RetryConfig | null;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +67,53 @@ const DISPATCH_MODE_LABEL: Record<string, string> = {
   message: "Process as your message",
   signal: "Hand off to a waiting agent",
 };
+
+const RETRY_FOREVER = 4294967295;
+const CHANNEL_RETRY_DEFAULTS: RetryConfig = {
+  max_retries: RETRY_FOREVER,
+  initial_backoff_ms: 1000,
+  backoff_multiplier: 2.0,
+  max_backoff_ms: 60000,
+};
+
+function RetryNumberInput({
+  label,
+  value,
+  placeholder,
+  step,
+  forever,
+  onChange,
+}: {
+  label: string;
+  value: number | undefined;
+  placeholder?: string;
+  step?: number;
+  forever?: boolean;
+  onChange: (v: number | null) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-secondary">{label}</span>
+      <input
+        type="number"
+        min={0}
+        step={step ?? 1}
+        value={forever ? "" : (value ?? "")}
+        placeholder={forever ? "Forever" : placeholder}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === "") {
+            onChange(null);
+          } else {
+            const n = Number(raw);
+            onChange(Number.isFinite(n) ? n : null);
+          }
+        }}
+        className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
+      />
+    </label>
+  );
+}
 
 interface ChannelManifest {
   id: string;
@@ -119,6 +174,7 @@ function ChannelDetailPage() {
   const [agentId, setAgentId] = useState("");
   const [dispatchMode, setDispatchMode] = useState<"message" | "signal">("message");
   const [config, setConfig] = useState<Record<string, string>>({});
+  const [retry, setRetry] = useState<RetryConfig | null>(null);
 
   // Picker writes are staged locally; the page Save button commits pending
   // grants and deleted grants alongside config changes so the swap is atomic.
@@ -166,6 +222,7 @@ function ChannelDetailPage() {
       setAgentId(c.agent_id);
       setDispatchMode(c.dispatch_mode);
       setConfig(c.config ?? {});
+      setRetry(c.retry);
       setConnections(new Map(conns.map((cn) => [cn.id, cn])));
       setGrants(
         allGrants.filter(
@@ -205,6 +262,8 @@ function ChannelDetailPage() {
       if (dispatchMode !== channel.dispatch_mode) patch.dispatch_mode = dispatchMode;
       const cfgChanged = JSON.stringify(config) !== JSON.stringify(channel.config ?? {});
       if (cfgChanged) patch.config = config;
+      const retryChanged = JSON.stringify(retry) !== JSON.stringify(channel.retry);
+      if (retryChanged) patch.retry = retry;
       if (Object.keys(patch).length > 0) {
         await api.patch(`/api/channels/${channelId}`, patch);
       }
@@ -692,6 +751,79 @@ function ChannelDetailPage() {
                   </div>
                 </SectionPanel>
               )}
+
+              <SectionPanel>
+                <h3 className="text-sm font-medium text-text-primary mb-3">Retry policy</h3>
+                <p className="text-xs text-text-tertiary mb-4">
+                  Override the channel-restart backoff for this channel. Leave blank to inherit the
+                  global default. Set max retries to <code>0</code> to disable auto-retry.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <RetryNumberInput
+                    label="Max retries"
+                    value={retry?.max_retries}
+                    placeholder="Forever"
+                    onChange={(v) => {
+                      const next = retry ?? { ...CHANNEL_RETRY_DEFAULTS };
+                      setRetry({ ...next, max_retries: v ?? CHANNEL_RETRY_DEFAULTS.max_retries });
+                      setDirty(true);
+                    }}
+                    forever={retry?.max_retries === RETRY_FOREVER}
+                  />
+                  <RetryNumberInput
+                    label="Initial backoff (ms)"
+                    value={retry?.initial_backoff_ms}
+                    placeholder={`${CHANNEL_RETRY_DEFAULTS.initial_backoff_ms}`}
+                    onChange={(v) => {
+                      const next = retry ?? { ...CHANNEL_RETRY_DEFAULTS };
+                      setRetry({
+                        ...next,
+                        initial_backoff_ms: v ?? CHANNEL_RETRY_DEFAULTS.initial_backoff_ms,
+                      });
+                      setDirty(true);
+                    }}
+                  />
+                  <RetryNumberInput
+                    label="Backoff multiplier"
+                    value={retry?.backoff_multiplier}
+                    placeholder={`${CHANNEL_RETRY_DEFAULTS.backoff_multiplier}`}
+                    step={0.1}
+                    onChange={(v) => {
+                      const next = retry ?? { ...CHANNEL_RETRY_DEFAULTS };
+                      setRetry({
+                        ...next,
+                        backoff_multiplier: v ?? CHANNEL_RETRY_DEFAULTS.backoff_multiplier,
+                      });
+                      setDirty(true);
+                    }}
+                  />
+                  <RetryNumberInput
+                    label="Max backoff (ms)"
+                    value={retry?.max_backoff_ms}
+                    placeholder={`${CHANNEL_RETRY_DEFAULTS.max_backoff_ms}`}
+                    onChange={(v) => {
+                      const next = retry ?? { ...CHANNEL_RETRY_DEFAULTS };
+                      setRetry({
+                        ...next,
+                        max_backoff_ms: v ?? CHANNEL_RETRY_DEFAULTS.max_backoff_ms,
+                      });
+                      setDirty(true);
+                    }}
+                  />
+                </div>
+                {retry !== null && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRetry(null);
+                      setDirty(true);
+                    }}
+                    className="mt-3 text-xs text-text-secondary hover:text-text-primary transition"
+                  >
+                    Reset to inherit global default
+                  </button>
+                )}
+              </SectionPanel>
             </div>
           )}
 
