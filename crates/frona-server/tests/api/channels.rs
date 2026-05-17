@@ -943,13 +943,7 @@ async fn agent_message_completion_dispatches_to_outbound_adapter() {
 
     let executing = state
         .chat_service
-        .create_executing_agent_message(
-            &chat.id,
-            &agent_id,
-            Some(frona::chat::message::models::MessageDelivery::pending(
-                chrono::Utc::now(),
-            )),
-        )
+        .create_executing_agent_message(&chat.id, &agent_id)
         .await
         .unwrap();
     state
@@ -981,6 +975,107 @@ async fn agent_message_completion_dispatches_to_outbound_adapter() {
     assert_eq!(
         msg.delivery.as_ref().map(|d| d.state),
         Some(frona::chat::message::models::DeliveryState::Sent),
+    );
+}
+
+/// Regression: a `save_agent_message` row (status=None - the `send_message`
+/// tool path) must reach the channel adapter. Previously `attempt_send`'s
+/// inner status filter required `Some(Completed)`, dropping these silently.
+#[tokio::test]
+async fn fire_and_forget_agent_message_dispatches_to_outbound_adapter() {
+    use frona::core::repository::Repository;
+
+    let (state, _tmp) = test_app_state().await;
+    let (token, user_id) =
+        register_user(&state, "e2eff", "e2eff@example.com", "password123").await;
+    let agent = create_agent(&state, &token, "E2eFfAgent").await;
+    let agent_id = agent["id"].as_str().unwrap().to_string();
+
+    let captured = std::sync::Arc::new(StdMutex::new(Vec::<CapturedSend>::new()));
+    state
+        .channel_registry
+        .register_factory(std::sync::Arc::new(StubFactory::new(captured.clone())));
+
+    let app = build_app(state.clone());
+    let resp = app
+        .oneshot(auth_post_json(
+            "/api/spaces",
+            &token,
+            serde_json::json!({"name": "Fire-and-forget"}),
+        ))
+        .await
+        .unwrap();
+    let space_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let now = chrono::Utc::now();
+    let channel = frona::chat::channel::Channel {
+        id: format!("channel:{}", frona::core::repository::new_id()),
+        user_id: user_id.clone(),
+        space_id: space_id.clone(),
+        provider: "test".into(),
+        agent_id: agent_id.clone(),
+        config: Default::default(),
+        dispatch_mode: frona::chat::channel::DispatchMode::Message,
+        status: frona::chat::channel::ChannelStatus::Disconnected,
+        error_message: None,
+        last_started_at: None,
+        user_address: None,
+        setup: None,
+        retry: None,
+        created_at: now,
+        updated_at: now,
+        webhook_url: None,
+    };
+    SurrealRepo::<frona::chat::channel::Channel>::new(state.db.clone())
+        .create(&channel)
+        .await
+        .unwrap();
+    state.channel_manager.start_channel(&state, &channel).await.unwrap();
+
+    let chat = state
+        .chat_service
+        .upsert_channel_chat(
+            &user_id,
+            &space_id,
+            &agent_id,
+            &channel.id,
+            "test:+15559876543",
+            None,
+        )
+        .await
+        .unwrap();
+
+    let response = state
+        .chat_service
+        .save_agent_message(
+            &chat.id,
+            &agent_id,
+            "💧 Time to drink water!".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let captured_for_poll = captured.clone();
+    poll_until("on_send invoked for fire-and-forget", || {
+        let c = captured_for_poll.clone();
+        async move { !c.lock().unwrap().is_empty() }
+    })
+    .await;
+
+    {
+        let calls = captured.lock().unwrap();
+        assert_eq!(calls.len(), 1, "exactly one outbound dispatch");
+        assert_eq!(calls[0].chat_id, chat.id);
+        assert_eq!(calls[0].content, "💧 Time to drink water!");
+        assert_eq!(calls[0].msg_id, response.id);
+    }
+
+    let msg = state.chat_service.get_message(&user_id, &response.id).await.unwrap();
+    assert_eq!(
+        msg.delivery.as_ref().map(|d| d.state),
+        Some(frona::chat::message::models::DeliveryState::Sent),
+        "delivery must be marked Sent after dispatch",
     );
 }
 
@@ -1056,13 +1151,7 @@ async fn empty_agent_message_skips_adapter_and_marks_sent() {
 
     let executing = state
         .chat_service
-        .create_executing_agent_message(
-            &chat.id,
-            &agent_id,
-            Some(frona::chat::message::models::MessageDelivery::pending(
-                chrono::Utc::now(),
-            )),
-        )
+        .create_executing_agent_message(&chat.id, &agent_id)
         .await
         .unwrap();
     state
@@ -1196,13 +1285,14 @@ async fn create_executing_msg(
 ) -> frona::chat::message::models::Message {
     let resp = state
         .chat_service
-        .create_executing_agent_message(
-            chat_id,
-            agent_id,
-            Some(frona::chat::message::models::MessageDelivery::pending(
-                chrono::Utc::now(),
-            )),
-        )
+        .create_executing_agent_message(chat_id, agent_id)
+        .await
+        .unwrap();
+    // Production stamps Pending lazily on first dispatch; tests want it
+    // set up front so the segment state machine has something to update.
+    state
+        .channel_manager
+        .ensure_pending_delivery(&resp.id)
         .await
         .unwrap();
     state

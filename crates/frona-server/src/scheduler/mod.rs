@@ -482,7 +482,7 @@ async fn execute_background_agent(
     let chat = state.chat_service.find_chat(chat_id).await?
         .ok_or_else(|| AppError::NotFound("Chat not found".into()))?;
     let agent_msg = state.chat_service
-        .create_executing_agent_message(chat_id, &chat.agent_id, None)
+        .create_executing_agent_message(chat_id, &chat.agent_id)
         .await?;
     let agent_msg_id = agent_msg.id.clone();
 

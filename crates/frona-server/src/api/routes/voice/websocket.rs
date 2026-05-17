@@ -220,7 +220,7 @@ async fn handle_voice_turn(
             Ok(Some(msg)) => msg.id,
             _ => {
                 let msg = state.chat_service
-                    .create_executing_agent_message(chat_id, &chat.agent_id, None)
+                    .create_executing_agent_message(chat_id, &chat.agent_id)
                     .await?;
                 msg.id
             }

@@ -371,6 +371,13 @@ impl ChannelManager {
                     "delivery resume_deliveries failed at spawn",
                 );
             }
+            if let Err(e) = self.reconcile_message_delivery(channel).await {
+                tracing::warn!(
+                    channel_id = %channel.id,
+                    error = %e,
+                    "outbound: reconcile_message_delivery failed at spawn",
+                );
+            }
         } else {
             state
                 .channel_service
@@ -541,6 +548,25 @@ impl ChannelManager {
         Ok(())
     }
 
+    pub async fn ensure_pending_delivery(
+        &self,
+        message_id: &str,
+    ) -> Result<(), AppError> {
+        let mut message = self
+            .message_repo
+            .find_by_id(message_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
+        if message.delivery.is_some() {
+            return Ok(());
+        }
+        message.delivery = Some(crate::chat::message::models::MessageDelivery::pending(
+            Utc::now(),
+        ));
+        self.message_repo.update(&message).await?;
+        Ok(())
+    }
+
     pub async fn record_segment_complete(
         &self,
         message_id: &str,
@@ -627,6 +653,41 @@ impl ChannelManager {
             .await
     }
 
+    /// Stamps `Pending` on orphan Completed messages - but does NOT
+    /// dispatch directly. At channel start the adapter transport may not
+    /// be handshake-complete; letting the retry poller pick them up avoids
+    /// spurious "client not connected" failures and keeps dispatch
+    /// single-sourced.
+    pub async fn reconcile_message_delivery(&self, channel: &Channel) -> Result<u64, AppError> {
+        if channel.dispatch_mode != DispatchMode::Message {
+            return Ok(0);
+        }
+        let orphans = self
+            .message_repo
+            .find_undelivered_completed_for_channel(&channel.id)
+            .await?;
+        let count = orphans.len() as u64;
+        if count == 0 {
+            return Ok(0);
+        }
+        tracing::info!(
+            channel_id = %channel.id,
+            count = %count,
+            "outbound: stamping orphan messages as Pending for retry pickup",
+        );
+        for msg in orphans {
+            if let Err(e) = self.ensure_pending_delivery(&msg.id).await {
+                tracing::warn!(
+                    channel_id = %channel.id,
+                    msg_id = %msg.id,
+                    error = %e,
+                    "outbound recovery: ensure_pending_delivery failed",
+                );
+            }
+        }
+        Ok(count)
+    }
+
     pub async fn retry_due_deliveries(&self) -> Result<u64, AppError> {
         let due = self
             .message_repo
@@ -691,7 +752,8 @@ impl ChannelManager {
         adapter: &dyn ChannelAdapter,
         ctx: &ChannelCtx,
     ) -> Result<SegmentOutcome, AppError> {
-        if msg.status != Some(MessageStatus::Completed) {
+        // Mirrors the outer watcher's status filter. See `handle_outbound_event`.
+        if !matches!(msg.status, Some(MessageStatus::Completed) | None) {
             return Ok(SegmentOutcome::Done);
         }
         let Some(delivery) = msg.delivery.as_ref() else {
@@ -824,23 +886,30 @@ async fn handle_outbound_event(
             if msg.role != MessageRole::Agent {
                 return Ok(());
             }
-            if msg.status != Some(MessageStatus::Completed) {
+            if !matches!(msg.status, Some(MessageStatus::Completed) | None) {
                 tracing::debug!(
                     channel_id = %ctx.channel.id,
                     msg_id = %msg.id,
                     status = ?msg.status,
-                    "outbound skip: message not Completed",
+                    "outbound skip: message status not deliverable",
                 );
                 return Ok(());
             }
             let delivery_state = msg.delivery.as_ref().map(|d| d.state);
-            let needs_send = delivery_state == Some(DeliveryState::Pending);
-            if !needs_send {
+            if matches!(delivery_state, Some(DeliveryState::Sent) | Some(DeliveryState::Failed)) {
                 tracing::debug!(
                     channel_id = %ctx.channel.id,
                     msg_id = %msg.id,
                     delivery_state = ?delivery_state,
-                    "outbound skip: delivery state is not Pending (None = signal-mode/non-channel, Sent/Failed = already attempted)",
+                    "outbound skip: delivery already terminal",
+                );
+                return Ok(());
+            }
+            if ctx.channel.dispatch_mode != DispatchMode::Message {
+                tracing::debug!(
+                    channel_id = %ctx.channel.id,
+                    msg_id = %msg.id,
+                    "outbound skip: channel is in Signal mode (no outbound delivery)",
                 );
                 return Ok(());
             }
@@ -854,6 +923,8 @@ async fn handle_outbound_event(
                 );
                 return Ok(());
             }
+            ctx.channel_manager.ensure_pending_delivery(&msg.id).await?;
+            let msg = state.chat_service.get_message(&event.user_id, &msg.id).await?;
             tracing::info!(
                 channel_id = %ctx.channel.id,
                 msg_id = %msg.id,
@@ -1172,15 +1243,9 @@ async fn handle_inbound_message(
         &awaiting_categories,
     );
 
-    let delivery = match (chat.channel_id.is_some(), mode) {
-        (true, DispatchMode::Message) => Some(
-            crate::chat::message::models::MessageDelivery::pending(chrono::Utc::now()),
-        ),
-        _ => None,
-    };
     let agent_msg = state
         .chat_service
-        .create_executing_agent_message(&chat.id, &chat.agent_id, delivery)
+        .create_executing_agent_message(&chat.id, &chat.agent_id)
         .await?;
 
     let cancel_token = CancellationToken::new();

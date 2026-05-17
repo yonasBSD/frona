@@ -271,7 +271,7 @@ impl TaskExecutor {
                 Ok(Some(msg)) => msg.id,
                 _ => {
                     let msg = self.app_state.chat_service
-                        .create_executing_agent_message(&chat_id, &task.agent_id, None)
+                        .create_executing_agent_message(&chat_id, &task.agent_id)
                         .await?;
                     msg.id
                 }
@@ -577,7 +577,7 @@ impl TaskExecutor {
         let agent_msg = self
             .app_state
             .chat_service
-            .create_executing_agent_message(&chat_id, &task.agent_id, None)
+            .create_executing_agent_message(&chat_id, &task.agent_id)
             .await?;
         let agent_msg_id = agent_msg.id.clone();
         let cancel_token = CancellationToken::new();

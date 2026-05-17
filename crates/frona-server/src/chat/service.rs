@@ -622,21 +622,15 @@ impl ChatService {
         self.save_message(msg).await
     }
 
-    // ── Tool call persistence ────────────────────────────────────────
-
     pub async fn create_executing_agent_message(
         &self,
         chat_id: &str,
         agent_id: &str,
-        delivery: Option<crate::chat::message::models::MessageDelivery>,
     ) -> Result<MessageResponse, AppError> {
-        let mut builder = Message::builder(chat_id, MessageRole::Agent, String::new())
+        let msg = Message::builder(chat_id, MessageRole::Agent, String::new())
             .agent_id(agent_id.to_string())
-            .status(MessageStatus::Executing);
-        if let Some(d) = delivery {
-            builder = builder.delivery(d);
-        }
-        let msg = builder.build();
+            .status(MessageStatus::Executing)
+            .build();
         self.save_message(msg).await
     }
 

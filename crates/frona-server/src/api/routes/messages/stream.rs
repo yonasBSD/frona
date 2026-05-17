@@ -192,7 +192,7 @@ pub(crate) async fn stream_message(
             None => {
                 // Fallback: create a new one if somehow missing
                 let msg = state.chat_service
-                    .create_executing_agent_message(&chat_id, &agent_id, None)
+                    .create_executing_agent_message(&chat_id, &agent_id)
                     .await
                     .map_err(ApiError::from)?;
                 msg.id
@@ -284,7 +284,7 @@ pub(crate) async fn stream_message(
 
         // Pre-create agent message in Executing state
         let agent_msg = state.chat_service
-            .create_executing_agent_message(&chat_id, &agent_id, None)
+            .create_executing_agent_message(&chat_id, &agent_id)
             .await
             .map_err(ApiError::from)?;
         let agent_msg_id = agent_msg.id.clone();
