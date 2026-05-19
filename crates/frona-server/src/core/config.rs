@@ -42,6 +42,8 @@ pub struct ServerConfig {
     pub shutdown_timeout_secs: u64,
     #[schemars(description = "Seconds to buffer SSE events after a client disconnects, allowing reconnects to receive missed events. 0 disables.")]
     pub sse_pending_events_secs: u64,
+    #[schemars(description = "Server-default IANA timezone (e.g. \"America/Los_Angeles\"). Used when a user has no timezone set and no per-task override is provided. Leave empty to auto-detect from TZ env var, /etc/localtime, or fall back to UTC.")]
+    pub timezone: String,
 }
 
 impl ServerConfig {
@@ -87,6 +89,7 @@ impl Default for ServerConfig {
             max_body_size_bytes: 104_857_600,
             shutdown_timeout_secs: 60,
             sse_pending_events_secs: 60,
+            timezone: String::new(),
         }
     }
 }
@@ -940,9 +943,11 @@ impl Config {
 
         let built = builder.build().expect("Failed to build config");
 
-        let config: Config = built
+        let mut config: Config = built
             .try_deserialize()
             .expect("Failed to deserialize config");
+
+        resolve_server_timezone(&mut config.server);
 
         let models = if !config.models.is_empty() || !config.providers.is_empty() {
             Some(crate::inference::config::ModelRegistryConfig {
@@ -984,6 +989,37 @@ pub const SENSITIVE_PATHS: &[&[&str]] = &[
 
 /// Provider fields that are sensitive (applied to each provider in the map).
 pub const SENSITIVE_PROVIDER_FIELDS: &[&str] = &["api_key"];
+
+/// Panics on explicit invalid config (fail-fast at startup, not silently mis-schedule).
+pub fn resolve_server_timezone(server: &mut ServerConfig) {
+    if !server.timezone.is_empty() {
+        if server.timezone.parse::<chrono_tz::Tz>().is_err() {
+            panic!(
+                "Invalid server.timezone '{}' — must be an IANA timezone (e.g. 'America/Los_Angeles', 'Asia/Tokyo', 'UTC')",
+                server.timezone
+            );
+        }
+        tracing::info!(timezone = %server.timezone, "Server timezone resolved (explicit)");
+        return;
+    }
+
+    // iana_time_zone ignores TZ when /etc/timezone disagrees → "Etc/UTC" in containers.
+    if let Ok(tz_env) = std::env::var("TZ")
+        && !tz_env.is_empty()
+        && tz_env.parse::<chrono_tz::Tz>().is_ok()
+    {
+        tracing::info!(timezone = %tz_env, "Server timezone resolved (TZ env var)");
+        server.timezone = tz_env;
+        return;
+    }
+
+    let detected = iana_time_zone::get_timezone().ok();
+    let resolved = detected
+        .filter(|tz| tz.parse::<chrono_tz::Tz>().is_ok())
+        .unwrap_or_else(|| "UTC".to_string());
+    tracing::info!(timezone = %resolved, "Server timezone resolved (auto-detected)");
+    server.timezone = resolved;
+}
 
 pub fn config_file_path() -> String {
     let data_dir = std::env::var("FRONA_SERVER_DATA_DIR")
@@ -1299,6 +1335,39 @@ mod tests {
         let loaded = Config::load();
         assert!(!loaded.config.auth.allow_registration);
         unsafe { std::env::remove_var("FRONA_AUTH_ALLOW_REGISTRATION") };
+    }
+
+    #[test]
+    fn server_timezone_explicit_valid_passes() {
+        let mut server = ServerConfig {
+            timezone: "Asia/Tokyo".to_string(),
+            ..Default::default()
+        };
+        resolve_server_timezone(&mut server);
+        assert_eq!(server.timezone, "Asia/Tokyo");
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid server.timezone")]
+    fn server_timezone_explicit_invalid_panics() {
+        let mut server = ServerConfig {
+            timezone: "Mars/Olympus".to_string(),
+            ..Default::default()
+        };
+        resolve_server_timezone(&mut server);
+    }
+
+    #[test]
+    fn server_timezone_empty_falls_back_to_detection() {
+        let mut server = ServerConfig::default();
+        assert!(server.timezone.is_empty());
+        resolve_server_timezone(&mut server);
+        assert!(!server.timezone.is_empty());
+        assert!(
+            server.timezone.parse::<chrono_tz::Tz>().is_ok(),
+            "detected timezone '{}' must be a valid IANA name",
+            server.timezone
+        );
     }
 
     #[test]
