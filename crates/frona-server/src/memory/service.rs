@@ -605,6 +605,7 @@ impl MemoryService {
         agent_summaries: &[(String, String)],
         identity: &std::collections::BTreeMap<String, String>,
         mcp_servers: &[(String, String)],
+        user_timezone: &str,
     ) -> Result<String, AppError> {
         // Prompt is ordered static → almost-static → dynamic to maximise
         // the cacheable prefix for LLM prompt caching.
@@ -780,6 +781,19 @@ impl MemoryService {
                 result.push_str("</agent_memory>");
             }
         }
+
+        // Date-only (no time-of-day) keeps this byte-stable across requests within
+        // a day so provider prefix caches stay warm. Don't add hour/minute here.
+        let tz: chrono_tz::Tz = user_timezone.parse().unwrap_or(chrono_tz::UTC);
+        let now_local = chrono::Utc::now().with_timezone(&tz);
+        let items = vec![
+            (
+                "current_date_local".to_string(),
+                format!("{} ({})", now_local.format("%Y-%m-%d"), now_local.format("%A")),
+            ),
+            ("user_timezone".to_string(), user_timezone.to_string()),
+        ];
+        append_tagged_section(&mut result, "temporal_context", None, &items);
 
         Ok(result)
     }

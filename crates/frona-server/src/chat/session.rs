@@ -88,6 +88,14 @@ impl ChatSessionContext {
             Vec::new()
         };
 
+        let user = state
+            .user_service
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+
+        let resolved_tz = user.resolved_timezone(&state.config.server.timezone);
+
         let mut system_prompt = match state
             .memory_service
             .build_augmented_system_prompt(
@@ -99,6 +107,7 @@ impl ChatSessionContext {
                 &agent_summaries,
                 &agent_config.identity,
                 &mcp_servers,
+                &resolved_tz,
             )
             .await
         {
@@ -158,15 +167,17 @@ impl ChatSessionContext {
         };
 
         if let Some(ref task) = task {
-            let local = chrono::Local::now();
+            let tz: chrono_tz::Tz = resolved_tz
+                .parse()
+                .unwrap_or(chrono_tz::UTC);
             let fmt = "%Y-%m-%d %H:%M:%S %Z";
             let mut items = vec![
-                ("created_at".into(), task.created_at.with_timezone(&local.timezone()).format(fmt).to_string()),
+                ("created_at".into(), task.created_at.with_timezone(&tz).format(fmt).to_string()),
             ];
             if let Some(run_at) = task.run_at {
-                items.push(("scheduled_at".into(), run_at.with_timezone(&local.timezone()).format(fmt).to_string()));
+                items.push(("scheduled_at".into(), run_at.with_timezone(&tz).format(fmt).to_string()));
             }
-            items.push(("now".into(), local.format(fmt).to_string()));
+            items.push(("now".into(), chrono::Utc::now().with_timezone(&tz).format(fmt).to_string()));
             crate::agent::prompt::append_tagged_section(
                 &mut system_prompt,
                 "task_time",
@@ -178,12 +189,6 @@ impl ChatSessionContext {
         let rig_history = builder.build(&stored_messages, &tool_calls, &conv_ctx).await;
 
         let registry = state.chat_service.provider_registry().clone();
-
-        let user = state
-            .user_service
-            .find_by_id(user_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
         if task_in_progress {
             let result_schema = task
