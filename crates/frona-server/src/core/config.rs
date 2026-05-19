@@ -155,6 +155,8 @@ pub struct AuthConfig {
     pub ephemeral_token_expiry_secs: u64,
     #[schemars(description = "Directory for per-invocation ephemeral token files. Created with mode 0700 at startup.")]
     pub runtime_tokens_dir: PathBuf,
+    #[schemars(description = "Allow anyone to sign up from the registration page. When off, only admins can add users.")]
+    pub allow_registration: bool,
 }
 
 impl Default for AuthConfig {
@@ -166,6 +168,7 @@ impl Default for AuthConfig {
             presign_expiry_secs: 86400,
             ephemeral_token_expiry_secs: 300,
             runtime_tokens_dir: PathBuf::from("data/runtime/tokens"),
+            allow_registration: true,
         }
     }
 }
@@ -1288,6 +1291,20 @@ mod tests {
         let loaded = Config::load();
         assert!(loaded.config.sso.enabled);
         unsafe { std::env::remove_var("FRONA_SSO_ENABLED") };
+    }
+
+    #[test]
+    fn env_var_overrides_auth_allow_registration() {
+        unsafe { std::env::set_var("FRONA_AUTH_ALLOW_REGISTRATION", "false") };
+        let loaded = Config::load();
+        assert!(!loaded.config.auth.allow_registration);
+        unsafe { std::env::remove_var("FRONA_AUTH_ALLOW_REGISTRATION") };
+    }
+
+    #[test]
+    fn auth_allow_registration_defaults_to_true() {
+        let config = AuthConfig::default();
+        assert!(config.allow_registration);
     }
 
     #[test]

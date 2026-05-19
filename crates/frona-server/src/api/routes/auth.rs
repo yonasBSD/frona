@@ -53,7 +53,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/profile", put(update_profile))
         .route("/api/auth/tokens", post(create_pat).get(list_pats))
         .route("/api/auth/tokens/{id}", delete(delete_pat))
-        .route("/api/auth/sso", get(sso_status))
+        .route("/api/auth/config", get(auth_config))
         .route("/api/auth/sso/authorize", get(sso_authorize))
         .route("/api/auth/sso/callback", get(sso_callback))
 }
@@ -66,6 +66,11 @@ async fn register(
     if state.config.sso.disable_local_auth {
         return Err(ApiError(AppError::Validation(
             "SSO registration required".into(),
+        )));
+    }
+    if !state.config.auth.allow_registration {
+        return Err(ApiError(AppError::Forbidden(
+            "Registration is disabled".into(),
         )));
     }
 
@@ -306,17 +311,26 @@ async fn delete_pat(
 }
 
 #[derive(serde::Serialize)]
-struct SsoStatusResponse {
+struct SsoStatus {
     enabled: bool,
     disable_local_auth: bool,
 }
 
-async fn sso_status(
+#[derive(serde::Serialize)]
+struct AuthConfigResponse {
+    sso: SsoStatus,
+    allow_registration: bool,
+}
+
+async fn auth_config(
     State(state): State<AppState>,
-) -> Json<SsoStatusResponse> {
-    Json(SsoStatusResponse {
-        enabled: state.config.sso.enabled,
-        disable_local_auth: state.config.sso.disable_local_auth,
+) -> Json<AuthConfigResponse> {
+    Json(AuthConfigResponse {
+        sso: SsoStatus {
+            enabled: state.config.sso.enabled,
+            disable_local_auth: state.config.sso.disable_local_auth,
+        },
+        allow_registration: state.config.auth.allow_registration,
     })
 }
 

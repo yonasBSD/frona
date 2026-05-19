@@ -33,6 +33,7 @@ export interface AuthConfig {
   access_token_expiry_secs: number;
   refresh_token_expiry_secs: number;
   presign_expiry_secs: number;
+  allow_registration: boolean;
 }
 
 export interface SsoConfig {

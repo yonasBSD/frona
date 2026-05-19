@@ -29,6 +29,11 @@ export interface SsoStatus {
   disable_local_auth: boolean;
 }
 
+export interface AuthConfig {
+  sso: SsoStatus;
+  allow_registration: boolean;
+}
+
 export interface SandboxPolicy {
   read_paths?: string[];
   write_paths?: string[];

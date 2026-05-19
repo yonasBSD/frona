@@ -24,6 +24,10 @@ pub trait UserRepository: Repository<User> {
     async fn has_users(&self) -> Result<bool, AppError>;
 }
 
+pub fn can_create_users(config: &Config) -> bool {
+    (config.auth.allow_registration && !config.sso.disable_local_auth) || config.sso.enabled
+}
+
 #[derive(Default)]
 pub struct AuthService;
 

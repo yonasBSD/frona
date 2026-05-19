@@ -10,7 +10,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use frona::storage::StorageService;
@@ -218,6 +218,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let has_users = state.user_service.has_users().await.unwrap_or(true);
+    if !has_users && !frona::auth::can_create_users(&config) {
+        error!(
+            "Cannot start: no users exist and no path to create one is available. \
+             Set FRONA_AUTH_ALLOW_REGISTRATION=true (and ensure sso.disable_local_auth is false) \
+             to allow the first user to register, or enable SSO so the first admin can sign in \
+             via the configured identity provider."
+        );
+        std::process::exit(1);
+    }
     if !has_users {
         info!("No users found — registration redirect active. Restart after setup.");
     }

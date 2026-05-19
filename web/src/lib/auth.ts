@@ -14,7 +14,7 @@ import type {
   AuthResponse,
   LoginRequest,
   RegisterRequest,
-  SsoStatus,
+  AuthConfig,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_FRONA_SERVER_BACKEND_URL || "";
@@ -23,7 +23,7 @@ interface AuthContextValue {
   user: UserInfo | null;
   loading: boolean;
   needsSetup: boolean;
-  ssoStatus: SsoStatus | null;
+  authConfig: AuthConfig | null;
   login: (req: LoginRequest) => Promise<void>;
   register: (req: RegisterRequest) => Promise<void>;
   logout: () => void;
@@ -58,9 +58,9 @@ async function fetchCurrentUser(): Promise<UserInfo | null> {
   return null;
 }
 
-async function fetchSsoStatus(): Promise<SsoStatus | null> {
+async function fetchAuthConfig(): Promise<AuthConfig | null> {
   try {
-    const res = await fetch(`${API_URL}/api/auth/sso`);
+    const res = await fetch(`${API_URL}/api/auth/config`);
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -72,14 +72,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
-  const [ssoStatus, setSsoStatus] = useState<SsoStatus | null>(null);
+  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchCurrentUser(), fetchSsoStatus()])
-      .then(([u, sso]) => {
+    Promise.all([fetchCurrentUser(), fetchAuthConfig()])
+      .then(([u, cfg]) => {
         setUser(u);
         setNeedsSetup(u?.needs_setup === true);
-        setSsoStatus(sso);
+        setAuthConfig(cfg);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -127,7 +127,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         loading,
         needsSetup,
-        ssoStatus,
+        authConfig,
         login,
         register,
         logout,
