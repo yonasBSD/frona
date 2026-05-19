@@ -23,6 +23,19 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
+pub fn resolve_timezone(stored: Option<&str>, server_default: &str) -> String {
+    stored
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| server_default.to_string())
+}
+
+impl User {
+    pub fn resolved_timezone(&self, server_default: &str) -> String {
+        resolve_timezone(self.timezone.as_deref(), server_default)
+    }
+}
+
 pub const ADMINS_GROUP: &str = "admins";
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]

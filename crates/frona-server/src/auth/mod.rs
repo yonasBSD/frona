@@ -301,7 +301,17 @@ impl AuthService {
             .await?
             .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
-        user.timezone = req.timezone;
+        if let Some(ref tz) = req.timezone
+            && !tz.is_empty()
+            && tz.parse::<chrono_tz::Tz>().is_err()
+        {
+            return Err(AppError::Validation(format!(
+                "Invalid timezone '{}'. Use an IANA name like 'America/Los_Angeles', 'Asia/Tokyo', or 'UTC'.",
+                tz
+            )));
+        }
+
+        user.timezone = req.timezone.filter(|s| !s.is_empty());
         user.updated_at = chrono::Utc::now();
         user_service.update(&user).await?;
 
