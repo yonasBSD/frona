@@ -205,11 +205,17 @@ pub const SUBMIT_TOOL_NAME: &str = "submit";
 pub struct RigProvider<C> {
     client: C,
     counter: InferenceCounter,
+    hook: Option<super::hooks::RequestHook>,
 }
 
 impl<C> RigProvider<C> {
     pub fn new(client: C, counter: InferenceCounter) -> Self {
-        Self { client, counter }
+        Self { client, counter, hook: None }
+    }
+
+    pub fn with_hook(mut self, hook: super::hooks::RequestHook) -> Self {
+        self.hook = Some(hook);
+        self
     }
 }
 
@@ -233,6 +239,18 @@ where
         additional_params: Option<serde_json::Value>,
     ) -> Result<(Vec<AssistantContent>, Usage), InferenceError> {
         use rig_core::completion::CompletionModel as _;
+
+        let (max_tokens, temperature, additional_params) = match self.hook {
+            Some(hook) => {
+                let p = hook(super::hooks::RequestParams {
+                    max_tokens,
+                    temperature,
+                    additional_params,
+                });
+                (p.max_tokens, p.temperature, p.additional_params)
+            }
+            None => (max_tokens, temperature, additional_params),
+        };
 
         let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
@@ -280,6 +298,18 @@ where
         additional_params: Option<serde_json::Value>,
     ) -> Result<Vec<AssistantContent>, InferenceError> {
         use rig_core::completion::CompletionModel as _;
+
+        let (max_tokens, temperature, additional_params) = match self.hook {
+            Some(hook) => {
+                let p = hook(super::hooks::RequestParams {
+                    max_tokens,
+                    temperature,
+                    additional_params,
+                });
+                (p.max_tokens, p.temperature, p.additional_params)
+            }
+            None => (max_tokens, temperature, additional_params),
+        };
 
         let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
@@ -346,6 +376,18 @@ where
         additional_params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, InferenceError> {
         use rig_core::completion::CompletionModel as _;
+
+        let (max_tokens, temperature, additional_params) = match self.hook {
+            Some(hook) => {
+                let p = hook(super::hooks::RequestParams {
+                    max_tokens,
+                    temperature,
+                    additional_params,
+                });
+                (p.max_tokens, p.temperature, p.additional_params)
+            }
+            None => (max_tokens, temperature, additional_params),
+        };
 
         let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
