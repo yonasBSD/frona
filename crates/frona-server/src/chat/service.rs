@@ -611,7 +611,7 @@ impl ChatService {
 
     /// No-broadcast persist. Only used by `create_executing_agent_message`
     /// - broadcasting an empty Executing row would render a phantom message
-    /// while tokens stream.
+    ///   while tokens stream.
     async fn save_message(&self, message: Message) -> Result<MessageResponse, AppError> {
         let saved = self.message_repo.create(&message).await?;
         Ok(saved.into())
@@ -714,6 +714,7 @@ impl ChatService {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn save_task_lifecycle_message(
         &self,
         user_id: &str,
