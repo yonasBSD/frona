@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rig::client::Nothing;
-use rig::providers::{
+use rig_core::client::Nothing;
+use rig_core::providers::{
     anthropic, cohere, deepseek, galadriel, gemini, groq, huggingface, hyperbolic, mira, mistral,
     moonshot, ollama, openai, openrouter, perplexity, together, xai,
 };

@@ -14,11 +14,11 @@ pub use provider::ModelRef;
 pub use registry::ModelProviderRegistry;
 pub use request::{InferenceRequest, InferenceResponse, InferenceContext};
 pub use crate::chat::broadcast::EventSender;
-pub use rig::completion::request::Usage;
+pub use rig_core::completion::request::Usage;
 pub use tool_loop::{InferenceEvent, InferenceEventKind};
 
 
-use rig::completion::Message as RigMessage;
+use rig_core::completion::Message as RigMessage;
 
 use crate::core::error::AppError;
 use crate::core::metrics::InferenceMetricsContext;

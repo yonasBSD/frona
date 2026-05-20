@@ -8,7 +8,7 @@ use frona::inference::text_inference;
 use frona::inference::tool_loop::{run_tool_loop, ToolLoopOutcome};
 use frona::tool::registry::AgentToolRegistry;
 use helpers::*;
-use rig::completion::Message as RigMessage;
+use rig_core::completion::Message as RigMessage;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -874,12 +874,12 @@ impl frona::inference::provider::ModelProvider for StreamingMockProvider {
         &self,
         _model_id: &str,
         _system_prompt: &str,
-        _chat_history: Vec<rig::completion::Message>,
-        _tools: Vec<rig::completion::request::ToolDefinition>,
+        _chat_history: Vec<rig_core::completion::Message>,
+        _tools: Vec<rig_core::completion::request::ToolDefinition>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
         _additional_params: Option<serde_json::Value>,
-    ) -> Result<(Vec<rig::completion::AssistantContent>, frona::inference::Usage), InferenceError> {
+    ) -> Result<(Vec<rig_core::completion::AssistantContent>, frona::inference::Usage), InferenceError> {
         unreachable!("streaming test should not call non-streaming inference");
     }
 
@@ -887,13 +887,13 @@ impl frona::inference::provider::ModelProvider for StreamingMockProvider {
         &self,
         _model_id: &str,
         _system_prompt: &str,
-        _chat_history: Vec<rig::completion::Message>,
-        _tools: Vec<rig::completion::request::ToolDefinition>,
+        _chat_history: Vec<rig_core::completion::Message>,
+        _tools: Vec<rig_core::completion::request::ToolDefinition>,
         token_tx: mpsc::Sender<frona::inference::provider::StreamToken>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
         _additional_params: Option<serde_json::Value>,
-    ) -> Result<Vec<rig::completion::AssistantContent>, InferenceError> {
+    ) -> Result<Vec<rig_core::completion::AssistantContent>, InferenceError> {
         *self.call_count.lock().unwrap() += 1;
         let mut full_text = String::new();
         for token in &self.tokens {
@@ -901,14 +901,14 @@ impl frona::inference::provider::ModelProvider for StreamingMockProvider {
             let _ = token_tx.send(frona::inference::provider::StreamToken::Text(token.clone())).await;
             tokio::time::sleep(self.delay_between).await;
         }
-        Ok(vec![rig::completion::AssistantContent::text(full_text)])
+        Ok(vec![rig_core::completion::AssistantContent::text(full_text)])
     }
 
     async fn structured_inference(
         &self,
         _model_id: &str,
         _system_prompt: &str,
-        _chat_history: Vec<rig::completion::Message>,
+        _chat_history: Vec<rig_core::completion::Message>,
         _schema: serde_json::Value,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,

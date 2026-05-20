@@ -9,8 +9,8 @@ use frona::inference::conversation::{
 use frona::inference::provider::ModelRef;
 use frona::inference::tool_call::ToolCall;
 use frona::storage::StorageService;
-use rig::completion::message::UserContent;
-use rig::completion::{AssistantContent, Message as RigMessage};
+use rig_core::completion::message::UserContent;
+use rig_core::completion::{AssistantContent, Message as RigMessage};
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
 

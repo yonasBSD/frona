@@ -15,7 +15,7 @@ use crate::inference::provider::ModelRef;
 use crate::memory::service::MemoryService;
 use crate::agent::prompt::PromptLoader;
 use crate::core::repository::Repository;
-use rig::completion::Message as RigMessage;
+use rig_core::completion::Message as RigMessage;
 
 pub struct AgentConfig {
     pub system_prompt: String,

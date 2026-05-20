@@ -1,6 +1,6 @@
 use axum::extract::{Path, State};
 use axum::Json;
-use rig::completion::Message as RigMessage;
+use rig_core::completion::Message as RigMessage;
 
 use crate::chat::broadcast::{BroadcastEventKind, EventSender};
 use crate::chat::message::models::SendMessageRequest;

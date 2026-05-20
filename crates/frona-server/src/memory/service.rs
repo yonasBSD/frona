@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use rig::completion::Message as RigMessage;
+use rig_core::completion::Message as RigMessage;
 
 use crate::agent::prompt::append_tagged_section;
 use crate::agent::workspace::AgentPromptLoader;

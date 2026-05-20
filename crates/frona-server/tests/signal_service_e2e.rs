@@ -271,13 +271,13 @@ impl frona::inference::provider::ModelProvider for ForbidToolsProvider {
         &self,
         _model_id: &str,
         _system_prompt: &str,
-        _chat_history: Vec<rig::completion::Message>,
-        _tools: Vec<rig::completion::request::ToolDefinition>,
+        _chat_history: Vec<rig_core::completion::Message>,
+        _tools: Vec<rig_core::completion::request::ToolDefinition>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
         _additional_params: Option<serde_json::Value>,
     ) -> Result<
-        (Vec<rig::completion::AssistantContent>, frona::inference::Usage),
+        (Vec<rig_core::completion::AssistantContent>, frona::inference::Usage),
         frona::inference::InferenceError,
     > {
         self.inference_calls.fetch_add(1, Ordering::SeqCst);
@@ -290,13 +290,13 @@ impl frona::inference::provider::ModelProvider for ForbidToolsProvider {
         &self,
         _model_id: &str,
         _system_prompt: &str,
-        _chat_history: Vec<rig::completion::Message>,
-        _tools: Vec<rig::completion::request::ToolDefinition>,
+        _chat_history: Vec<rig_core::completion::Message>,
+        _tools: Vec<rig_core::completion::request::ToolDefinition>,
         _token_tx: tokio::sync::mpsc::Sender<frona::inference::provider::StreamToken>,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
         _additional_params: Option<serde_json::Value>,
-    ) -> Result<Vec<rig::completion::AssistantContent>, frona::inference::InferenceError> {
+    ) -> Result<Vec<rig_core::completion::AssistantContent>, frona::inference::InferenceError> {
         self.stream_calls.fetch_add(1, Ordering::SeqCst);
         panic!(
             "ForbidToolsProvider::stream_inference invoked — Signal mode must not stream"
@@ -307,7 +307,7 @@ impl frona::inference::provider::ModelProvider for ForbidToolsProvider {
         &self,
         _model_id: &str,
         _system_prompt: &str,
-        _chat_history: Vec<rig::completion::Message>,
+        _chat_history: Vec<rig_core::completion::Message>,
         _schema: serde_json::Value,
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,

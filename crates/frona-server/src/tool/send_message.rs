@@ -12,7 +12,7 @@ use crate::inference;
 use crate::notification::models::{NotificationData, NotificationLevel};
 use crate::notification::service::NotificationService;
 use frona_derive::agent_tool;
-use rig::completion::Message as RigMessage;
+use rig_core::completion::Message as RigMessage;
 
 use super::{InferenceContext, ToolOutput};
 

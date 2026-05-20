@@ -287,7 +287,7 @@ impl SignalService {
         msg: &crate::chat::message::models::Message,
         awaiting: &[(String, String)],
     ) -> Result<(), AppError> {
-        use rig::completion::Message as RigMessage;
+        use rig_core::completion::Message as RigMessage;
 
         let agent_msg = chat_service
             .create_executing_signal_message(&chat.id, &chat.agent_id)

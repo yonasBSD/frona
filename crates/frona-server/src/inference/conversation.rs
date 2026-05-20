@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use base64::Engine;
-use rig::completion::message::{DocumentSourceKind, ImageMediaType, MimeType, ToolResult, ToolResultContent, UserContent};
-use rig::completion::{AssistantContent, Message as RigMessage};
+use rig_core::completion::message::{DocumentSourceKind, ImageMediaType, MimeType, ToolResult, ToolResultContent, UserContent};
+use rig_core::completion::{AssistantContent, Message as RigMessage};
 
 use std::collections::HashMap;
 
@@ -300,7 +300,7 @@ fn convert_agent_with_tool_calls(
         for te in tes {
             assistant_items.push(AssistantContent::tool_call(&te.provider_call_id, &te.name, te.arguments.clone()));
         }
-        if let Ok(content) = rig::OneOrMany::many(assistant_items) {
+        if let Ok(content) = rig_core::OneOrMany::many(assistant_items) {
             result.push(RigMessage::Assistant { id: None, content });
         }
 
@@ -310,11 +310,11 @@ fn convert_agent_with_tool_calls(
                 UserContent::ToolResult(ToolResult {
                     id: te.provider_call_id.clone(),
                     call_id: None,
-                    content: rig::OneOrMany::one(ToolResultContent::text(&te.result)),
+                    content: rig_core::OneOrMany::one(ToolResultContent::text(&te.result)),
                 })
             })
             .collect();
-        if let Ok(content) = rig::OneOrMany::many(tool_results) {
+        if let Ok(content) = rig_core::OneOrMany::many(tool_results) {
             result.push(RigMessage::User { content });
         }
     }
@@ -324,13 +324,15 @@ fn convert_agent_with_tool_calls(
         let mut items: Vec<AssistantContent> = Vec::new();
         if let Some(r) = &msg.reasoning {
             items.push(AssistantContent::Reasoning(
-                rig::completion::message::Reasoning::new(&r.content)
-                    .optional_id(r.id.clone())
-                    .with_signature(r.signature.clone()),
+                rig_core::completion::message::Reasoning::new_with_signature(
+                    &r.content,
+                    r.signature.clone(),
+                )
+                .optional_id(r.id.clone()),
             ));
         }
         items.push(AssistantContent::text(&msg.content));
-        if let Ok(content) = rig::OneOrMany::many(items) {
+        if let Ok(content) = rig_core::OneOrMany::many(items) {
             result.push(RigMessage::Assistant { id: None, content });
         }
     }
@@ -358,15 +360,17 @@ pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage
         if let Some(r) = &msg.reasoning {
             let mut items: Vec<AssistantContent> = vec![
                 AssistantContent::Reasoning(
-                    rig::completion::message::Reasoning::new(&r.content)
-                        .optional_id(r.id.clone())
-                        .with_signature(r.signature.clone()),
+                    rig_core::completion::message::Reasoning::new_with_signature(
+                        &r.content,
+                        r.signature.clone(),
+                    )
+                    .optional_id(r.id.clone()),
                 ),
             ];
             if !msg.content.is_empty() {
                 items.push(AssistantContent::text(&msg.content));
             }
-            if let Ok(content) = rig::OneOrMany::many(items) {
+            if let Ok(content) = rig_core::OneOrMany::many(items) {
                 return Some(RigMessage::Assistant { id: None, content });
             }
         }
@@ -462,7 +466,7 @@ pub async fn build_user_message(
     for (resolved_path, att) in &images {
         if let Ok(bytes) = tokio::fs::read(resolved_path).await {
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            contents.push(UserContent::Image(rig::completion::message::Image {
+            contents.push(UserContent::Image(rig_core::completion::message::Image {
                 data: DocumentSourceKind::Base64(b64),
                 media_type: ImageMediaType::from_mime_type(&att.content_type),
                 detail: None,
@@ -476,7 +480,7 @@ pub async fn build_user_message(
     }
 
     RigMessage::User {
-        content: rig::OneOrMany::many(contents).unwrap(),
+        content: rig_core::OneOrMany::many(contents).unwrap(),
     }
 }
 

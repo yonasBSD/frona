@@ -23,9 +23,9 @@ pub fn test_policy_service(db: &Surreal<Db>) -> PolicyService {
     let storage = frona::storage::StorageService::new(&frona::core::config::Config::default());
     PolicyService::new(repo, schema, tool_manager, storage)
 }
-use rig::completion::request::ToolDefinition as RigToolDefinition;
-use rig::completion::{AssistantContent, Message as RigMessage};
-use rig::completion::message::{ToolCall, ToolFunction};
+use rig_core::completion::request::ToolDefinition as RigToolDefinition;
+use rig_core::completion::{AssistantContent, Message as RigMessage};
+use rig_core::completion::message::{ToolCall, ToolFunction};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -81,12 +81,14 @@ impl ModelProvider for MockModelProvider {
             output_tokens: 5,
             total_tokens: 15,
             cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            reasoning_tokens: 0,
         };
         match self.next_response() {
             MockResponse::Text(t) => Ok((vec![AssistantContent::text(&t)], usage)),
             MockResponse::TextWithReasoning(text, reasoning) => {
                 let contents = vec![
-                    AssistantContent::Reasoning(rig::completion::message::Reasoning::new(&reasoning)),
+                    AssistantContent::Reasoning(rig_core::completion::message::Reasoning::new(&reasoning)),
                     AssistantContent::text(&text),
                 ];
                 Ok((contents, usage))
@@ -124,7 +126,7 @@ impl ModelProvider for MockModelProvider {
                 let _ = token_tx.send(frona::inference::provider::StreamToken::Reasoning(reasoning.clone())).await;
                 let _ = token_tx.send(frona::inference::provider::StreamToken::Text(text.clone())).await;
                 Ok(vec![
-                    AssistantContent::Reasoning(rig::completion::message::Reasoning::new(&reasoning)),
+                    AssistantContent::Reasoning(rig_core::completion::message::Reasoning::new(&reasoning)),
                     AssistantContent::text(text),
                 ])
             }

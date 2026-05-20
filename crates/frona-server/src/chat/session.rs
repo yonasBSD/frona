@@ -1,4 +1,4 @@
-use rig::completion::Message as RigMessage;
+use rig_core::completion::Message as RigMessage;
 pub use tokio_util::sync::CancellationToken;
 
 use crate::chat::broadcast::EventSender;

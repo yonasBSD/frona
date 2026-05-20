@@ -2,12 +2,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use rig::completion::{
+use rig_core::completion::{
     AssistantContent, CompletionModel, CompletionRequest, CompletionResponse,
     Message as RigMessage,
     message::{ToolCall, ToolChoice, ToolFunction},
 };
-use rig::completion::request::{ToolDefinition as RigToolDefinition, Usage};
+use rig_core::completion::request::{ToolDefinition as RigToolDefinition, Usage};
 use tokio::sync::mpsc;
 
 use crate::chat::broadcast::BroadcastService;
@@ -69,15 +69,17 @@ impl<'a> CompletionRequestBuilder<'a> {
 
     fn build(self) -> CompletionRequest {
         CompletionRequest {
+            model: None,
             preamble: Some(self.system_prompt.to_string()),
-            chat_history: rig::OneOrMany::many(self.chat_history)
-                .unwrap_or_else(|_| rig::OneOrMany::one(RigMessage::user(""))),
+            chat_history: rig_core::OneOrMany::many(self.chat_history)
+                .unwrap_or_else(|_| rig_core::OneOrMany::one(RigMessage::user(""))),
             documents: vec![],
             tools: self.tools,
             temperature: self.temperature,
             max_tokens: self.max_tokens,
             tool_choice: self.tool_choice,
             additional_params: self.additional_params,
+            output_schema: None,
         }
     }
 }
@@ -214,7 +216,7 @@ impl<C> RigProvider<C> {
 #[async_trait]
 impl<C> ModelProvider for RigProvider<C>
 where
-    C: rig::client::CompletionClient + Send + Sync,
+    C: rig_core::client::CompletionClient + Send + Sync,
     C::CompletionModel: CompletionModel + Send + Sync + 'static,
     <C::CompletionModel as CompletionModel>::Response: Send + Sync,
     <C::CompletionModel as CompletionModel>::StreamingResponse:
@@ -230,7 +232,7 @@ where
         temperature: Option<f64>,
         additional_params: Option<serde_json::Value>,
     ) -> Result<(Vec<AssistantContent>, Usage), InferenceError> {
-        use rig::completion::CompletionModel as _;
+        use rig_core::completion::CompletionModel as _;
 
         let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
@@ -277,7 +279,7 @@ where
         temperature: Option<f64>,
         additional_params: Option<serde_json::Value>,
     ) -> Result<Vec<AssistantContent>, InferenceError> {
-        use rig::completion::CompletionModel as _;
+        use rig_core::completion::CompletionModel as _;
 
         let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
@@ -343,7 +345,7 @@ where
         temperature: Option<f64>,
         additional_params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, InferenceError> {
-        use rig::completion::CompletionModel as _;
+        use rig_core::completion::CompletionModel as _;
 
         let _guard = self.counter.guard();
         let model = self.client.completion_model(model_id);
@@ -397,7 +399,7 @@ async fn consume_tool_stream<S, R>(
     tool_names: &[String],
 ) -> Result<(String, Vec<AssistantContent>, bool), InferenceError>
 where
-    S: futures::Stream<Item = Result<rig::streaming::StreamedAssistantContent<R>, rig::completion::CompletionError>>
+    S: futures::Stream<Item = Result<rig_core::streaming::StreamedAssistantContent<R>, rig_core::completion::CompletionError>>
         + Unpin,
     R: Clone + Unpin,
 {
@@ -412,7 +414,7 @@ where
 
     while let Some(chunk) = stream.next().await {
         match chunk {
-            Ok(rig::streaming::StreamedAssistantContent::Text(text)) => {
+            Ok(rig_core::streaming::StreamedAssistantContent::Text(text)) => {
                 accumulated_text.push_str(&text.text);
                 if buffering {
                     if accumulated_text.len() >= 64 {
@@ -428,17 +430,17 @@ where
                     let _ = token_tx.send(StreamToken::Text(text.text)).await;
                 }
             }
-            Ok(rig::streaming::StreamedAssistantContent::ToolCall { tool_call, .. }) => {
+            Ok(rig_core::streaming::StreamedAssistantContent::ToolCall { tool_call, .. }) => {
                 contents.push(AssistantContent::ToolCall(tool_call));
             }
-            Ok(rig::streaming::StreamedAssistantContent::Reasoning(r)) => {
-                let text = r.reasoning.join("");
+            Ok(rig_core::streaming::StreamedAssistantContent::Reasoning(r)) => {
+                let text = r.display_text();
                 accumulated_reasoning.push_str(&text);
-                reasoning_id = r.id;
-                reasoning_signature = r.signature;
+                reasoning_id = r.id.clone();
+                reasoning_signature = r.first_signature().map(|s| s.to_string());
                 let _ = token_tx.send(StreamToken::Reasoning(text)).await;
             }
-            Ok(rig::streaming::StreamedAssistantContent::ReasoningDelta { id, reasoning }) => {
+            Ok(rig_core::streaming::StreamedAssistantContent::ReasoningDelta { id, reasoning }) => {
                 accumulated_reasoning.push_str(&reasoning);
                 if id.is_some() {
                     reasoning_id = id;
@@ -456,9 +458,11 @@ where
         let thinking_chars = accumulated_reasoning.len();
         tracing::debug!(thinking_chars, "Thinking tokens received");
         contents.push(AssistantContent::Reasoning(
-            rig::completion::message::Reasoning::new(&accumulated_reasoning)
-                .optional_id(reasoning_id)
-                .with_signature(reasoning_signature),
+            rig_core::completion::message::Reasoning::new_with_signature(
+                &accumulated_reasoning,
+                reasoning_signature,
+            )
+            .optional_id(reasoning_id),
         ));
     }
 
@@ -607,7 +611,7 @@ pub fn extract_text_from_choice(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig::completion::message::{ToolCall, ToolFunction};
+    use rig_core::completion::message::{ToolCall, ToolFunction};
 
     #[test]
     fn test_is_word_boundary_start_of_string() {

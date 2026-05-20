@@ -2,9 +2,9 @@ use std::future::Future;
 use std::time::Instant;
 
 use backon::Retryable;
-use rig::completion::request::ToolDefinition as RigToolDefinition;
-use rig::completion::{AssistantContent, Message as RigMessage};
-use rig::completion::message::UserContent;
+use rig_core::completion::request::ToolDefinition as RigToolDefinition;
+use rig_core::completion::{AssistantContent, Message as RigMessage};
+use rig_core::completion::message::UserContent;
 use tokio::sync::mpsc;
 
 use crate::chat::broadcast::EventSender;

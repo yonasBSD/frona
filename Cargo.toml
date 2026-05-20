@@ -15,7 +15,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rig-core = "0.30"
+rig-core = "0.37"
 async-stream = "0.3"
 serde-aux = "4"
 base64 = "0.22"
