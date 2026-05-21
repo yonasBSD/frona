@@ -38,11 +38,13 @@ export function TaskItem({ task }: TaskItemProps) {
   const { activeTaskId } = useSession();
   const { tasks, deleteTask } = useNavigation();
   const router = useRouter();
-  const colorClass = statusColors[task.status] ?? "bg-surface-tertiary text-text-secondary";
-  const label = statusLabels[task.status] ?? task.status;
   const isCron = task.kind.type === "Cron";
-  // Cron templates never reach a terminal status on their own — cancelling is
-  // how the user stops a recurring schedule, so allow it regardless of status.
+  const isCronActive = isCron && task.status !== "cancelled";
+  const colorClass = isCronActive
+    ? "bg-info-bg text-info-text"
+    : statusColors[task.status] ?? "bg-surface-tertiary text-text-secondary";
+  const label = isCronActive ? "Recurring" : statusLabels[task.status] ?? task.status;
+  // Crons never reach terminal status on their own; allow cancel until then.
   const canCancel = isCron ? task.status !== "cancelled" : activeStatuses.has(task.status);
   const canDelete = terminalStatuses.has(task.status);
   const isActive = activeTaskId === task.id;

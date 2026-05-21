@@ -243,6 +243,17 @@ export type TaskKind =
       next_run_at?: string | null;
       source_agent_id?: string | null;
       source_chat_id?: string | null;
+      mode?: "singleton" | "per_instance";
+      concurrency?: "allow" | "forbid" | "replace";
+      process_result?: boolean;
+    }
+  | {
+      type: "CronRun";
+      source_cron_id: string;
+      source_chat_id?: string | null;
+      source_agent_id?: string | null;
+      fire_at: string;
+      sequence_num: number;
     }
   | {
       type: "Signal";

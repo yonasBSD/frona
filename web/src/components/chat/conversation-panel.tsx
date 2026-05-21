@@ -14,6 +14,7 @@ import { ChatHeader } from "./chat-header";
 import { TaskHeader } from "./task-header";
 import { AssistantThread } from "./assistant-thread";
 import { ToolUIRegistry } from "./tool-uis";
+import { CronRunsTable } from "./cron-runs-table";
 import type { ChatResponse } from "@/lib/types";
 
 function ChatView({
@@ -153,12 +154,15 @@ export function ConversationPanel() {
   }, [router]);
 
   if (activeTask) {
+    const isCronTemplate = activeTask.kind.type === "Cron";
     return (
       <div className="flex-1 overflow-hidden bg-surface flex flex-col min-w-0">
         <div className="mx-auto w-full max-w-3xl">
           <TaskHeader />
         </div>
-        {activeChatId ? (
+        {isCronTemplate ? (
+          <CronRunsTable cronId={activeTask.id} task={activeTask} />
+        ) : activeChatId ? (
           <ChatView key={activeChatId} chatId={activeChatId} agentId={effectiveAgentId} />
         ) : (
           <div className="flex flex-1 items-center justify-center">

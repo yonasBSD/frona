@@ -254,6 +254,10 @@ export function getTask(id: string) {
   return api.get<import("./types").TaskResponse>(`/api/tasks/${id}`);
 }
 
+export function getCronRuns(cronId: string) {
+  return api.get<import("./types").TaskResponse[]>(`/api/tasks/${cronId}/runs`);
+}
+
 export function archiveChat(chatId: string) {
   return request<import("./types").ChatResponse>(`/api/chats/${chatId}/archive`, { method: "POST" });
 }
