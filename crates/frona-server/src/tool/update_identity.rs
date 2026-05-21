@@ -41,16 +41,19 @@ impl UpdateIdentityTool {
             .await?
             .identity;
 
+        let mut normalized_keys: Vec<String> = Vec::with_capacity(attrs.len());
         for (key, value) in &attrs {
+            let key = key.to_lowercase();
             let val_str = match value {
                 Value::String(s) => s.clone(),
                 other => other.to_string(),
             };
             if val_str.is_empty() {
-                identity.remove(key);
+                identity.remove(&key);
             } else {
                 identity.insert(key.clone(), val_str);
             }
+            normalized_keys.push(key);
         }
 
         let updated = self
@@ -74,14 +77,9 @@ impl UpdateIdentityTool {
             },
         });
 
-        let updated_keys: Vec<&String> = attrs.keys().collect();
         Ok(ToolOutput::text(format!(
             "Updated identity attributes: {}",
-            updated_keys
-                .iter()
-                .map(|k| k.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+            normalized_keys.join(", ")
         )))
     }
 }
