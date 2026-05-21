@@ -48,8 +48,9 @@ update_apt_file() {
 	echo "  [$label] Querying from $image..."
 	local names changed=false
 	names=$(pkg_names "$file")
+	local prep="apt-get update -qq >/dev/null 2>&1 && apt-get install -y --no-install-recommends curl ca-certificates gnupg >/dev/null 2>&1"
 	APT_CACHE=$(docker run --rm "$image" bash -c \
-		"${pre_cmd:+$pre_cmd >/dev/null 2>&1 && }apt-get update -qq >/dev/null 2>&1 && apt-cache policy $names")
+		"${pre_cmd:+$prep && $pre_cmd >/dev/null 2>&1 && }apt-get update -qq >/dev/null 2>&1 && apt-cache policy $names")
 
 	local tmpfile
 	tmpfile=$(mktemp)
