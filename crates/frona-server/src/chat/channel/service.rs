@@ -188,10 +188,36 @@ impl ChannelService {
 
     pub async fn delete(
         &self,
+        state: &crate::core::state::AppState,
         user_id: &str,
         channel_id: &str,
     ) -> Result<(), AppError> {
         let channel = self.find_owned(user_id, channel_id).await?;
+
+        // Cancels the adapter task; `run_outbound` fires `on_disconnect` on
+        // the cancel arm (e.g. Telegram deleteWebhook). Best-effort — we do
+        // not await the task's exit before proceeding.
+        state.channel_manager.stop_channel(&channel.id).await;
+
+        if let Some(user) = state.user_service.find_by_id(&channel.user_id).await? {
+            let dir = super::manager::channel_data_dir(
+                &state.config.storage.channels_data_path,
+                &channel.provider,
+                &user.username,
+                &channel.space_id,
+            );
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => tracing::warn!(
+                    channel_id = %channel.id,
+                    dir = %dir.display(),
+                    error = %e,
+                    "failed to remove channel data dir",
+                ),
+            }
+        }
+
         let principal = Principal::channel(&channel.id);
         self.vault.delete_bindings_for_principal(user_id, &principal).await?;
         self.repo.delete(&channel.id).await?;

@@ -140,7 +140,7 @@ async fn delete_channel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    state.channel_service.delete(&auth.user_id, &id).await?;
+    state.channel_service.delete(&state, &auth.user_id, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

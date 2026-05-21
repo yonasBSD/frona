@@ -50,7 +50,7 @@ fn backoff_for(attempts: u32) -> Duration {
 
 /// Keep filesystem path segments to a safe alphabet so usernames / record-id
 /// suffixes can't drill into parent dirs or land on `/`.
-fn sanitize_path_segment(segment: &str) -> String {
+pub(super) fn sanitize_path_segment(segment: &str) -> String {
     let mut out = String::with_capacity(segment.len());
     for c in segment.chars() {
         if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -60,6 +60,20 @@ fn sanitize_path_segment(segment: &str) -> String {
         }
     }
     if out.is_empty() { "_".into() } else { out }
+}
+
+/// Matches the layout `start_channel` creates so callers (e.g. delete) can
+/// locate the on-disk dir without duplicating the join logic.
+pub(super) fn channel_data_dir(
+    channels_data_path: &str,
+    provider: &str,
+    username: &str,
+    space_id: &str,
+) -> std::path::PathBuf {
+    std::path::PathBuf::from(channels_data_path)
+        .join(provider)
+        .join(sanitize_path_segment(username))
+        .join(sanitize_path_segment(space_id))
 }
 
 // Lifecycle-only writes must not trigger a restart loop via the watcher.
@@ -343,10 +357,12 @@ impl ChannelManager {
                     channel.id, channel.user_id,
                 ))
             })?;
-        let data_dir = std::path::PathBuf::from(&state.config.storage.channels_data_path)
-            .join(&channel.provider)
-            .join(sanitize_path_segment(&username))
-            .join(sanitize_path_segment(&channel.space_id));
+        let data_dir = channel_data_dir(
+            &state.config.storage.channels_data_path,
+            &channel.provider,
+            &username,
+            &channel.space_id,
+        );
         if let Err(e) = std::fs::create_dir_all(&data_dir) {
             return Err(AppError::Internal(format!(
                 "could not create channel data dir {}: {e}",
