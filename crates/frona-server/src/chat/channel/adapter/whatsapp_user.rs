@@ -157,9 +157,36 @@ impl ChannelAdapter for WhatsAppUserAdapter {
                 AppError::Internal("whatsapp_user client not initialised".into())
             })?;
         let to_raw = parse_external_id(external_chat_id(chat)?)?;
-        let to: wa_rs::Jid = to_raw
+        let stored: wa_rs::Jid = to_raw
             .parse()
             .map_err(|e| AppError::Validation(format!("invalid WhatsApp JID {to_raw:?}: {e}")))?;
+        // WhatsApp silently drops 1:1 stanzas addressed to a peer's LID;
+        // resolve to PN. `is_lid()` excludes groups (those stay `@g.us`).
+        let to = if stored.is_lid() {
+            match client.get_phone_number_from_lid(&stored.user).await {
+                Some(pn_user) => format!("{pn_user}@s.whatsapp.net")
+                    .parse::<wa_rs::Jid>()
+                    .inspect(|pn_jid| {
+                        tracing::debug!(
+                            channel_id = %ctx.channel.id,
+                            lid = %stored,
+                            pn = %pn_jid,
+                            "whatsapp_user resolved peer LID -> PN for 1:1 send",
+                        );
+                    })
+                    .unwrap_or_else(|_| stored.clone()),
+                None => {
+                    tracing::debug!(
+                        channel_id = %ctx.channel.id,
+                        lid = %stored,
+                        "whatsapp_user no LID->PN mapping; sending to LID",
+                    );
+                    stored
+                }
+            }
+        } else {
+            stored
+        };
         let body = super::markdown::to_whatsapp(&msg.content);
         let payload = wa_rs_proto::whatsapp::Message {
             conversation: Some(body),
