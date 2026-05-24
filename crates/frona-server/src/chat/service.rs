@@ -102,8 +102,7 @@ impl ChatService {
         );
     }
 
-    /// Fires `chat_message` (frontend renders) and `entity_updated`
-    /// (channel outbound watcher reads to ship the message).
+    /// Fires `chat_message` (frontend) AND `entity_updated` (channel watcher).
     fn broadcast_message_persisted(
         &self,
         msg: &Message,
@@ -140,6 +139,18 @@ impl ChatService {
         user_id: &str,
         req: CreateChatRequest,
     ) -> Result<ChatResponse, AppError> {
+        // Fail eagerly on bad `agent_id` — first /messages/stream would silently 404.
+        let agent = self
+            .agent_service
+            .find_by_id(&req.agent_id)
+            .await?
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Agent '{}' not found", req.agent_id))
+            })?;
+        if agent.user_id != user_id {
+            return Err(AppError::Forbidden("Not your agent".into()));
+        }
+
         let now = chrono::Utc::now();
         let chat = Chat {
             id: crate::core::repository::new_id(),
@@ -609,17 +620,15 @@ impl ChatService {
         .await
     }
 
-    /// No-broadcast persist. Only used by `create_executing_agent_message`
-    /// - broadcasting an empty Executing row would render a phantom message
-    ///   while tokens stream.
+    /// No-broadcast persist. Broadcasting an empty Executing row renders
+    /// a phantom message while tokens stream.
     async fn save_message(&self, message: Message) -> Result<MessageResponse, AppError> {
         let saved = self.message_repo.create(&message).await?;
         Ok(saved.into())
     }
 
-    /// Presigns attachment URLs before broadcasting so live SSE matches
-    /// what `GET /api/chats/{id}/messages` returns on refresh. Without this,
-    /// the file widget renders broken until refresh.
+    /// Presigns attachments before broadcasting so live SSE matches the
+    /// GET response — without this the file widget renders broken until refresh.
     async fn save_message_and_broadcast(
         &self,
         message: Message,
@@ -751,9 +760,7 @@ impl ChatService {
         self.save_message(msg).await
     }
 
-    /// Like `create_executing_agent_message`, but stamps `dispatch_mode = Signal`
-    /// so the outbound dispatcher will refuse to deliver this reply to the
-    /// channel adapter — Signal mode is pattern-matching/annotation only.
+    /// Stamps `dispatch_mode = Signal` so the outbound dispatcher refuses delivery.
     pub async fn create_executing_signal_message(
         &self,
         chat_id: &str,
@@ -767,10 +774,8 @@ impl ChatService {
         self.save_message(msg).await
     }
 
-    /// Finalize a streaming-inference message. Fires `entity_updated` and
-    /// `inference_done` - NOT `chat_message`. `inference_done` carries the
-    /// same payload AND clears the frontend streaming buffers; firing both
-    /// would render a duplicate row.
+    /// Fires `entity_updated` + `inference_done` (NOT `chat_message`) —
+    /// `inference_done` doubles as the row payload and clears streaming buffers.
     pub async fn complete_agent_message(
         &self,
         message_id: &str,
@@ -1157,51 +1162,37 @@ impl ChatService {
     }
 
     pub async fn resolve_agent_config(&self, agent_id: &str) -> Result<AgentConfig, AppError> {
-        let ws = self.storage_service.agent_workspace(agent_id);
+        let agent = self
+            .agent_service
+            .find_by_id(agent_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Agent {agent_id} not found")))?;
+        let user = self
+            .user_service
+            .find_by_id(&agent.user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", agent.user_id)))?;
+        let ws = self.storage_service.agent_workspace(&user.handle, &agent.handle);
 
-        if let Ok(Some(agent)) = self.agent_service.find_by_id(agent_id).await {
-            tracing::debug!(agent_id, user_id = ?agent.user_id, "Resolved agent from DB");
+        tracing::debug!(agent_id, user_id = %agent.user_id, "Resolved agent from DB");
 
-            let raw_prompt = if let Some(ref prompt) = agent.prompt {
-                if !prompt.is_empty() {
-                    prompt.clone()
-                } else {
-                    ws.read("AGENT.md")
-                        .map(|c| parse_frontmatter(&c).template)
-                        .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?
-                }
-            } else {
-                ws.read("AGENT.md")
-                    .map(|c| parse_frontmatter(&c).template)
-                    .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?
-            };
+        let raw_prompt = match agent.prompt.as_deref().filter(|p| !p.is_empty()) {
+            Some(prompt) => prompt.to_string(),
+            None => ws
+                .read("AGENT.md")
+                .map(|c| parse_frontmatter(&c).template)
+                .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?,
+        };
 
-            let system_prompt = render_template(&raw_prompt, &[("agent_name", &agent.name)])
-                .unwrap_or(raw_prompt);
-
-            return Ok(AgentConfig {
-                system_prompt,
-                model_group: agent.model_group,
-                skills: agent.skills,
-                sandbox_limits: agent.sandbox_limits,
-                identity: agent.identity,
-            });
-        }
-
-        let raw_content = ws.read("AGENT.md")
-            .ok_or_else(|| AppError::Internal(format!("No AGENT.md found for agent {agent_id}")))?;
-        let parsed = parse_frontmatter(&raw_content);
-
-        let model_group = parsed.metadata.get("model_group")
-            .cloned()
-            .unwrap_or_else(|| "primary".to_string());
+        let system_prompt = render_template(&raw_prompt, &[("agent_name", &agent.name)])
+            .unwrap_or(raw_prompt);
 
         Ok(AgentConfig {
-            system_prompt: parsed.template,
-            model_group,
-            skills: None,
-            sandbox_limits: None,
-            identity: std::collections::BTreeMap::new(),
+            system_prompt,
+            model_group: agent.model_group,
+            skills: agent.skills,
+            sandbox_limits: agent.sandbox_limits,
+            identity: agent.identity,
         })
     }
 
@@ -1211,7 +1202,17 @@ impl ChatService {
         agent_id: &str,
         user_content: &str,
     ) -> Result<String, AppError> {
-        let ws = self.storage_service.agent_workspace(agent_id);
+        let agent = self
+            .agent_service
+            .find_by_id(agent_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Agent {agent_id} not found")))?;
+        let user = self
+            .user_service
+            .find_by_id(&agent.user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", agent.user_id)))?;
+        let ws = self.storage_service.agent_workspace(&user.handle, &agent.handle);
         let prompts = AgentPromptLoader::new(&ws, &self.prompts);
         let content = prompts.read("TITLE.md")
             .ok_or_else(|| AppError::Internal("No title generation prompt found".into()))?;

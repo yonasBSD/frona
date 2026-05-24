@@ -40,16 +40,22 @@ impl ChatSessionContext {
             .resolve_agent_config(&chat.agent_id)
             .await?;
 
-        let skills = state
-            .skill_service
-            .list(&chat.agent_id, agent_config.skills.as_deref())
-            .await;
-
         let agent = state
             .agent_service
             .find_by_id(&chat.agent_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
+
+        let user = state
+            .user_service
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+
+        let skills = state
+            .skill_service
+            .list(&user.handle, &agent.handle, agent_config.skills.as_deref())
+            .await;
 
         let mut tool_registry = state
             .tool_manager
@@ -68,31 +74,25 @@ impl ChatSessionContext {
 
         let mcp_servers: Vec<(String, String)> = if state.config.mcp.bridge_mode {
             let servers = state.mcp_service.list_for_user(user_id).await.unwrap_or_default();
-            let allowed_slugs: std::collections::HashSet<String> = allowed_tool_groups
+            let allowed_handles: std::collections::HashSet<String> = allowed_tool_groups
                 .iter()
                 .filter_map(|id| {
                     id.strip_prefix("mcp:")
-                        .map(|slug| slug.to_string())
+                        .map(|handle| handle.to_string())
                 })
                 .collect();
             servers
                 .into_iter()
                 .filter(|s| s.status == crate::tool::mcp::models::McpServerStatus::Running)
-                .filter(|s| allowed_slugs.contains(&s.slug))
+                .filter(|s| allowed_handles.contains(s.handle.as_str()))
                 .map(|s| {
                     let desc = s.description.unwrap_or_else(|| s.display_name.clone());
-                    (s.slug, desc)
+                    (s.handle.to_string(), desc)
                 })
                 .collect()
         } else {
             Vec::new()
         };
-
-        let user = state
-            .user_service
-            .find_by_id(user_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
         let resolved_tz = user.resolved_timezone(&state.config.server.timezone);
 
@@ -101,7 +101,9 @@ impl ChatSessionContext {
             .build_augmented_system_prompt(
                 &agent_config.system_prompt,
                 &chat.agent_id,
+                &agent.handle,
                 user_id,
+                &user.handle,
                 chat.space_id.as_deref(),
                 &skills,
                 &agent_summaries,
@@ -209,7 +211,7 @@ impl ChatSessionContext {
                 });
             tool_registry.register(std::sync::Arc::new(
                 crate::tool::task_control::TaskControlTool::new(
-                    state.config.storage.workspaces_path.clone().into(),
+                    state.storage_service.clone(),
                     state.prompts.clone(),
                     result_schema.clone(),
                 ),
