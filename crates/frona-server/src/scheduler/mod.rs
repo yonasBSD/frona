@@ -253,12 +253,12 @@ impl Scheduler {
                 _ => continue,
             };
 
-            let user_id = match &agent.user_id {
-                Some(uid) => uid.clone(),
-                None => continue,
+            let user_id = agent.user_id.clone();
+            let Some(user) = self.app_state.user_service.find_by_id(&user_id).await? else {
+                tracing::warn!(agent_id = %agent.id, user_id = %user_id, "Heartbeat agent's user not found, skipping");
+                continue;
             };
-
-            let ws = self.app_state.storage_service.agent_workspace(&agent.id);
+            let ws = self.app_state.storage_service.agent_workspace(&user.handle, &agent.handle);
             let heartbeat_content = match ws.read("HEARTBEAT.md") {
                 Some(content) if !content.trim().is_empty() => content,
                 _ => {
@@ -513,7 +513,6 @@ async fn execute_background_agent(
         .create_stream_user_message(user_id, chat_id, message_content, vec![])
         .await?;
 
-    // Determine agent_id from the chat
     let chat = state.chat_service.find_chat(chat_id).await?
         .ok_or_else(|| AppError::NotFound("Chat not found".into()))?;
     let agent_msg = state.chat_service
