@@ -3,13 +3,15 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
 use crate::Entity;
+use crate::core::Handle;
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, Entity)]
 #[surreal(crate = "surrealdb::types")]
 #[entity(table = "user")]
 pub struct User {
     pub id: String,
-    pub username: String,
+    /// Globally-unique. Rendered as "Username" in auth UIs.
+    pub handle: Handle,
     pub email: String,
     pub name: String,
     pub password_hash: String,
@@ -61,7 +63,7 @@ pub struct LoginRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
-    pub username: String,
+    pub handle: String,
     pub email: String,
     pub name: String,
     pub password: String,
@@ -81,7 +83,7 @@ pub struct UserPermissions {
 #[derive(Debug, Serialize)]
 pub struct UserInfo {
     pub id: String,
-    pub username: String,
+    pub handle: Handle,
     pub email: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,8 +95,8 @@ pub struct UserInfo {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateUsernameRequest {
-    pub username: String,
+pub struct UpdateHandleRequest {
+    pub handle: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,7 +107,7 @@ pub struct UpdateProfileRequest {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
-    pub username: String,
+    pub handle: Handle,
     pub email: String,
     pub exp: usize,
     pub iat: usize,

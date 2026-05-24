@@ -74,7 +74,7 @@ impl TokenService {
 
         let claims = Claims {
             sub: user.id.clone(),
-            username: user.username.clone(),
+            handle: user.handle.clone(),
             email: user.email.clone(),
             exp: expires_at.timestamp() as usize,
             iat: now.timestamp() as usize,

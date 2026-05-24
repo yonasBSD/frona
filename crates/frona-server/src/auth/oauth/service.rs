@@ -233,16 +233,16 @@ impl OAuthService {
         }
 
         let now = Utc::now();
-        let base_username = if let Some(ref email) = external_email {
-            AuthService::derive_username_from_email(email)
+        let base_handle = if let Some(ref email) = external_email {
+            AuthService::derive_handle_from_email(email)
         } else {
             format!("sso-{external_sub}")
         };
-        let username = AuthService::generate_unique_username(user_service, &base_username).await?;
+        let handle = AuthService::generate_unique_handle(user_service, &base_handle).await?;
 
         let new_user = User {
             id: crate::core::repository::new_id(),
-            username,
+            handle,
             email: external_email
                 .clone()
                 .unwrap_or_else(|| format!("sso-{external_sub}@unknown")),

@@ -39,8 +39,15 @@ impl UserService {
         self.repo.find_by_email(email).await
     }
 
-    pub async fn find_by_username(&self, username: &str) -> Result<Option<User>, AppError> {
-        self.repo.find_by_username(username).await
+    pub async fn handle_of(&self, user_id: &str) -> Result<crate::core::Handle, AppError> {
+        self.find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("User {user_id} not found")))
+            .map(|u| u.handle)
+    }
+
+    pub async fn find_by_handle(&self, handle: &crate::core::Handle) -> Result<Option<User>, AppError> {
+        self.repo.find_by_handle(handle).await
     }
 
     pub async fn create(&self, user: &User) -> Result<User, AppError> {
@@ -66,16 +73,12 @@ impl UserService {
         self.repo.list_all(include_deactivated).await
     }
 
-    /// If at least one active user exists and none have `admins` in `groups`,
-    /// grant `admins` to the active user with the smallest `created_at`.
-    /// Idempotent. Logs `info!` when it acts.
+    /// If no active admin exists, promote the oldest active user.
     pub async fn ensure_admin_invariant(&self) -> Result<(), AppError> {
         if self.repo.find_any_active_admin().await?.is_some() {
             return Ok(());
         }
         let Some(mut target) = self.repo.find_oldest_active().await? else {
-            // No active user — nothing to promote. The startup precondition
-            // ensures we never run with zero users AND zero create paths.
             return Ok(());
         };
         if !target.groups.iter().any(|g| g == ADMINS_GROUP) {
@@ -84,7 +87,7 @@ impl UserService {
         target.updated_at = Utc::now();
         info!(
             user_id = %target.id,
-            username = %target.username,
+            handle = %target.handle,
             "Promoted oldest active user to admins (invariant repair)"
         );
         self.cache.invalidate(&target.id).await;
