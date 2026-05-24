@@ -2783,6 +2783,7 @@ dependencies = [
  "sha1",
  "sha2 0.10.9",
  "slack-morphism",
+ "smol_str",
  "subtle",
  "surrealdb",
  "sysinfo",
