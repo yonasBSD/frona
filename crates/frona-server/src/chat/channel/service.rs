@@ -64,6 +64,37 @@ impl ChannelService {
             .ok_or_else(|| AppError::NotFound(format!("channel {channel_id} not found")))
     }
 
+    async fn allocate_channel_handle(
+        &self,
+        user_id: &str,
+        provider: &str,
+    ) -> Result<crate::core::Handle, AppError> {
+        let taken: std::collections::HashSet<String> = self
+            .repo
+            .find_by_user(user_id)
+            .await?
+            .into_iter()
+            .map(|c| c.handle.to_string())
+            .collect();
+        let base = crate::core::Handle::try_new(provider).map_err(|e| {
+            AppError::Validation(format!("provider '{provider}' is not a valid handle base: {e}"))
+        })?;
+        if !taken.contains(base.as_str()) {
+            return Ok(base);
+        }
+        for i in 2..100u32 {
+            let candidate = format!("{}-{i}", base.as_str());
+            if !taken.contains(&candidate) {
+                return crate::core::Handle::try_new(candidate).map_err(|e| {
+                    AppError::Internal(format!("generated handle invalid: {e}"))
+                });
+            }
+        }
+        Err(AppError::Validation(format!(
+            "exhausted handle suffixes for provider '{provider}'"
+        )))
+    }
+
     pub async fn find_owned(&self, user_id: &str, channel_id: &str) -> Result<Channel, AppError> {
         let channel = self.find_by_id(channel_id).await?;
         if channel.user_id != user_id {
@@ -100,9 +131,11 @@ impl ChannelService {
         };
 
         let now = Utc::now();
+        let handle = self.allocate_channel_handle(user_id, &req.provider).await?;
         let channel = Channel {
             id: format!("channel:{}", crate::core::repository::new_id()),
             user_id: user_id.to_string(),
+            handle,
             space_id: req.space_id,
             provider: req.provider,
             agent_id: req.agent_id,
@@ -194,17 +227,14 @@ impl ChannelService {
     ) -> Result<(), AppError> {
         let channel = self.find_owned(user_id, channel_id).await?;
 
-        // Cancels the adapter task; `run_outbound` fires `on_disconnect` on
-        // the cancel arm (e.g. Telegram deleteWebhook). Best-effort — we do
-        // not await the task's exit before proceeding.
+        // Fire-and-forget: `run_outbound` runs `on_disconnect` on cancel.
         state.channel_manager.stop_channel(&channel.id).await;
 
         if let Some(user) = state.user_service.find_by_id(&channel.user_id).await? {
             let dir = super::manager::channel_data_dir(
-                &state.config.storage.channels_data_path,
-                &channel.provider,
-                &user.username,
-                &channel.space_id,
+                &state.storage_service,
+                &user.handle,
+                &channel.handle,
             );
             match std::fs::remove_dir_all(&dir) {
                 Ok(()) => {}
@@ -242,9 +272,7 @@ impl ChannelService {
         if channel.status == ChannelStatus::Connected {
             return Ok(channel);
         }
-        // Catch missing fields before flipping to Connecting: start_channel
-        // returns Err but doesn't revert status, so a stuck Connecting row
-        // would otherwise sit forever.
+        // Check missing fields before Connecting; start_channel doesn't revert status on Err.
         let missing = self.missing_required(&channel).await?;
         if !missing.is_empty() {
             let msg = format!("missing required field(s): {}", missing.join(", "));

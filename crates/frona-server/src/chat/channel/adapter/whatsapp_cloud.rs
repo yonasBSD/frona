@@ -76,7 +76,6 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
             )));
         }
 
-        // Idempotent - safe to call on every connect.
         let sub_url = format!(
             "{CLOUD_API_BASE}/{}/subscribed_apps",
             self.config.business_account_id,
@@ -460,11 +459,18 @@ impl WhatsAppCloudAdapter {
             .filename
             .clone()
             .unwrap_or_else(|| default_filename(&media.id, &content_type));
-        let username = &ctx.channel.user_id;
+        let handle = ctx
+            .user_service
+            .find_by_id(&ctx.channel.user_id)
+            .await?
+            .map(|u| u.handle)
+            .ok_or_else(|| AppError::Validation(format!(
+                "channel references missing user {:?}", ctx.channel.user_id
+            )))?;
         download_to_attachment(
             &self.http,
             &ctx.storage_service,
-            username,
+            &handle,
             &meta.url,
             Some(&self.config.access_token),
             &filename,
@@ -475,11 +481,13 @@ impl WhatsAppCloudAdapter {
 }
 
 fn read_attachment_bytes(ctx: &ChannelCtx, att: &Attachment) -> Result<Vec<u8>, AppError> {
-    let owner = att
+    let owner_str = att
         .owner
         .strip_prefix("user:")
         .ok_or_else(|| AppError::Validation(format!("unsupported attachment owner: {}", att.owner)))?;
-    let workspace = ctx.storage_service.user_workspace(owner);
+    let owner_handle = crate::core::Handle::try_new(owner_str)
+        .map_err(|e| AppError::Validation(format!("invalid owner handle in {}: {e}", att.owner)))?;
+    let workspace = ctx.storage_service.user_workspace(&owner_handle);
     let abs = workspace
         .resolve_path(&att.path)
         .ok_or_else(|| AppError::NotFound(format!("attachment {} not in workspace", att.path)))?;

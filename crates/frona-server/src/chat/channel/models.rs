@@ -19,23 +19,15 @@ use crate::tool::mcp::models::CredentialBinding;
 pub struct ChannelManifest {
     pub id: String,
     pub display_name: String,
-    /// Markdown - rendered as such by the frontend. Adapters embed warnings,
-    /// inline links, and emphasis directly in this field.
+    /// Markdown.
     pub description: String,
     #[serde(default)]
     pub config_fields: Vec<ChannelConfigField>,
-    /// When `true`, the UI surfaces this channel's webhook URL
-    /// (`/api/webhooks/channels/{id}`) as a copyable code block so the user
-    /// can paste it into the provider's dashboard.
     #[serde(default)]
     pub webhook_url_visible: bool,
-    /// Markdown instructions rendered verbatim on the channel detail page.
-    /// Adapters use this to keep provider-specific setup copy out of shared code.
+    /// Markdown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup_instructions: Option<String>,
-    /// Authoritative external resources (provider Terms of Service, Privacy
-    /// Policy, documentation). The UI renders these as a uniform link list
-    /// near the channel description.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_links: Vec<ExternalLink>,
 }
@@ -82,6 +74,9 @@ pub trait ChannelFactory: Send + Sync {
 pub struct Channel {
     pub id: String,
     pub user_id: String,
+    /// Per-user-unique. Appears in Cedar UIDs (`Channel::"{user_handle}/{handle}"`)
+    /// and the FS layout (`{user_root}/channels/{handle}/`).
+    pub handle: crate::core::Handle,
     pub space_id: String,
     pub provider: String,
     pub agent_id: String,
@@ -96,14 +91,12 @@ pub struct Channel {
     pub last_started_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub user_address: Option<UserAddress>,
-    /// Present iff `status == Setup`; cleared on transition out.
     #[serde(default)]
     pub setup: Option<SetupConfig>,
     #[serde(default)]
     pub retry: Option<crate::core::config::RetryConfig>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    /// Populated by the API layer when `manifest.webhook_url_visible`.
     #[serde(skip_deserializing, default, skip_serializing_if = "Option::is_none")]
     pub webhook_url: Option<String>,
 }
@@ -133,7 +126,8 @@ pub struct UserAddress {
     pub paired_at: Option<DateTime<Utc>>,
 }
 
-/// Distinct from `UserAddress.pairing_*` (which authenticates the sender).
+/// Provider setup (e.g. QR/code) — distinct from `UserAddress.pairing_*`
+/// which authenticates the sender.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
 #[surreal(crate = "surrealdb::types")]
 pub struct SetupConfig {
@@ -145,7 +139,7 @@ pub struct SetupConfig {
     pub instructions: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
-    /// Adapters leave as `None`; the manager stamps it in `begin_setup`.
+    /// Stamped by the manager in `begin_setup`; adapters leave as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initiated_at: Option<DateTime<Utc>>,
 }
@@ -183,7 +177,7 @@ pub struct UpdateChannelRequest {
 pub struct ExternalMessage {
     pub external_chat_id: String,
     pub sender_address: String,
-    /// `None` → no real Contact, synthesized for Cedar only.
+    /// `None` → synthesize for Cedar only; no real Contact.
     pub sender_external_id: Option<String>,
     pub sender_display_name: Option<String>,
     pub content: String,
@@ -199,11 +193,8 @@ pub struct ChannelCtx {
     pub webhook_url: String,
     pub storage_service: crate::storage::StorageService,
     pub user_service: crate::auth::UserService,
-    /// `{channels_data_path}/{provider}/{username}/{space_id}/`, created by
-    /// the manager before the ctx is built.
     pub data_dir: std::path::PathBuf,
-    /// Adapters with long-running tasks MUST observe this - it's the only
-    /// signal that `stop_channel` was called.
+    /// Adapters with long-running tasks MUST observe this — sole `stop_channel` signal.
     pub cancel: tokio_util::sync::CancellationToken,
 }
 
@@ -213,9 +204,8 @@ pub trait ChannelAdapter: Send + Sync {
 
     async fn on_disconnect(&self, ctx: &ChannelCtx) -> Result<(), AppError>;
 
-    /// Adapters that override this MUST check persisted state — returning
-    /// `Some` for an already-paired channel causes duplicate sessions.
-    /// Distinct from `UserAddress.pairing_*` (which authenticates the sender).
+    /// Adapters overriding this MUST check persisted state — returning `Some`
+    /// for an already-paired channel causes duplicate sessions.
     async fn on_setup_begin(
         &self,
         _ctx: &ChannelCtx,
@@ -223,8 +213,6 @@ pub trait ChannelAdapter: Send + Sync {
         Ok(None)
     }
 
-    /// Called by the manager after `report_setup_complete` runs. Adapters
-    /// may persist provider-specific finalisation state here.
     async fn on_setup_complete(&self, _ctx: &ChannelCtx) -> Result<(), AppError> {
         Ok(())
     }

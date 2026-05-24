@@ -48,32 +48,12 @@ fn backoff_for(attempts: u32) -> Duration {
     DELIVERY_BACKOFF[idx]
 }
 
-/// Keep filesystem path segments to a safe alphabet so usernames / record-id
-/// suffixes can't drill into parent dirs or land on `/`.
-pub(super) fn sanitize_path_segment(segment: &str) -> String {
-    let mut out = String::with_capacity(segment.len());
-    for c in segment.chars() {
-        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-            out.push(c);
-        } else {
-            out.push('_');
-        }
-    }
-    if out.is_empty() { "_".into() } else { out }
-}
-
-/// Matches the layout `start_channel` creates so callers (e.g. delete) can
-/// locate the on-disk dir without duplicating the join logic.
 pub(super) fn channel_data_dir(
-    channels_data_path: &str,
-    provider: &str,
-    username: &str,
-    space_id: &str,
+    storage: &crate::storage::service::StorageService,
+    user_handle: &crate::core::Handle,
+    channel_handle: &crate::core::Handle,
 ) -> std::path::PathBuf {
-    std::path::PathBuf::from(channels_data_path)
-        .join(provider)
-        .join(sanitize_path_segment(username))
-        .join(sanitize_path_segment(space_id))
+    storage.channel_data_path(user_handle, channel_handle)
 }
 
 // Lifecycle-only writes must not trigger a restart loop via the watcher.
@@ -145,9 +125,7 @@ impl ChannelManager {
         }
     }
 
-    /// Adapter background tasks call this when provider setup finishes.
-    /// The adapter must keep running across the transition - the manager
-    /// does not restart the channel.
+    /// Manager does NOT restart the channel; adapter must keep running across the transition.
     pub async fn report_setup_complete(&self, channel_id: &str) {
         let pair = {
             let tasks = self.tasks.lock().await;
@@ -209,8 +187,7 @@ impl ChannelManager {
                 Ok(c) => c,
                 Err(_) => return,
             };
-            // Connected is intentionally included: after a process restart the DB
-            // still says Connected but no in-memory task exists, so we re-start.
+            // Excludes Connected so post-restart re-starts pick up zombie rows.
             if matches!(channel.status, ChannelStatus::Setup | ChannelStatus::Pairing) {
                 return;
             }
@@ -279,9 +256,7 @@ impl ChannelManager {
     ) -> Result<(), AppError> {
         self.stop_running_task(&channel.id).await;
 
-        // Don't mark Setup from here: the watcher would catch the broadcast
-        // and call start_channel again, looping forever. `Setup` is owned by
-        // service.create/update; we just refuse to start.
+        // Don't mark Setup here — the watcher would loop. `Setup` is owned by service.create/update.
         let missing = state.channel_service.missing_required(channel).await?;
         if !missing.is_empty() {
             return Err(AppError::Validation(format!(
@@ -329,11 +304,7 @@ impl ChannelManager {
 
         let (emit, rx) = mpsc::channel::<ExternalMessage>(INBOUND_BUFFER);
 
-        let webhook_base = state
-            .config
-            .server
-            .external_base_url()
-            .unwrap_or_else(|| format!("http://localhost:{}", state.config.server.port));
+        let webhook_base = state.config.server.external_or_local_base_url();
         let bare_id = channel
             .id
             .strip_prefix("channel:")
@@ -346,23 +317,18 @@ impl ChannelManager {
             bare_id,
         );
 
-        let username = state
+        let handle = state
             .user_service
             .find_by_id(&channel.user_id)
             .await?
-            .map(|u| u.username)
+            .map(|u| u.handle)
             .ok_or_else(|| {
                 AppError::Validation(format!(
                     "channel {:?} references missing user {:?}",
                     channel.id, channel.user_id,
                 ))
             })?;
-        let data_dir = channel_data_dir(
-            &state.config.storage.channels_data_path,
-            &channel.provider,
-            &username,
-            &channel.space_id,
-        );
+        let data_dir = channel_data_dir(&state.storage_service, &handle, &channel.handle);
         if let Err(e) = std::fs::create_dir_all(&data_dir) {
             return Err(AppError::Internal(format!(
                 "could not create channel data dir {}: {e}",
@@ -384,8 +350,7 @@ impl ChannelManager {
             cancel: cancel.clone(),
         };
 
-        // Register before setup/connect: those hooks may call back into the
-        // manager (e.g. `report_setup_complete`) and need the entry present.
+        // Register before setup/connect: those hooks call back into the manager.
         {
             let mut tasks = self.tasks.lock().await;
             tasks.insert(
@@ -398,9 +363,7 @@ impl ChannelManager {
             );
         }
 
-        // Pipelines spawn before setup/connect so adapters can emit inbound
-        // events from inside those hooks - `ctx.emit.send(...)` would
-        // otherwise fail with "channel closed".
+        // Pipelines spawn before setup/connect so adapters can emit from those hooks.
         {
             let adapter = adapter.clone();
             let ctx = ctx.clone();
@@ -425,8 +388,6 @@ impl ChannelManager {
             });
         }
 
-        // The adapter is responsible for spawning the background watcher
-        // that calls `report_setup_complete` when setup finishes.
         match adapter.on_setup_begin(&ctx).await {
             Ok(Some(setup)) => {
                 state
@@ -477,9 +438,8 @@ impl ChannelManager {
                 .channel_service
                 .mark_status(&channel.id, ChannelStatus::Failed, connect_error)
                 .await?;
-            // Propagate so retry_loop's Err branch applies backoff -
-            // otherwise the Failed broadcast triggers a fresh retry with
-            // no sleep.
+            // Propagate so retry_loop's Err branch applies backoff
+            // (otherwise the Failed broadcast triggers an immediate retry).
             Err(connect_result.unwrap_err())
         }
     }
@@ -502,8 +462,7 @@ impl ChannelManager {
         }
     }
 
-    /// Stops the adapter task but leaves any active retry loop alive -
-    /// otherwise a retry loop calling `start_channel` cancels itself.
+    /// Leaves any active retry loop alive (otherwise it would cancel itself).
     async fn stop_running_task(&self, channel_id: &str) {
         let task = {
             let mut tasks = self.tasks.lock().await;
@@ -731,17 +690,13 @@ impl ChannelManager {
             .await
     }
 
-    /// Stamps `Pending` on orphan Completed messages - but does NOT
-    /// dispatch directly. At channel start the adapter transport may not
-    /// be handshake-complete; letting the retry poller pick them up avoids
-    /// spurious "client not connected" failures and keeps dispatch
-    /// single-sourced.
+    /// Stamps `Pending` only; does NOT dispatch directly. Defers to the retry
+    /// poller so dispatch stays single-sourced past adapter handshake.
     pub async fn reconcile_message_delivery(&self, channel: &Channel) -> Result<u64, AppError> {
         if channel.dispatch_mode != DispatchMode::Message {
             return Ok(0);
         }
-        // Signal-mode rows are observability-only — never delivered, so they
-        // shouldn't enter the retry queue.
+        // Signal-mode rows are observability-only — never delivered.
         let orphans: Vec<_> = self
             .message_repo
             .find_undelivered_completed_for_channel(&channel.id)
@@ -835,9 +790,8 @@ impl ChannelManager {
         adapter: &dyn ChannelAdapter,
         ctx: &ChannelCtx,
     ) -> Result<SegmentOutcome, AppError> {
-        // Funnel point for both broadcast and retry-poller flows; gating here
-        // catches Signal-fallback replies that the broadcast-side gate misses
-        // after a crash-recovery `reconcile_message_delivery`.
+        // Funnel for broadcast + retry-poller: catches Signal-fallback replies
+        // that the broadcast-side gate misses after crash-recovery reconcile.
         let effective_mode = msg
             .dispatch_mode
             .unwrap_or(ctx.channel.dispatch_mode);
@@ -851,7 +805,7 @@ impl ChannelManager {
             );
             return Ok(SegmentOutcome::Done);
         }
-        // Mirrors the outer watcher's status filter. See `handle_outbound_event`.
+        // Mirrors `handle_outbound_event`'s status filter.
         if !matches!(msg.status, Some(MessageStatus::Completed) | None) {
             return Ok(SegmentOutcome::Done);
         }
@@ -1004,9 +958,7 @@ async fn handle_outbound_event(
                 );
                 return Ok(());
             }
-            // Per-message Signal-fallback: a Message-mode channel can carry an
-            // individual Signal-mode reply (e.g. unpaired sender). The
-            // outbound dispatcher must respect that override.
+            // Per-message override: Message-mode channel may carry a Signal-mode reply.
             let effective_mode = msg
                 .dispatch_mode
                 .unwrap_or(ctx.channel.dispatch_mode);
@@ -1246,11 +1198,8 @@ async fn process_inbound(
     Ok(Some(saved))
 }
 
-/// On a Message-mode channel, fall back to `ReceiveSignal` if `ReceiveMessage`
-/// is denied - covers the case where an agent has an open watch even though
-/// the sender wouldn't normally satisfy the message policy. Signal-mode
-/// channels only consult `ReceiveSignal`. Returns the action that authorized,
-/// or `None` if all denied.
+/// Message-mode channels fall back to `ReceiveSignal` when `ReceiveMessage`
+/// denies (covers agents with an open watch). Signal-mode only checks `ReceiveSignal`.
 async fn effective_dispatch_mode(
     state: &AppState,
     channel: &Channel,
@@ -1260,13 +1209,13 @@ async fn effective_dispatch_mode(
 ) -> Result<Option<DispatchMode>, AppError> {
     let receive_message = || PolicyAction::ReceiveMessage {
         connector_id: channel.space_id.clone(),
-        channel_id: channel.provider.clone(),
+        channel_handle: channel.handle.clone(),
         sender: sender_contact.clone(),
         paired_addresses: paired_addresses.to_vec(),
     };
     let receive_signal = || PolicyAction::ReceiveSignal {
         connector_id: channel.space_id.clone(),
-        channel_id: channel.provider.clone(),
+        channel_handle: channel.handle.clone(),
         sender: sender_contact.clone(),
         paired_addresses: paired_addresses.to_vec(),
     };
@@ -1375,8 +1324,7 @@ async fn handle_inbound_message(
         return Ok(());
     };
     let channel = channel_row.provider.clone();
-    // Fall back to the channel's mode for legacy rows persisted before
-    // `msg.dispatch_mode` existed.
+    // Legacy rows pre-dating `msg.dispatch_mode` fall back to the channel's mode.
     let mode = msg.dispatch_mode.unwrap_or(channel_row.dispatch_mode);
 
     let chat_type = ChatType::from_chat(&chat);
@@ -1388,8 +1336,7 @@ async fn handle_inbound_message(
     };
 
     if matches!(mode, DispatchMode::Signal) {
-        // The chat row gets stamped with `dispatch_mode = Signal`, which the
-        // outbound dispatcher refuses to deliver. See `attempt_send`.
+        // dispatch_mode=Signal causes `attempt_send` to refuse delivery.
         let Some(signal_service) = state.signal_service() else {
             tracing::warn!(
                 channel_id = %channel_row.id,
