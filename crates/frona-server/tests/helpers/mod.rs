@@ -21,7 +21,11 @@ pub fn test_policy_service(db: &Surreal<Db>) -> PolicyService {
         Arc::new(SurrealRepo::<frona::policy::models::Policy>::new(db.clone()));
     let tool_manager = Arc::new(ToolManager::new(false));
     let storage = frona::storage::StorageService::new(&frona::core::config::Config::default());
-    PolicyService::new(repo, schema, tool_manager, storage)
+    let user_service = frona::auth::UserService::new(
+        SurrealRepo::new(db.clone()),
+        &frona::core::config::CacheConfig::default(),
+    );
+    PolicyService::new(repo, schema, tool_manager, storage, user_service)
 }
 use rig_core::completion::request::ToolDefinition as RigToolDefinition;
 use rig_core::completion::{AssistantContent, Message as RigMessage};
@@ -332,7 +336,7 @@ pub fn mock_context() -> InferenceContext {
     InferenceContext::new(
         frona::auth::User {
             id: "test-user".into(),
-            username: "testuser".into(),
+            handle: frona::handle!("testuser"),
             email: "test@test.com".into(),
             name: "Test".into(),
             password_hash: String::new(),
@@ -344,7 +348,8 @@ pub fn mock_context() -> InferenceContext {
         },
         frona::agent::models::Agent {
             id: "test-agent".into(),
-            user_id: Some("test-user".into()),
+            user_id: "test-user".into(),
+            handle: frona::handle!("test-agent"),
             name: "Test Agent".into(),
             description: String::new(),
             model_group: "primary".into(),
@@ -520,8 +525,7 @@ pub async fn test_chat_service() -> frona::chat::service::ChatService {
 
     let config = frona::core::config::Config {
         storage: frona::core::config::StorageConfig {
-            workspaces_path: format!("{base}/workspaces"),
-            files_path: format!("{base}/files"),
+            data_dir: base.clone(),
             shared_config_dir: format!("{base}/config"),
             ..Default::default()
         },
@@ -532,20 +536,20 @@ pub async fn test_chat_service() -> frona::chat::service::ChatService {
     let resource_manager = std::sync::Arc::new(
         frona::tool::sandbox::driver::resource_monitor::SystemResourceManager::new(80.0, 80.0, 90.0, 90.0),
     );
+    let user_service = frona::auth::UserService::new(
+        SurrealRepo::new(db.clone()),
+        &config.cache,
+    );
     let agent_service = frona::agent::service::AgentService::new(
         SurrealRepo::new(db.clone()),
         &config.cache,
-        std::path::PathBuf::from(&config.storage.shared_config_dir).join("agents"),
         resource_manager.clone(),
         test_policy_service(&db),
+        user_service.clone(),
     );
     let provider_registry = frona::inference::registry::ModelProviderRegistry::for_testing(
         HashMap::new(),
         HashMap::new(),
-    );
-    let user_service = frona::auth::UserService::new(
-        SurrealRepo::new(db.clone()),
-        &config.cache,
     );
 
     let memory_service = frona::memory::service::MemoryService::new(
