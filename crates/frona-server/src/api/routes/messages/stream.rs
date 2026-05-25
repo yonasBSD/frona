@@ -69,7 +69,6 @@ pub(crate) async fn stream_message(
         .await
         .map_err(ApiError::from)?;
 
-    // Check for pending tool execution instead of scanning messages
     let pending_tool = state.chat_service
         .find_pending_tool_call(&chat_id)
         .await
@@ -151,7 +150,7 @@ pub(crate) async fn stream_message(
             .await
             .map_err(ApiError::from)?;
 
-        presign_response(&state.presign_service, &mut user_response, &auth.user_id, &auth.username).await;
+        presign_response(&state.presign_service, &mut user_response, &auth.user_id, &auth.handle).await;
 
         let resolve_result = state
             .chat_service
@@ -161,7 +160,6 @@ pub(crate) async fn stream_message(
 
         let resolved_msg = resolve_result.into_message();
 
-        // Find the existing Executing agent message to reuse
         let executing_msg = state.chat_service
             .find_executing_message_for_chat(&chat_id)
             .await
@@ -170,7 +168,6 @@ pub(crate) async fn stream_message(
         let agent_msg_id = match executing_msg {
             Some(msg) => msg.id,
             None => {
-                // Fallback: create a new one if somehow missing
                 let msg = state.chat_service
                     .create_executing_agent_message(&chat_id, &agent_id)
                     .await
@@ -240,7 +237,6 @@ pub(crate) async fn stream_message(
     } else {
         let attachments = req.attachments.clone();
 
-        // Add new message's attachment paths to the sandbox allowlist
         for att in &attachments {
             let resolved = crate::inference::conversation::resolve_attachment_path(
                 att, &state.user_service, &state.storage_service,
@@ -256,9 +252,8 @@ pub(crate) async fn stream_message(
             .await
             .map_err(ApiError::from)?;
 
-        presign_response(&state.presign_service, &mut user_response, &auth.user_id, &auth.username).await;
+        presign_response(&state.presign_service, &mut user_response, &auth.user_id, &auth.handle).await;
 
-        // Pre-create agent message in Executing state
         let agent_msg = state.chat_service
             .create_executing_agent_message(&chat_id, &agent_id)
             .await
