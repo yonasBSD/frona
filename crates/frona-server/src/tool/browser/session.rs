@@ -40,30 +40,30 @@ impl BrowserSessionManager {
         self.config.as_ref()
     }
 
-    fn profile_key(user_id: &str, provider: &str) -> String {
-        format!("{user_id}/{provider}")
+    fn profile_key(user_handle: &crate::core::Handle, provider: &str) -> String {
+        format!("{user_handle}/{provider}")
     }
 
     /// Inserts `/` before the query string — browserless v2 returns HTTP 400 without it.
-    fn ws_url_for_profile(config: &BrowserConfig, user_id: &str, provider: &str) -> String {
-        let user_data_dir = config.profile_path(user_id, provider);
+    fn ws_url_for_profile(config: &BrowserConfig, user_handle: &crate::core::Handle, provider: &str) -> String {
+        let user_data_dir = config.profile_path(user_handle, provider);
         let base = config.ws_url.trim_end_matches('/');
         format!("{}/?--user-data-dir={}", base, user_data_dir.display())
     }
 
     async fn create_connection(
         &self,
-        user_id: &str,
+        user_handle: &crate::core::Handle,
         provider: &str,
     ) -> Result<BrowserConnection, AppError> {
         let config = self.config.as_ref().ok_or_else(|| {
             AppError::Browser("Browser is not configured (FRONA_BROWSER_WS_URL not set)".into())
         })?;
 
-        self.kill_browserless_sessions_for_profile(user_id, provider)
+        self.kill_browserless_sessions_for_profile(user_handle, provider)
             .await;
 
-        let ws_url = Self::ws_url_for_profile(config, user_id, provider);
+        let ws_url = Self::ws_url_for_profile(config, user_handle, provider);
         tracing::debug!(ws_url = %ws_url, browserless_ws_url = %config.ws_url, "Connecting to browser");
 
         let timeout = Duration::from_millis(config.connection_timeout_ms);
@@ -74,26 +74,26 @@ impl BrowserSessionManager {
 
     pub async fn connection(
         &self,
-        user_id: &str,
+        user_handle: &crate::core::Handle,
         provider: &str,
     ) -> Result<BrowserConnection, AppError> {
-        let key = Self::profile_key(user_id, provider);
+        let key = Self::profile_key(user_handle, provider);
         if let Some(conn) = self.sessions.read().await.get(&key).cloned() {
             return Ok(conn);
         }
-        let conn = self.create_connection(user_id, provider).await?;
+        let conn = self.create_connection(user_handle, provider).await?;
         self.sessions.write().await.insert(key, conn.clone());
         Ok(conn)
     }
 
     pub async fn reconnect(
         &self,
-        user_id: &str,
+        user_handle: &crate::core::Handle,
         provider: &str,
     ) -> Result<BrowserConnection, AppError> {
-        let key = Self::profile_key(user_id, provider);
+        let key = Self::profile_key(user_handle, provider);
         self.sessions.write().await.remove(&key);
-        self.connection(user_id, provider).await
+        self.connection(user_handle, provider).await
     }
 
     fn admin_http_client() -> Client<hyper_util::client::legacy::connect::HttpConnector, Body> {
@@ -167,11 +167,11 @@ impl BrowserSessionManager {
         tracing::info!(count = browser_ids.len(), "Killed browserless sessions");
     }
 
-    async fn kill_browserless_sessions_for_profile(&self, user_id: &str, provider: &str) {
+    async fn kill_browserless_sessions_for_profile(&self, user_handle: &crate::core::Handle, provider: &str) {
         let Some(config) = self.config.as_ref() else {
             return;
         };
-        let profile_path = config.profile_path(user_id, provider);
+        let profile_path = config.profile_path(user_handle, provider);
         let profile_str = profile_path.to_string_lossy();
 
         let sessions = self.list_browserless_sessions().await;
@@ -204,8 +204,8 @@ impl BrowserSessionManager {
         self.kill_browserless_session_ids(&ids).await;
     }
 
-    pub async fn close_session(&self, user_id: &str, provider: &str) -> Result<(), AppError> {
-        let key = Self::profile_key(user_id, provider);
+    pub async fn close_session(&self, user_handle: &crate::core::Handle, provider: &str) -> Result<(), AppError> {
+        let key = Self::profile_key(user_handle, provider);
         let mut sessions = self.sessions.write().await;
         if let Some(conn) = sessions.remove(&key) {
             conn.disconnect()
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn ws_url_inserts_root_path_before_query_string() {
-        let url = BrowserSessionManager::ws_url_for_profile(&cfg("ws://browserless:3333"), "alice", "openai");
+        let url = BrowserSessionManager::ws_url_for_profile(&cfg("ws://browserless:3333"), &crate::handle!("alice"), "openai");
         assert_eq!(
             url,
             "ws://browserless:3333/?--user-data-dir=/profiles/alice/openai"
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn ws_url_normalises_trailing_slash_on_base() {
-        let url = BrowserSessionManager::ws_url_for_profile(&cfg("ws://browserless:3333/"), "alice", "openai");
+        let url = BrowserSessionManager::ws_url_for_profile(&cfg("ws://browserless:3333/"), &crate::handle!("alice"), "openai");
         assert_eq!(
             url,
             "ws://browserless:3333/?--user-data-dir=/profiles/alice/openai"

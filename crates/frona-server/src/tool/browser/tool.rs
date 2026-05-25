@@ -49,7 +49,7 @@ fn element_target(selector: Option<&str>, index: Option<usize>) -> Result<Elemen
 
 async fn run_with_reconnect<T, F, Fut>(
     mgr: &BrowserSessionManager,
-    user_id: &str,
+    user_handle: &crate::core::Handle,
     provider: &str,
     op: F,
 ) -> Result<T, AppError>
@@ -57,12 +57,12 @@ where
     F: Fn(BrowserConnection) -> Fut,
     Fut: std::future::Future<Output = Result<T, frona_browser::Error>>,
 {
-    let conn = mgr.connection(user_id, provider).await?;
+    let conn = mgr.connection(user_handle, provider).await?;
     match op(conn).await {
         Ok(v) => Ok(v),
         Err(e) if e.is_disconnect() => {
             tracing::warn!("Browser session dead, reconnecting");
-            let conn = mgr.reconnect(user_id, provider).await?;
+            let conn = mgr.reconnect(user_handle, provider).await?;
             op(conn)
                 .await
                 .map_err(|e| AppError::Browser(e.to_string()))
@@ -304,7 +304,7 @@ impl AgentTool for BrowserTool {
         arguments: Value,
         ctx: &InferenceContext,
     ) -> Result<ToolOutput, AppError> {
-        let session_key = ctx.user.username.as_str();
+        let session_key = &ctx.user.handle;
         let provider = self
             .vault_service
             .list_credentials(&ctx.user.id)

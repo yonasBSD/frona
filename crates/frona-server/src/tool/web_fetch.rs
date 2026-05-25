@@ -43,7 +43,7 @@ impl WebFetchTool {
 
         let conn = self
             .session_manager
-            .connection(&ctx.user.username, self.provider())
+            .connection(&ctx.user.handle, self.provider())
             .await?;
 
         conn.navigate(url, false)
