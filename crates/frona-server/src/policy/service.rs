@@ -96,6 +96,7 @@ pub struct PolicyService {
     schema: Arc<Schema>,
     policy_cache: Cache<String, Arc<CachedPolicySet>>,
     sandbox_cache: Cache<String, Arc<super::sandbox::SandboxPolicy>>,
+    decision_cache: Cache<String, AuthorizationDecision>,
     tool_manager: Arc<crate::tool::manager::ToolManager>,
     managed_policies: Arc<RwLock<Vec<cedar_policy::Policy>>>,
     sandbox_disabled: bool,
@@ -126,12 +127,14 @@ impl PolicyService {
     ) -> Self {
         let policy_cache = Cache::builder().max_capacity(1000).build();
         let sandbox_cache = Cache::builder().max_capacity(1000).build();
+        let decision_cache = Cache::builder().max_capacity(10_000).build();
 
         Self {
             repo,
             schema,
             policy_cache,
             sandbox_cache,
+            decision_cache,
             tool_manager,
             managed_policies: Arc::new(RwLock::new(Vec::new())),
             sandbox_disabled,
@@ -143,8 +146,7 @@ impl PolicyService {
 
     pub fn register_managed_policy(&self, policy: cedar_policy::Policy) {
         self.managed_policies.write().unwrap().push(policy);
-        self.policy_cache.invalidate_all();
-        self.sandbox_cache.invalidate_all();
+        self.invalidate_all_caches();
     }
 
     pub fn managed_policies(&self) -> Vec<cedar_policy::Policy> {
@@ -320,6 +322,16 @@ impl PolicyService {
             return Ok(AuthorizationDecision::allow());
         }
 
+        let cache_key = format!("{user_id}:{}:{:?}", agent.handle, action);
+        if let Some(hit) = self.decision_cache.get(&cache_key).await {
+            crate::core::metrics::record_policy_evaluation(
+                action_name,
+                if hit.allowed { "allow_cached" } else { "deny_cached" },
+                start.elapsed(),
+            );
+            return Ok(hit);
+        }
+
         let cached = self.build_policy_set(user_id).await?;
         let user_handle = self.user_service.handle_of(&agent.user_id).await?;
 
@@ -439,7 +451,9 @@ impl PolicyService {
             }
         };
 
-        self.evaluate_request(action_name, principal, action_uid, resource, context, &cached.policy_set, &entities, start)
+        let decision = self.evaluate_request(action_name, principal, action_uid, resource, context, &cached.policy_set, &entities, start)?;
+        self.decision_cache.insert(cache_key, decision.clone()).await;
+        Ok(decision)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -831,7 +845,7 @@ impl PolicyService {
             tracing::info!(policy_id = id, "Synced base policy");
         }
 
-        self.invalidate_all_caches().await;
+        self.invalidate_all_caches();
         Ok(())
     }
 
@@ -875,11 +889,22 @@ impl PolicyService {
                 self.sandbox_cache.invalidate(&*entry.0).await;
             }
         }
+        for entry in self.decision_cache.iter() {
+            if entry.0.starts_with(&prefix) {
+                self.decision_cache.invalidate(&*entry.0).await;
+            }
+        }
     }
 
-    pub async fn invalidate_all_caches(&self) {
+    pub fn invalidate_all_caches(&self) {
         self.policy_cache.invalidate_all();
         self.sandbox_cache.invalidate_all();
+        self.decision_cache.invalidate_all();
+    }
+
+    pub async fn decision_cache_entry_count(&self) -> u64 {
+        self.decision_cache.run_pending_tasks().await;
+        self.decision_cache.entry_count()
     }
 }
 

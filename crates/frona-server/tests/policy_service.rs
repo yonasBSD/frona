@@ -1407,3 +1407,149 @@ async fn authorize_user_admin_in_custom_group_still_admin() {
     assert!(decision.allowed);
 }
 
+mod decision_cache {
+    use super::*;
+    use frona::core::repository::Repository;
+
+    fn invoke(tool: &str, group: &str) -> PolicyAction {
+        PolicyAction::InvokeTool {
+            tool_name: tool.into(),
+            tool_group: group.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn repeat_call_with_same_args_hits_cache() {
+        let (_db, service) = setup().await;
+        let agent = test_agent("agent-1");
+
+        service.authorize("user-1", &agent, invoke("browser_navigate", "browser")).await.unwrap();
+        assert_eq!(service.decision_cache_entry_count().await, 1);
+
+        service.authorize("user-1", &agent, invoke("browser_navigate", "browser")).await.unwrap();
+        assert_eq!(service.decision_cache_entry_count().await, 1, "second call must reuse the cached entry");
+    }
+
+    #[tokio::test]
+    async fn distinct_actions_cache_separately() {
+        let (_db, service) = setup().await;
+        let agent = test_agent("agent-1");
+
+        service.authorize("user-1", &agent, invoke("browser_navigate", "browser")).await.unwrap();
+        service.authorize("user-1", &agent, invoke("web_search", "search")).await.unwrap();
+        service.authorize("user-1", &agent, invoke("make_voice_call", "voice")).await.unwrap();
+
+        assert_eq!(service.decision_cache_entry_count().await, 3);
+    }
+
+    #[tokio::test]
+    async fn distinct_agents_cache_separately() {
+        let (_db, service) = setup().await;
+        let agent_a = test_agent("agent-a");
+        let agent_b = test_agent("agent-b");
+
+        service.authorize("user-1", &agent_a, invoke("browser_navigate", "browser")).await.unwrap();
+        service.authorize("user-1", &agent_b, invoke("browser_navigate", "browser")).await.unwrap();
+
+        assert_eq!(service.decision_cache_entry_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn invalidate_cache_for_user_drops_decisions() {
+        let (_db, service) = setup().await;
+        let agent = test_agent("agent-1");
+
+        service.authorize("user-1", &agent, invoke("browser_navigate", "browser")).await.unwrap();
+        service.authorize("user-1", &agent, invoke("web_search", "search")).await.unwrap();
+        assert_eq!(service.decision_cache_entry_count().await, 2);
+
+        service.invalidate_cache("user-1").await;
+        assert_eq!(service.decision_cache_entry_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn invalidate_all_caches_drops_decisions() {
+        let (_db, service) = setup().await;
+        let agent = test_agent("agent-1");
+
+        service.authorize("user-1", &agent, invoke("browser_navigate", "browser")).await.unwrap();
+        assert_eq!(service.decision_cache_entry_count().await, 1);
+
+        service.invalidate_all_caches();
+        assert_eq!(service.decision_cache_entry_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn create_policy_invalidates_decisions_so_next_call_sees_new_rule() {
+        let (_db, service) = setup().await;
+        let agent = test_agent("agent-1");
+
+        // Prime: base policies allow.
+        let allow_first = service
+            .authorize("user-1", &agent, invoke("browser_navigate", "browser"))
+            .await
+            .unwrap();
+        assert!(allow_first.allowed);
+        assert_eq!(service.decision_cache_entry_count().await, 1);
+
+        // Adding a forbid policy invalidates the user's cache.
+        service
+            .create_policy(
+                "user-1",
+                "@id(\"deny-browser\")\nforbid(\n  principal == Policy::Agent::\"user-1/agent-1\",\n  action == Policy::Action::\"invoke_tool\",\n  resource in Policy::ToolGroup::\"browser\"\n);",
+            )
+            .await
+            .unwrap();
+        assert_eq!(service.decision_cache_entry_count().await, 0, "create_policy must drop stale decisions");
+
+        let after = service
+            .authorize("user-1", &agent, invoke("browser_navigate", "browser"))
+            .await
+            .unwrap();
+        assert!(after.is_denied(), "fresh evaluation must reflect the new forbid");
+    }
+
+    #[tokio::test]
+    async fn invalidate_for_one_user_keeps_other_users_cached() {
+        let (db, service) = setup().await;
+        let agent = test_agent("agent-1");
+
+        service
+            .authorize("user-1", &agent, invoke("browser_navigate", "browser"))
+            .await
+            .unwrap();
+
+        let user_repo: SurrealRepo<frona::auth::User> = SurrealRepo::new(db.clone());
+        user_repo
+            .create(&frona::auth::User {
+                id: "user-2".into(),
+                handle: frona::handle!("user-2"),
+                email: "u2@example.com".into(),
+                name: "User Two".into(),
+                password_hash: String::new(),
+                timezone: None,
+                groups: Vec::new(),
+                deactivated_at: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            })
+            .await
+            .unwrap();
+        let agent_u2 = Agent {
+            user_id: "user-2".into(),
+            ..test_agent("agent-1")
+        };
+        service
+            .authorize("user-2", &agent_u2, invoke("browser_navigate", "browser"))
+            .await
+            .unwrap();
+        assert_eq!(service.decision_cache_entry_count().await, 2);
+
+        service.invalidate_cache("user-1").await;
+        assert_eq!(
+            service.decision_cache_entry_count().await,
+            1,
+            "user-2's entry must survive a user-1-scoped invalidate"
+        );
+    }
+}
