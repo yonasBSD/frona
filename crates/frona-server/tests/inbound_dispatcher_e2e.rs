@@ -41,10 +41,10 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
             path: format!("{base}/db"),
         },
         storage: frona::core::config::StorageConfig {
-            workspaces_path: format!("{base}/workspaces"),
-            files_path: format!("{base}/files"),
+            data_dir: format!("{base}/data"),
             shared_config_dir: format!("{base}/config"),
-            ..Default::default()
+            skills_dir: format!("{base}/skills"),
+            cache_dir: format!("{base}/cache"),
         },
         ..Default::default()
     }
@@ -107,7 +107,7 @@ async fn seed_user_and_agent(state: &AppState, user_id: &str, agent_id: &str) {
     SurrealRepo::<User>::new(state.db.clone())
         .create(&User {
             id: user_id.into(),
-            username: format!("user-{user_id}"),
+            handle: frona::handle!("test-user"),
             email: format!("{user_id}@test.com"),
             name: "Test User".into(),
             password_hash: String::new(),
@@ -123,7 +123,8 @@ async fn seed_user_and_agent(state: &AppState, user_id: &str, agent_id: &str) {
     SurrealRepo::<Agent>::new(state.db.clone())
         .create(&Agent {
             id: agent_id.into(),
-            user_id: Some(user_id.into()),
+            user_id: user_id.into(),
+            handle: frona::handle!("channel-agent"),
             name: "Channel Agent".into(),
             description: String::new(),
             model_group: "test".into(),
@@ -167,6 +168,7 @@ async fn seed_space_and_chat(
     let channel = frona::chat::channel::Channel {
         id: format!("channel-{user_id}"),
         user_id: user_id.into(),
+        handle: frona::handle!("telegram"),
         space_id: space.id.clone(),
         provider: "telegram".into(),
         agent_id: agent_id.into(),

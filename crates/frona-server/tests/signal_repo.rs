@@ -111,7 +111,6 @@ async fn find_pending_signal_tasks_returns_only_signals() {
         .await
         .unwrap();
 
-    // Create a non-signal task — should be excluded.
     svc.create(
         "user-1",
         frona::agent::task::models::CreateTaskRequest {

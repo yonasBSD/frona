@@ -159,9 +159,6 @@ async fn test_chat_count_empty_for_no_chats() {
     assert!(count_map.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Archive / unarchive integration tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_archived_chat_excluded_from_find_by_user_id() {
@@ -285,9 +282,6 @@ async fn test_archived_at_round_trips_through_repo() {
     assert!(found.archived_at.is_none());
 }
 
-// ---------------------------------------------------------------------------
-// Message delete_by_chat_id integration test
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_delete_by_chat_id_removes_all_messages() {
@@ -334,9 +328,6 @@ async fn test_delete_by_chat_id_does_not_affect_other_chats() {
     assert_eq!(msgs_b.len(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// Cascade delete integration tests
-// ---------------------------------------------------------------------------
 
 fn test_task(user_id: &str, agent_id: &str, chat_id: Option<&str>) -> Task {
     let now = Utc::now();
@@ -400,9 +391,6 @@ async fn test_cascade_delete_task_removes_chat_and_messages() {
     assert!(msg_repo.find_by_chat_id(&chat.id).await.unwrap().is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Attachment integration tests
-// ---------------------------------------------------------------------------
 
 fn test_attachment(filename: &str, owner: &str, path: &str) -> Attachment {
     Attachment {
@@ -525,9 +513,6 @@ async fn test_find_attachments_scoped_to_chat() {
     assert_eq!(attachments[0].filename, "a.txt");
 }
 
-// ---------------------------------------------------------------------------
-// Reasoning integration tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_message_with_reasoning_round_trips_through_db() {
@@ -604,9 +589,6 @@ async fn test_message_reasoning_with_no_signature() {
     assert!(r.signature.is_none());
 }
 
-// ---------------------------------------------------------------------------
-// Pagination integration tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_page_no_cursor_returns_latest_messages() {

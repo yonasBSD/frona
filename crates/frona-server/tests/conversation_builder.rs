@@ -25,8 +25,7 @@ fn test_builder(db: &Surreal<Db>) -> DefaultConversationBuilder {
     let base = tmp.path().to_string_lossy().to_string();
     let config = frona::core::config::Config {
         storage: frona::core::config::StorageConfig {
-            workspaces_path: format!("{base}/workspaces"),
-            files_path: format!("{base}/files"),
+            data_dir: base.clone(),
             shared_config_dir: format!("{base}/config"),
             ..Default::default()
         },

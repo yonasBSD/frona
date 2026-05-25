@@ -29,9 +29,6 @@ use helpers::{init_metrics, test_model_group, MockModelProvider, MockResponse};
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
 
-// ---------------------------------------------------------------------------
-// Test harness
-// ---------------------------------------------------------------------------
 
 fn test_config(tmp: &tempfile::TempDir) -> Config {
     let base = tmp.path().to_string_lossy().to_string();
@@ -50,10 +47,10 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
             path: format!("{base}/db"),
         },
         storage: frona::core::config::StorageConfig {
-            workspaces_path: format!("{base}/workspaces"),
-            files_path: format!("{base}/files"),
+            data_dir: format!("{base}/data"),
             shared_config_dir: format!("{base}/config"),
-            ..Default::default()
+            skills_dir: format!("{base}/skills"),
+            cache_dir: format!("{base}/cache"),
         },
         ..Default::default()
     }
@@ -112,7 +109,7 @@ async fn seed_user_and_agent(state: &AppState, user_id: &str, agent_id: &str) {
     user_repo
         .create(&User {
             id: user_id.into(),
-            username: format!("user-{user_id}"),
+            handle: frona::handle!("test-user"),
             email: format!("{user_id}@test.com"),
             name: "Test User".into(),
             password_hash: String::new(),
@@ -130,7 +127,8 @@ async fn seed_user_and_agent(state: &AppState, user_id: &str, agent_id: &str) {
     agent_repo
         .create(&Agent {
             id: agent_id.into(),
-            user_id: Some(user_id.into()),
+            user_id: user_id.into(),
+            handle: frona::handle!("test-agent"),
             name: "Test Agent".into(),
             description: String::new(),
             model_group: "test".into(),
@@ -217,14 +215,44 @@ fn make_candidate(
     sender: Option<&str>,
 ) -> CandidateEvent {
     use frona::agent::signal::Annotation;
-    CandidateEvent {
+    let now = chrono::Utc::now();
+    let user = frona::auth::User {
+        id: user_id.into(),
+        handle: frona::handle!("test-user"),
+        email: "u@x".into(),
+        name: "u".into(),
+        password_hash: String::new(),
+        timezone: None,
+        groups: Vec::new(),
+        deactivated_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    let channel = channel.map(|p| frona::chat::channel::Channel {
+        id: "ch".into(),
         user_id: user_id.into(),
-        space_id: None,
-        chat_id: None,
-        message_id: None,
-        connector_id: Some("space-test".into()),
-        channel_id: channel.map(String::from),
-        contact_id: None,
+        handle: frona::core::Handle::try_new(p).unwrap_or(frona::handle!("test-ch")),
+        space_id: "s".into(),
+        provider: p.into(),
+        agent_id: "a".into(),
+        config: Default::default(),
+        dispatch_mode: Default::default(),
+        status: frona::chat::channel::ChannelStatus::Disconnected,
+        error_message: None,
+        last_started_at: None,
+        user_address: None,
+        setup: None,
+        retry: None,
+        created_at: now,
+        updated_at: now,
+        webhook_url: None,
+    });
+    CandidateEvent {
+        user,
+        channel,
+        chat: None,
+        message: None,
+        contact: None,
         sender: sender.map(String::from),
         annotations: categories
             .into_iter()
@@ -398,6 +426,7 @@ async fn signal_extract_never_enters_tool_loop_or_streaming() {
     let channel = frona::chat::channel::Channel {
         id: "channel-q".into(),
         user_id: "user-q".into(),
+        handle: frona::handle!("telegram"),
         space_id: space.id.clone(),
         provider: "telegram".into(),
         agent_id: "agent-q".into(),
@@ -474,9 +503,6 @@ async fn signal_extract_never_enters_tool_loop_or_streaming() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn register_and_unregister_round_trip() {
@@ -743,10 +769,10 @@ async fn evaluate_with_forbid_policy_blocks_fire() -> Result<(), AppError> {
         &state,
         "block-test-connector",
         r#"forbid(
-            principal == Policy::Agent::"agent-1",
+            principal == Policy::Agent::"test-user/test-agent",
             action == Policy::Action::"receive_signal",
             resource
-        ) when { resource.connector_id == "space-test" };"#,
+        );"#,
     )
     .await;
 
@@ -782,7 +808,6 @@ async fn evaluate_with_handle_based_policy_blocks_match() -> Result<(), AppError
     let (state, _tmp) = build_state(provider.clone()).await;
     seed_user_and_agent(&state, "user-1", "agent-1").await;
 
-    // Create a contact that will be referenced by the candidate.
     let contact = state
         .contact_service
         .find_or_create_by_phone("user-1", "+15551234", "Test Contact")
@@ -823,7 +848,7 @@ forbid(
         Some("sms"),
         Some("+15551234"),
     );
-    cand.contact_id = Some(contact.id.clone());
+    cand.contact = Some(contact.clone().into());
 
     let fired = svc.evaluate("user-1", cand).await?;
     assert!(fired.is_empty(), "handle-based policy denial must drop the match");
