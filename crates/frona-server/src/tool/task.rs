@@ -301,6 +301,20 @@ impl TaskTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        let result_schema = arguments
+            .get("result_schema")
+            .cloned()
+            .ok_or_else(|| AppError::Validation(
+                "Missing 'result_schema' parameter. Declare the shape each fire's `result` will take (see create_recurring_task tool docs for examples).".into(),
+            ))?;
+        crate::agent::task::schema::validate_schema_doc(&result_schema)
+            .map_err(AppError::Validation)?;
+        if !crate::agent::task::schema::is_simple_schema(&result_schema) && !process_result {
+            return Err(AppError::Validation(
+                "Complex result_schema (nested objects, arrays of objects, etc.) cannot be rendered deterministically. Set process_result=true so the parent agent can render the structured result, or simplify the schema to a top-level scalar / array-of-scalars / oneOf-of-scalars / object-with-scalar-properties.".into(),
+            ));
+        }
+
         let task = self
             .task_service
             .create_cron_template(
@@ -317,6 +331,7 @@ impl TaskTool {
                 cron_mode,
                 cron_concurrency,
                 process_result,
+                Some(result_schema),
             )
             .await?;
 
@@ -355,6 +370,20 @@ impl TaskTool {
     ) -> Result<ToolOutput, AppError> {
         let run_at = super::resolve_run_at(arguments, timezone)?;
 
+        let result_schema = arguments
+            .get("result_schema")
+            .cloned()
+            .ok_or_else(|| AppError::Validation(
+                "Missing 'result_schema' parameter. Declare the shape the task's `result` will take (see create_task tool docs for examples).".into(),
+            ))?;
+        crate::agent::task::schema::validate_schema_doc(&result_schema)
+            .map_err(AppError::Validation)?;
+        if !crate::agent::task::schema::is_simple_schema(&result_schema) && !process_result {
+            return Err(AppError::Validation(
+                "Complex result_schema (nested objects, arrays of objects, etc.) cannot be rendered deterministically. Set process_result=true so the parent agent can render the structured result, or simplify the schema to a top-level scalar / array-of-scalars / oneOf-of-scalars / object-with-scalar-properties.".into(),
+            ));
+        }
+
         // source_agent_id set even for self-targets so kind=Delegation;
         // Direct has no resume_parent machinery.
         let source_agent_id = Some(agent_id.to_string());
@@ -370,7 +399,7 @@ impl TaskTool {
             resume_parent: Some(process_result),
             run_at,
             quarantined: false,
-            result_schema: None,
+            result_schema: Some(result_schema),
         };
 
         let task_response = self.task_service.create(user_id, req).await?;

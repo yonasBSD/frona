@@ -81,17 +81,73 @@ fn source_chat_id_and_resume(task: &Task) -> Option<(&str, bool)> {
     }
 }
 
-fn build_message_event(task: &Task, event: TaskLifecycleEvent) -> (String, MessageEvent) {
+/// `None` means skip the row (silent fire). Schema-parse failure falls back to
+/// the raw `summary` so system-generated strings like the max-retries auto-
+/// complete sentinel still get delivered. `process_result=true` emits JSON in
+/// `<task_result>` for parent consumption; otherwise renders human-readable.
+fn render_completion_body(
+    task: &Task,
+    status: &TaskStatus,
+    summary: Option<&str>,
+    process_result: bool,
+) -> Option<String> {
+    let legacy = || summary.unwrap_or("").to_string();
+    // `Failed` summaries are operator-written reasons, not schema-shaped.
+    if !matches!(status, TaskStatus::Completed) {
+        return Some(legacy());
+    }
+    let Some(schema) = task.result_schema.as_ref() else {
+        return Some(legacy());
+    };
+    let summary_str = summary.unwrap_or("");
+    let spec = match crate::agent::task::schema::ResultSpec::new(schema.clone()) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(task_id = %task.id, error = %e, "task.result_schema is invalid; using raw summary");
+            return Some(legacy());
+        }
+    };
+    let value = match spec.parse(summary_str) {
+        Ok(v) => v,
+        Err(_) => return Some(legacy()),
+    };
+    // Silent skip applies regardless of process_result.
+    if value.is_null() {
+        return None;
+    }
+    if let Some(obj) = value.as_object()
+        && obj.is_empty()
+    {
+        return None;
+    }
+    if let Some(arr) = value.as_array()
+        && arr.is_empty()
+    {
+        return None;
+    }
+    if process_result {
+        let json = serde_json::to_string(&value).unwrap_or_default();
+        Some(format!("<task_result>{json}</task_result>"))
+    } else {
+        crate::agent::task::schema::render_result(schema, &value)
+    }
+}
+
+fn build_message_event(
+    task: &Task,
+    event: TaskLifecycleEvent,
+    process_result: bool,
+) -> Option<(String, MessageEvent)> {
     match event {
         TaskLifecycleEvent::Completion { status, summary } => {
-            let text = summary.unwrap_or_default();
+            let text = render_completion_body(task, &status, summary.as_deref(), process_result)?;
             let evt = MessageEvent::TaskCompletion {
                 task_id: task.id.clone(),
                 chat_id: task.chat_id.clone(),
                 status,
                 summary: if text.is_empty() { None } else { Some(text.clone()) },
             };
-            (text, evt)
+            Some((text, evt))
         }
         TaskLifecycleEvent::Match { attempt_index, summary, result } => {
             let content = summary.clone();
@@ -102,7 +158,7 @@ fn build_message_event(task: &Task, event: TaskLifecycleEvent) -> (String, Messa
                 summary,
                 result,
             };
-            (content, evt)
+            Some((content, evt))
         }
     }
 }
@@ -804,6 +860,24 @@ impl TaskExecutor {
         Ok(())
     }
 
+    /// CronRun's flag lives on the template, not the run — others read directly.
+    async fn resolve_process_result(&self, task: &Task) -> bool {
+        match &task.kind {
+            TaskKind::CronRun { source_cron_id, .. } => {
+                match self.app_state.task_service.find_by_id(source_cron_id).await {
+                    Ok(Some(template)) => matches!(
+                        template.kind,
+                        TaskKind::Cron { process_result: true, .. }
+                    ),
+                    _ => false,
+                }
+            }
+            TaskKind::Delegation { resume_parent, .. }
+            | TaskKind::Signal { resume_parent, .. } => *resume_parent,
+            TaskKind::Direct { .. } | TaskKind::Cron { .. } => false,
+        }
+    }
+
     pub async fn deliver_event_to_source(
         &self,
         task: &Task,
@@ -814,7 +888,12 @@ impl TaskExecutor {
             return;
         };
 
-        let (content, message_event) = build_message_event(task, event);
+        let process_result = self.resolve_process_result(task).await;
+
+        let Some((content, message_event)) = build_message_event(task, event, process_result) else {
+            tracing::debug!(task_id = %task.id, "schema rendered to silent — skipping source-chat delivery");
+            return;
+        };
 
         if let Err(e) = self
             .app_state
@@ -860,15 +939,8 @@ impl TaskExecutor {
     }
 
     async fn check_and_resume_parent(&self, source_chat_id: &str, user_id: &str) {
-        // Only resume the parent if the source chat belongs to a task.
-        // For user chats, just deliver the message; don't trigger the agent.
-        let is_task_chat = matches!(
-            self.app_state.chat_service.find_chat(source_chat_id).await,
-            Ok(Some(chat)) if chat.task_id.is_some()
-        );
-        if !is_task_chat {
-            return;
-        }
+        // The flag opt-in is enforced by the caller, so user chats and task
+        // chats are both eligible — that's the difference from the prior gate.
 
         let siblings = match self
             .app_state
@@ -908,18 +980,41 @@ impl TaskExecutor {
         let user_id = user_id.to_string();
         let chat_id = source_chat_id.to_string();
         tokio::spawn(async move {
-            let message_id = match state.chat_service
+            let existing = match state.chat_service
                 .find_executing_message_for_chat(&chat_id)
                 .await
             {
-                Ok(Some(msg)) => msg.id,
-                Ok(None) => {
-                    tracing::warn!(chat_id = %chat_id, "No executing message found for child task resume");
-                    return;
-                }
+                Ok(msg) => msg,
                 Err(e) => {
                     tracing::error!(error = %e, chat_id = %chat_id, "Failed to find executing message");
                     return;
+                }
+            };
+            let message_id = if let Some(msg) = existing {
+                msg.id
+            } else {
+                // User chats settle their assistant turn before tasks complete;
+                // mint a fresh executing message so the loop has a write target.
+                let agent_id = match state.chat_service.find_chat(&chat_id).await {
+                    Ok(Some(chat)) => chat.agent_id,
+                    Ok(None) => {
+                        tracing::warn!(chat_id = %chat_id, "Source chat not found; cannot resume");
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, chat_id = %chat_id, "Failed to lookup source chat");
+                        return;
+                    }
+                };
+                match state.chat_service
+                    .create_executing_agent_message(&chat_id, &agent_id)
+                    .await
+                {
+                    Ok(msg) => msg.id,
+                    Err(e) => {
+                        tracing::error!(error = %e, chat_id = %chat_id, "Failed to create executing message for resume");
+                        return;
+                    }
                 }
             };
             resume_or_notify(&state, &user_id, &chat_id, &message_id).await;

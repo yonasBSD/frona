@@ -23,8 +23,46 @@ parameters:
   timezone:
     type: string
     description: "Optional IANA timezone (e.g. 'America/Los_Angeles', 'Asia/Tokyo') overriding the default for naive run_at in this task. Default is the user's local timezone. Set only when the user explicitly names a different zone — 'wake me at 6am London time'."
+  result_schema:
+    type: object
+    description: "Required. JSON Schema describing the shape of the task's `result` argument to `complete_task`. Drives both validation and how the result is rendered into this chat. Use the simplest shape that fits — patterns below."
 required:
   - title
   - instruction
+  - result_schema
 ---
 Create a one-off task — immediate or deferred, for yourself or another agent. Use to parallelize work by splitting a problem into independent pieces, each running in its own chat. Target another agent from <available_agents> when expertise matches; target yourself to spawn parallel slices of your own work. Default behavior is fire-and-forget — the task runs and the completion summary lands in this chat for the user to read. Set `process_result: true` only when you'll synthesize the result with a fresh inference turn. For recurring work, use create_recurring_task. For periodic autonomous check-ins, use set_heartbeat.
+
+## result_schema (required)
+
+Every task must declare the shape of its `result`. The schema is injected into `complete_task`'s `result` parameter at run time, validated when the task closes, and used to render the completion summary into this chat. Pick the simplest shape that fits:
+
+- **Single-value answer** — top-level scalar. The agent must pass a value.
+  ```json
+  { "type": "string", "description": "the joke text" }
+  { "type": "number", "description": "computed total" }
+  ```
+
+- **Optional answer** — nullable scalar. Pass `null` to close silently (no row in this chat); pass a value to deliver.
+  ```json
+  { "type": ["string", "null"], "description": "alert text (null = nothing to report)" }
+  ```
+
+- **List output** — array of scalars; renders as a bullet list. Empty arrays render silently.
+  ```json
+  { "type": "array", "items": { "type": "string" }, "description": "found items" }
+  ```
+
+- **Multi-field structured output** — object with scalar properties. Each present property renders as `<description>: <value>` on its own line. Use `required` for mandatory fields.
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "verdict":   { "type": "string", "description": "decision" },
+      "rationale": { "type": "string", "description": "reasoning" }
+    },
+    "required": ["verdict", "rationale"]
+  }
+  ```
+
+- **Complex / nested schemas** (objects whose properties are themselves objects, arrays-of-objects, etc.) — require `process_result: true` so you (the parent) render the structured result with a fresh inference turn. Otherwise creation is rejected.

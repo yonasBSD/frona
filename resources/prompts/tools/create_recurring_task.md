@@ -25,11 +25,15 @@ parameters:
     description: "What to do when a previous fire is still in flight. 'allow': spawn anyway, runs in parallel. 'forbid': skip the new fire while previous is running. 'replace': cancel the previous fire and start fresh. Defaults: singleton→replace, per_instance→forbid."
   process_result:
     type: boolean
-    description: "Default false — fire-and-forget: each cron run completes, its summary lands in this chat (the user sees each fire), and you don't re-engage. Set true if you'll process each run's result with a fresh inference turn — e.g., 'every hour check stock prices and tell me if AAPL moves >5%'. The completion summary lands here regardless; this flag only controls whether you re-engage after each fire."
+    description: "Default false — fire-and-forget: each cron run completes, its summary lands in this chat (the user sees each fire), and you don't re-engage. Set true if you'll process each run's result with a fresh inference turn — e.g., 'every hour check stock prices and tell me if AAPL moves >5%'. The completion summary lands here regardless; this flag only controls whether you re-engage after each fire. Required when result_schema is complex (nested objects)."
+  result_schema:
+    type: object
+    description: "Required. JSON Schema describing the shape of each fire's `result` argument to `complete_task`. Drives both validation and how the result is rendered into this chat. Use the simplest shape that fits — patterns below."
 required:
   - title
   - instruction
   - cron_expression
+  - result_schema
 ---
 Create a recurring task that fires on a cron schedule. Use this for any work that should repeat: reminders, periodic polls, scheduled reports, regular check-ins.
 
@@ -40,5 +44,40 @@ Mode selection:
 - "process recurring payments daily at 9am" → per_instance + forbid
 
 Set `process_result: true` when you'll react to each fire's result with a fresh inference turn — e.g., "every hour, check stock prices and tell me if AAPL moves >5%", "every morning summarize my calendar". Otherwise leave it off — fire-and-forget is the right default for reminders and routine background work, since the user sees each run's summary in this chat anyway.
+
+## result_schema (required)
+
+Every recurring task must declare the shape of each fire's `result`. The schema is also injected into `complete_task`'s `result` parameter at run time so the agent fires conformant values. Pick the simplest shape that fits:
+
+- **Always-notify with one value** — top-level scalar. The agent must pass a value; cannot skip.
+  ```json
+  { "type": "string", "description": "the joke text" }
+  { "type": "number", "description": "today's BTC closing price (USD)" }
+  ```
+
+- **Conditional notify** — nullable scalar. Pass `null` to skip the fire silently; pass a value to deliver.
+  ```json
+  { "type": ["string", "null"], "description": "emergency text (null = no emergency)" }
+  ```
+
+- **List output** — array of scalars; renders as a bullet list. Empty arrays render silently.
+  ```json
+  { "type": "array", "items": { "type": "string" }, "description": "top headlines" }
+  ```
+
+- **Multi-field structured output** — object with scalar properties. Each present property renders as `<description>: <value>` on its own line. Omit properties to skip them. Use `required` to mandate certain fields.
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "symbol":     { "type": "string", "description": "ticker" },
+      "price":      { "type": "number", "description": "current price (USD)" },
+      "change_pct": { "type": "number", "description": "% change today" }
+    },
+    "required": ["symbol", "price", "change_pct"]
+  }
+  ```
+
+- **Complex / nested schemas** (objects whose properties are themselves objects, arrays-of-objects, etc.) — require `process_result: true` so the parent agent renders the structured result with an inference turn. Otherwise creation is rejected.
 
 For one-off or simply delayed work, use create_task. For periodic autonomous check-ins to your own state, use set_heartbeat.
