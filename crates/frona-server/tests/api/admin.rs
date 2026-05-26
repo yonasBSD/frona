@@ -93,7 +93,7 @@ async fn admin_can_create_user_returns_201() {
             "/api/admin/users",
             &admin_token,
             serde_json::json!({
-                "username": "newby",
+                "handle": "newby",
                 "email": "newby@example.com",
                 "name": "Newby",
                 "password": "password123"
@@ -103,7 +103,7 @@ async fn admin_can_create_user_returns_201() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let json = body_json(resp).await;
-    assert_eq!(json["username"], "newby");
+    assert_eq!(json["handle"], "newby");
     assert_eq!(json["groups"].as_array().unwrap().len(), 0);
 }
 
@@ -118,7 +118,7 @@ async fn non_admin_create_user_returns_403() {
             "/api/admin/users",
             &member_token,
             serde_json::json!({
-                "username": "denied",
+                "handle": "denied",
                 "email": "denied@example.com",
                 "name": "Denied",
                 "password": "password123"
@@ -139,7 +139,7 @@ async fn admin_create_user_with_admins_group_succeeds() {
             "/api/admin/users",
             &admin_token,
             serde_json::json!({
-                "username": "coadmin",
+                "handle": "coadmin",
                 "email": "coadmin@example.com",
                 "name": "Co Admin",
                 "password": "password123",
@@ -167,7 +167,7 @@ async fn create_user_with_unknown_group_returns_400() {
             "/api/admin/users",
             &admin_token,
             serde_json::json!({
-                "username": "ghost",
+                "handle": "ghost",
                 "email": "ghost@example.com",
                 "name": "Ghost",
                 "password": "password123",
@@ -389,6 +389,17 @@ async fn cannot_delete_user_with_owned_chats_returns_409_with_count() {
 async fn can_delete_user_with_no_chats_or_agents() {
     let (state, _tmp, admin_token, _) = setup_admin().await;
     let (_, member_id) = register_member(&state, "alice").await;
+
+    // Registration auto-clones built-in agents (developer/researcher/...). For
+    // this "user has no remaining resources" scenario we have to wipe them
+    // first — admin user-delete refuses while owned rows exist.
+    for agent in state.agent_service.list(&member_id).await.unwrap() {
+        state
+            .agent_service
+            .delete(&member_id, &agent.id)
+            .await
+            .unwrap();
+    }
 
     let app = build_app(state.clone());
     let resp = app
