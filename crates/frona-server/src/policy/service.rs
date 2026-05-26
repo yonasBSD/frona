@@ -97,6 +97,7 @@ pub struct PolicyService {
     policy_cache: Cache<String, Arc<CachedPolicySet>>,
     sandbox_cache: Cache<String, Arc<super::sandbox::SandboxPolicy>>,
     decision_cache: Cache<String, AuthorizationDecision>,
+    agent_tools_cache: Cache<String, Arc<Vec<String>>>,
     tool_manager: Arc<crate::tool::manager::ToolManager>,
     managed_policies: Arc<RwLock<Vec<cedar_policy::Policy>>>,
     sandbox_disabled: bool,
@@ -128,6 +129,7 @@ impl PolicyService {
         let policy_cache = Cache::builder().max_capacity(1000).build();
         let sandbox_cache = Cache::builder().max_capacity(1000).build();
         let decision_cache = Cache::builder().max_capacity(10_000).build();
+        let agent_tools_cache = Cache::builder().max_capacity(1000).build();
 
         Self {
             repo,
@@ -135,6 +137,7 @@ impl PolicyService {
             policy_cache,
             sandbox_cache,
             decision_cache,
+            agent_tools_cache,
             tool_manager,
             managed_policies: Arc::new(RwLock::new(Vec::new())),
             sandbox_disabled,
@@ -623,6 +626,11 @@ impl PolicyService {
         agent_handle: &crate::core::Handle,
         policy_set: &PolicySet,
     ) -> Result<Vec<String>, AppError> {
+        let cache_key = format!("{user_id}:{agent_handle}");
+        if let Some(cached) = self.agent_tools_cache.get(&cache_key).await {
+            return Ok((*cached).clone());
+        }
+
         let all_defs = self.tool_manager.definitions(user_id).await;
         let mut tools = Vec::new();
         for def in all_defs {
@@ -634,6 +642,9 @@ impl PolicyService {
                 tools.push(def.id);
             }
         }
+        self.agent_tools_cache
+            .insert(cache_key, Arc::new(tools.clone()))
+            .await;
         Ok(tools)
     }
 
@@ -894,12 +905,18 @@ impl PolicyService {
                 self.decision_cache.invalidate(&*entry.0).await;
             }
         }
+        for entry in self.agent_tools_cache.iter() {
+            if entry.0.starts_with(&prefix) {
+                self.agent_tools_cache.invalidate(&*entry.0).await;
+            }
+        }
     }
 
     pub fn invalidate_all_caches(&self) {
         self.policy_cache.invalidate_all();
         self.sandbox_cache.invalidate_all();
         self.decision_cache.invalidate_all();
+        self.agent_tools_cache.invalidate_all();
     }
 
     pub async fn decision_cache_entry_count(&self) -> u64 {
