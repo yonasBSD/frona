@@ -12,9 +12,6 @@ use rig_core::completion::Message as RigMessage;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-// ---------------------------------------------------------------------------
-// tool_loop tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_tool_loop_simple_text_response() {
@@ -597,9 +594,6 @@ async fn test_tool_loop_provider_error() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// fallback tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_fallback_main_succeeds() {
@@ -846,9 +840,6 @@ async fn test_fallback_multiple_fallbacks_order() {
     assert_eq!(result, "fb2 ok");
 }
 
-// ---------------------------------------------------------------------------
-// streaming timing tests
-// ---------------------------------------------------------------------------
 
 /// A mock provider that sends tokens one-by-one with a delay between each,
 /// simulating realistic LLM streaming behavior.
@@ -979,7 +970,6 @@ async fn test_streaming_tokens_arrive_individually() {
 
     let _ = handle.await;
 
-    // Verify we got individual tokens, not batched chunks
     assert!(
         received.len() >= tokens.len(),
         "Expected at least {} text events, got {} — tokens are being batched",
@@ -987,7 +977,6 @@ async fn test_streaming_tokens_arrive_individually() {
         received.len(),
     );
 
-    // Verify tokens arrived spread over time, not in bursts.
     // With 10ms delay per token, 20 tokens should take ~200ms.
     // If they all arrive within <50ms, something is batching them.
     let total_elapsed = received.last().unwrap().1.duration_since(start);
@@ -1021,9 +1010,6 @@ async fn test_streaming_tokens_arrive_individually() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// reasoning support tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_tool_loop_reasoning_in_completed_outcome() {
