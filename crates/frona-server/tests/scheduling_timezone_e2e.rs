@@ -71,8 +71,7 @@ async fn agent_creates_cron_in_user_local_time_persists_correct_utc_instant() {
             None,
             Default::default(),
             Default::default(),
-            false,
-        )
+            false, None)
         .await
         .unwrap();
 
@@ -120,8 +119,7 @@ async fn agent_creates_cron_with_explicit_timezone_override() {
             None,
             Default::default(),
             Default::default(),
-            false,
-        )
+            false, None)
         .await
         .unwrap();
 
@@ -210,8 +208,7 @@ async fn agent_with_no_user_tz_falls_back_to_server_default() {
             None,
             Default::default(),
             Default::default(),
-            false,
-        )
+            false, None)
         .await
         .unwrap();
 
@@ -242,8 +239,7 @@ async fn cron_advance_uses_snapshotted_timezone_not_server_default() {
             None,
             Default::default(),
             Default::default(),
-            false,
-        )
+            false, None)
         .await
         .unwrap();
 

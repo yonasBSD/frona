@@ -99,8 +99,7 @@ async fn make_template(
             None,
             mode,
             concurrency,
-            false,
-        )
+            false, None)
         .await
         .unwrap()
 }

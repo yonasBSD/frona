@@ -731,8 +731,7 @@ async fn make_cron_template_with(
             None,
             CronMode::Singleton,
             CronConcurrency::Replace,
-            process_result,
-        )
+            process_result, None)
         .await
         .unwrap()
 }

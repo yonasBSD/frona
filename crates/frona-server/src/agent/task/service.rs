@@ -385,7 +385,11 @@ impl TaskService {
         mode: super::models::CronMode,
         concurrency: super::models::CronConcurrency,
         process_result: bool,
+        result_schema: Option<serde_json::Value>,
     ) -> Result<Task, AppError> {
+        if let Some(ref schema) = result_schema {
+            super::schema::validate_schema_doc(schema).map_err(AppError::Validation)?;
+        }
         let now = chrono::Utc::now();
         let task = Task {
             id: crate::core::repository::new_id(),
@@ -410,7 +414,7 @@ impl TaskService {
             result_summary: None,
             error_message: None,
             quarantined: false,
-            result_schema: None,
+            result_schema,
             created_at: now,
             updated_at: now,
         };
@@ -487,7 +491,7 @@ impl TaskService {
             result_summary: None,
             error_message: None,
             quarantined: false,
-            result_schema: None,
+            result_schema: template.result_schema.clone(),
             created_at: now,
             updated_at: now,
         };
