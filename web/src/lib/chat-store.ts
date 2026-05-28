@@ -109,16 +109,19 @@ export class ChatStore {
       const { messages } = await api.get<{ messages: MessageResponse[]; has_more: boolean }>(
         `/api/chats/${chatId}/messages`,
       );
-      // Don't overwrite if messages were added while we were fetching
-      // (e.g. optimistic user message from onNew)
+      // Merge instead of overwrite so messages that arrived first — via
+      // buffered SSE events on an unloaded chat, or the optimistic user
+      // message from onNew — survive the historical fetch. Historical
+      // messages predate anything in the store, so they go in front.
       if (this.messages.length === 0) {
         this.messages = messages;
+      } else {
+        const existing = new Set(this.messages.map((m) => m.id));
+        const historical = messages.filter((m) => !existing.has(m.id));
+        this.messages = [...historical, ...this.messages];
       }
     } catch {
-      // only clear if nothing was added in the meantime
-      if (this.messages.length === 0) {
-        this.messages = [];
-      }
+      // leave any optimistic/SSE-delivered messages alone
     }
     this.hydrateExternalTools();
     this.loaded = true;
