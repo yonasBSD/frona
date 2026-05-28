@@ -95,7 +95,7 @@ update_cargo_file() {
 		local crate="${line%%=*}"
 		local old_ver="${line#*=}"
 		local new_ver
-		new_ver=$(curl -sf "https://crates.io/api/v1/crates/$crate" |
+		new_ver=$(curl -sf -H 'User-Agent: frona-update-versions (https://github.com/fronalabs/frona)' "https://crates.io/api/v1/crates/$crate" |
 			python3 -c "import sys,json; print(json.load(sys.stdin)['crate']['max_stable_version'])")
 		if [[ -z "$new_ver" ]]; then
 			echo "    WARNING: could not resolve $crate, keeping current" >&2
