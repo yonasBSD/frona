@@ -5,7 +5,9 @@ import { MessagePrimitive, AttachmentPrimitive, useMessage } from "@assistant-ui
 import type { CompleteAttachment } from "@assistant-ui/react";
 import { presignFile } from "@/lib/api-client";
 import { getBackendAttachment } from "@/lib/use-chat-runtime";
+import { formatFullTimestamp, formatTime, useTimezone } from "@/lib/format-time";
 import { MarkdownText } from "./markdown-text";
+import { TimeMarkers } from "./time-markers";
 
 function usePresignedUrl(attachmentId: string) {
   const [url, setUrl] = useState<string | null>(null);
@@ -66,14 +68,27 @@ function UserAttachment({ attachment }: { attachment: CompleteAttachment }) {
 
 export function FronaUserMessage() {
   const message = useMessage();
+  const tz = useTimezone();
+  const custom = (message.metadata as Record<string, any>)?.custom ?? {};
+  const isoTime = message.createdAt?.toISOString();
   return (
     <MessagePrimitive.Root>
-      <div className="w-full" data-message-id={message.id}>
+      <TimeMarkers daySeparator={custom.daySeparator} gap={custom.gap} />
+      <div className="group w-full" data-message-id={message.id}>
         <div className="flex items-center gap-2.5 h-8">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-medium bg-accent text-surface">
             Y
           </div>
           <p className="text-xs font-medium text-text-tertiary">You</p>
+          {isoTime && (
+            <time
+              dateTime={isoTime}
+              title={formatFullTimestamp(isoTime, tz)}
+              className="text-xs text-text-tertiary opacity-0 group-hover:opacity-100 transition"
+            >
+              {formatTime(isoTime, tz)}
+            </time>
+          )}
         </div>
         <div className="pl-[42px] text-base text-text-primary">
           <MessagePrimitive.Parts

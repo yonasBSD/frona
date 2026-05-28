@@ -214,6 +214,10 @@ export interface MessageResponse {
   created_at: string;
   /** Set by mergeConsecutiveMessages — this message continues the previous agent message. */
   _continuation?: boolean;
+  /** Set by computeTimeMarkers — render a day-boundary chip above this message. */
+  _daySeparator?: string;
+  /** Set by computeTimeMarkers — render a "N minutes later" chip above this message. */
+  _gap?: string;
 }
 
 export type AppStatus = "starting" | "running" | "stopped" | "failed" | "serving" | "hibernated";
