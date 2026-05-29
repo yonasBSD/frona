@@ -39,6 +39,7 @@ async fn create_cron_template_snapshots_timezone() {
             None,
             None,
             None,
+            None,
             Default::default(),
             Default::default(),
             false, None)
@@ -107,6 +108,7 @@ async fn advance_cron_template_preserves_kind_and_timezone() {
             "0 9 * * *",
             "America/Los_Angeles".to_string(),
             first,
+            None,
             None,
             None,
             None,

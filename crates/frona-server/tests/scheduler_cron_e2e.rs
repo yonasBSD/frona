@@ -97,6 +97,7 @@ async fn make_template(
             None,
             None,
             None,
+            None,
             mode,
             concurrency,
             false, None)

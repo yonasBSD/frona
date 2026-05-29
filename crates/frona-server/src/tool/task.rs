@@ -208,6 +208,7 @@ impl TaskTool {
         let user_id = &ctx.user.id;
         let agent_id = &ctx.agent.id;
         let chat_id = &ctx.chat.id;
+        let space_id = ctx.chat.space_id.clone();
 
         let title = arguments
             .get("title")
@@ -236,7 +237,7 @@ impl TaskTool {
 
         let timezone = self.resolve_timezone(&arguments, &ctx.user)?;
         self.handle_create_recurring_internal(
-            user_id, agent_id, chat_id, &target_agent, is_self, title, instruction, cron_expression, &timezone, &arguments,
+            user_id, agent_id, chat_id, space_id, &target_agent, is_self, title, instruction, cron_expression, &timezone, &arguments,
         )
         .await
     }
@@ -247,6 +248,7 @@ impl TaskTool {
         user_id: &str,
         agent_id: &str,
         chat_id: &str,
+        space_id: Option<String>,
         target_agent: &crate::agent::models::Agent,
         is_self: bool,
         title: &str,
@@ -325,6 +327,7 @@ impl TaskTool {
                 cron_expression,
                 timezone.to_string(),
                 next_run_at,
+                space_id,
                 source_agent_id,
                 Some(chat_id.to_string()),
                 run_at,

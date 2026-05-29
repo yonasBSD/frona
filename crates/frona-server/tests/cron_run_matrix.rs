@@ -33,6 +33,7 @@ async fn spawn_cron_run_links_back_to_template() {
             "UTC".into(),
             next,
             None,
+            None,
             Some("chat-caller".into()),
             None,
             CronMode::Singleton,
@@ -67,7 +68,7 @@ async fn find_runs_by_cron_returns_all_runs_for_template() {
     let template = s
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             CronMode::PerInstance, CronConcurrency::Forbid, false, None)
         .await
         .unwrap();
@@ -95,7 +96,7 @@ async fn find_active_runs_excludes_completed() {
     let template = s
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             CronMode::Singleton, CronConcurrency::Replace, false, None)
         .await
         .unwrap();
@@ -121,7 +122,7 @@ async fn find_orphaned_cron_runs_returns_only_in_progress() {
     let template = s
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             CronMode::Singleton, CronConcurrency::Replace, false, None)
         .await
         .unwrap();
@@ -183,7 +184,7 @@ async fn legacy_cron_row_loads_via_surrealdb_with_defaults() {
         .create_cron_template(
             "user-1", "agent-1", "Legacy cron", "no mode field",
             "0 9 * * *", "UTC".into(), next,
-            None, None, None,
+            None, None, None, None,
             CronMode::Singleton, CronConcurrency::Replace, false, None)
         .await
         .unwrap();
@@ -236,7 +237,7 @@ async fn service_cancel_cascades_template_and_active_runs() {
     let template = s
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             CronMode::PerInstance, CronConcurrency::Allow, false, None)
         .await
         .unwrap();
@@ -263,7 +264,7 @@ async fn service_cancel_is_idempotent_on_terminal_states() {
     let template = s
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             CronMode::Singleton, CronConcurrency::Replace, false, None)
         .await
         .unwrap();
@@ -294,7 +295,7 @@ async fn service_delete_cascades_cron_template_to_runs() {
     let template = s
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             CronMode::PerInstance, CronConcurrency::Forbid, false, None)
         .await
         .unwrap();
@@ -322,7 +323,7 @@ async fn service_delete_non_cron_does_not_touch_cron_runs() {
     let template = s
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             CronMode::Singleton, CronConcurrency::Replace, false, None)
         .await
         .unwrap();
@@ -363,7 +364,7 @@ async fn service_delete_rejects_wrong_user() {
     let template = s
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             CronMode::Singleton, CronConcurrency::Replace, false, None)
         .await
         .unwrap();
@@ -379,7 +380,7 @@ async fn service_cancel_rejects_wrong_user() {
     let template = s
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             CronMode::Singleton, CronConcurrency::Replace, false, None)
         .await
         .unwrap();

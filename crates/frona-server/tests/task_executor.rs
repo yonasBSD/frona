@@ -726,6 +726,7 @@ async fn make_cron_template_with(
             "* * * * *",
             "UTC".to_string(),
             next,
+            None,
             Some("agent-1".to_string()),
             source_chat_id,
             None,
@@ -948,7 +949,7 @@ async fn resume_all_marks_only_in_progress_cron_runs_failed() {
         .task_service
         .create_cron_template(
             "user-1", "agent-1", "t", "d", "* * * * *", "UTC".into(),
-            next, None, None, None,
+            next, None, None, None, None,
             frona::agent::task::models::CronMode::Singleton,
             frona::agent::task::models::CronConcurrency::Replace,
             false,
