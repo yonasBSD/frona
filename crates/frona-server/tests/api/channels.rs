@@ -619,6 +619,7 @@ struct StubAdapter {
     captured: std::sync::Arc<StdMutex<Vec<CapturedSend>>>,
     tool_calls: std::sync::Arc<StdMutex<Vec<CapturedToolCall>>>,
     config: std::sync::Arc<StdMutex<StubConfig>>,
+    disconnect_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[async_trait::async_trait]
@@ -633,6 +634,8 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
         &self,
         _ctx: &frona::chat::channel::ChannelCtx,
     ) -> Result<(), frona::core::error::AppError> {
+        self.disconnect_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
     async fn on_tool(
@@ -721,6 +724,7 @@ struct StubFactory {
     captured: std::sync::Arc<StdMutex<Vec<CapturedSend>>>,
     tool_calls: std::sync::Arc<StdMutex<Vec<CapturedToolCall>>>,
     config: std::sync::Arc<StdMutex<StubConfig>>,
+    disconnect_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl StubFactory {
@@ -729,7 +733,12 @@ impl StubFactory {
             captured,
             tool_calls: std::sync::Arc::new(StdMutex::new(Vec::new())),
             config: std::sync::Arc::new(StdMutex::new(StubConfig::default())),
+            disconnect_count: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    fn disconnect_count(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        self.disconnect_count.clone()
     }
 }
 
@@ -753,6 +762,7 @@ impl frona::chat::channel::ChannelFactory for StubFactory {
             captured: self.captured.clone(),
             tool_calls: self.tool_calls.clone(),
             config: self.config.clone(),
+            disconnect_count: self.disconnect_count.clone(),
         }))
     }
 }
@@ -866,6 +876,117 @@ async fn inbound_webhook_persists_message_via_stub_adapter() {
         }
     })
     .await;
+}
+
+#[tokio::test]
+async fn delete_channel_cancels_spawned_task_and_invokes_on_disconnect() {
+    use frona::core::repository::Repository;
+    use std::sync::atomic::Ordering;
+
+    let (state, _tmp) = test_app_state().await;
+    let (token, user_id) =
+        register_user(&state, "delch", "delch@example.com", "password123").await;
+    let agent = create_agent(&state, &token, "DelChAgent").await;
+    let agent_id = agent["id"].as_str().unwrap();
+
+    let captured = std::sync::Arc::new(StdMutex::new(Vec::<CapturedSend>::new()));
+    let factory = StubFactory::new(captured.clone());
+    let disconnect_count = factory.disconnect_count();
+    state
+        .channel_registry
+        .register_factory(std::sync::Arc::new(factory));
+
+    let app = build_app(state.clone());
+    let resp = app
+        .oneshot(auth_post_json(
+            "/api/spaces",
+            &token,
+            serde_json::json!({"name": "DelCh"}),
+        ))
+        .await
+        .unwrap();
+    let space_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let now = chrono::Utc::now();
+    let channel = frona::chat::channel::Channel {
+        id: frona::core::repository::new_id(),
+        user_id: user_id.clone(),
+        handle: frona::handle!("telegram"),
+        space_id: space_id.clone(),
+        provider: "test".into(),
+        agent_id: agent_id.into(),
+        config: Default::default(),
+        dispatch_mode: frona::chat::channel::DispatchMode::Message,
+        status: frona::chat::channel::ChannelStatus::Disconnected,
+        error_message: None,
+        last_started_at: None,
+        user_address: None,
+        setup: None,
+        retry: None,
+        created_at: now,
+        updated_at: now,
+        webhook_url: None,
+    };
+    let repo = SurrealRepo::<frona::chat::channel::Channel>::new(state.db.clone());
+    repo.create(&channel).await.unwrap();
+    state
+        .channel_manager
+        .start_channel(&state, &channel)
+        .await
+        .unwrap();
+
+    // Sanity: task is running before delete.
+    assert!(
+        state
+            .channel_manager
+            .running_adapter(&channel.id)
+            .await
+            .is_some(),
+        "spawned task should be live after start_channel",
+    );
+    assert_eq!(
+        disconnect_count.load(Ordering::SeqCst),
+        0,
+        "on_disconnect should not have run yet",
+    );
+
+    let app = build_app(state.clone());
+    let resp = app
+        .oneshot(auth_delete(
+            &format!("/api/channels/{}", &channel.id),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Cancellation + on_disconnect run asynchronously off the request thread.
+    let mgr = state.channel_manager.clone();
+    let id_for_poll = channel.id.clone();
+    poll_until("spawned task removed from manager", || {
+        let mgr = mgr.clone();
+        let id = id_for_poll.clone();
+        async move { mgr.running_adapter(&id).await.is_none() }
+    })
+    .await;
+
+    let dc = disconnect_count.clone();
+    poll_until("adapter.on_disconnect invoked exactly once", || {
+        let dc = dc.clone();
+        async move { dc.load(Ordering::SeqCst) >= 1 }
+    })
+    .await;
+    assert_eq!(
+        disconnect_count.load(Ordering::SeqCst),
+        1,
+        "on_disconnect must run exactly once per stop",
+    );
+
+    // Row is gone from the DB.
+    assert!(
+        repo.find_by_id(&channel.id).await.unwrap().is_none(),
+        "channel row should be deleted",
+    );
 }
 
 #[tokio::test]
