@@ -115,7 +115,6 @@ async fn resolve_tool_calls(
         .map_err(ApiError::from)?;
 
     let mut last_msg: Option<MessageResponse> = None;
-    let mut message_id: Option<String> = None;
 
     for resolution in &req.resolutions {
         let te = state
@@ -127,8 +126,24 @@ async fn resolve_tool_calls(
                 format!("Tool call not found: {}", resolution.tool_call_id),
             )))?;
 
-        if message_id.is_none() {
-            message_id = Some(te.message_id.clone());
+        // Typed HitlResponse routes through the resolve_hitl dispatcher, which
+        // runs the tool's on_resume side-effect and synthesizes the result text.
+        if let Some(typed) = resolution.hitl_response.clone() {
+            let _outcome = crate::inference::hitl::resolve_hitl(
+                &state,
+                &resolution.tool_call_id,
+                typed,
+            )
+            .await
+            .map_err(ApiError::from)?;
+            if let Ok(Some(msg)) = state
+                .chat_service
+                .find_message(&te.message_id)
+                .await
+            {
+                last_msg = Some(msg.into());
+            }
+            continue;
         }
 
         use crate::chat::message::models::ToolResolutionAction;
@@ -154,24 +169,6 @@ async fn resolve_tool_calls(
     let msg = last_msg.ok_or_else(|| ApiError::from(
         crate::core::error::AppError::Validation("No resolutions provided".into()),
     ))?;
-
-    if let Some(ref mid) = message_id {
-        let still_pending = state
-            .chat_service
-            .has_pending_tools_for_message(mid)
-            .await
-            .unwrap_or(false);
-
-        if !still_pending {
-            let user_id = auth.user_id.clone();
-            let state = state.clone();
-            let chat_id = chat_id.clone();
-            let mid = mid.clone();
-            tokio::spawn(async move {
-                crate::agent::task::executor::resume_or_notify(&state, &user_id, &chat_id, &mid).await;
-            });
-        }
-    }
 
     Ok(Json(msg))
 }

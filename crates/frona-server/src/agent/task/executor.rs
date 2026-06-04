@@ -8,9 +8,8 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::execution;
 use crate::agent::task::models::{SignalMode, Task, TaskKind, TaskStatus};
 use crate::inference::conversation::TaskConversationBuilder;
-use crate::chat::broadcast::BroadcastEventKind;
 use crate::chat::message::models::{MessageEvent, MessageRole};
-use crate::inference::tool_call::MessageTool;
+use crate::inference::tool_call::TaskEvent;
 use crate::chat::models::CreateChatRequest;
 use crate::core::error::AppError;
 use crate::core::state::AppState;
@@ -370,17 +369,6 @@ impl TaskExecutor {
         }
 
         let chat_id = self.ensure_task_chat(&mut task).await?;
-        let space_id = self
-            .app_state
-            .chat_service
-            .get_chat(&task.user_id, &chat_id)
-            .await
-            .ok()
-            .and_then(|c| c.space_id);
-        let event_sender = self
-            .app_state
-            .broadcast_service
-            .create_event_sender(&task.user_id, &chat_id, space_id);
 
         self.app_state
             .task_service
@@ -440,7 +428,7 @@ impl TaskExecutor {
                 Ok(execution::AgentLoopOutcome { response }) => match response {
                     InferenceResponse::Completed { text, attachments, lifecycle_event, reasoning, .. } => {
                         let _ = self.app_state.chat_service
-                            .complete_agent_message(&agent_msg_id, text.clone(), attachments.clone(), reasoning)
+                            .complete_agent_message(&agent_msg_id, text, attachments, reasoning)
                             .await;
 
                         if let Some(event) = lifecycle_event {
@@ -458,23 +446,25 @@ impl TaskExecutor {
                         continue;
                     }
                     InferenceResponse::ExternalToolPending { tool_calls, .. } => {
-                        for te in tool_calls {
-                            event_sender.send_kind(BroadcastEventKind::ToolCallCreated { tool_call: te });
-                        }
+                        let _ = self.app_state.chat_service
+                            .pause_agent_message(
+                                &agent_msg_id,
+                                crate::inference::tool_loop::PauseReason::Hitl,
+                                tool_calls,
+                            ).await;
                         self.wait_for_resolution(&task.id, &cancel_token).await?;
                         continue;
                     }
                     InferenceResponse::Cancelled(text) => {
                         let _ = self.app_state.chat_service
-                            .complete_agent_message(&agent_msg_id, text, vec![], None)
-                            .await;
+                            .cancel_agent_message(&agent_msg_id, text).await;
                         self.handle_cancelled(&task).await?;
                         return Ok(());
                     }
                 },
                 Err(e) => {
                     let _ = self.app_state.chat_service
-                        .fail_agent_message(&agent_msg_id).await;
+                        .fail_agent_message(&agent_msg_id, e.to_string()).await;
                     self.handle_error(&task, &e).await?;
                     return Ok(());
                 }
@@ -522,8 +512,8 @@ impl TaskExecutor {
                 }
             };
             tool_calls.into_iter().rev().find_map(|te| {
-                match te.tool_data {
-                    Some(MessageTool::TaskCompletion { deliverables, .. }) if !deliverables.is_empty() => {
+                match te.task_event {
+                    Some(TaskEvent::Completion { deliverables, .. }) if !deliverables.is_empty() => {
                         Some(deliverables)
                     }
                     _ => None,
@@ -563,20 +553,15 @@ impl TaskExecutor {
 
     fn lifecycle_action_from_event(
         &self,
-        event: MessageTool,
+        event: TaskEvent,
     ) -> LifecycleAction {
         match event {
-            MessageTool::TaskCompletion { status, summary, deliverables, .. } => {
+            TaskEvent::Completion { status, summary, deliverables, .. } => {
                 LifecycleAction::Complete { status, summary, attachments: deliverables }
             }
-            MessageTool::TaskDeferred { delay_minutes, reason, .. } => {
+            TaskEvent::Deferred { delay_minutes, reason, .. } => {
                 LifecycleAction::Defer { delay_minutes, reason }
             }
-            _ => LifecycleAction::Complete {
-                status: TaskStatus::Completed,
-                summary: None,
-                attachments: vec![],
-            },
         }
     }
 
@@ -745,7 +730,7 @@ impl TaskExecutor {
                 let _ = self
                     .app_state
                     .chat_service
-                    .fail_agent_message(&agent_msg_id)
+                    .fail_agent_message(&agent_msg_id, e.to_string())
                     .await;
                 tracing::warn!(
                     task_id = %task.id,

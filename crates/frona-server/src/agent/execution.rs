@@ -1,6 +1,5 @@
 use tokio_util::sync::CancellationToken;
 
-use crate::chat::broadcast::{BroadcastEventKind, EventSender};
 use crate::chat::session::ChatSessionContext;
 use crate::core::state::AppState;
 use crate::core::error::AppError;
@@ -12,7 +11,6 @@ pub struct AgentLoopOutcome {
     pub response: InferenceResponse,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn run_agent_turn(
     state: &AppState,
     user_id: &str,
@@ -21,20 +19,18 @@ pub async fn run_agent_turn(
     cancel_token: CancellationToken,
     builder: Box<dyn ConversationBuilder>,
     tool_filters: &[ToolFilter],
-    event_sender: Option<&EventSender>,
 ) {
     let outcome = run_agent_loop(
         state, user_id, chat_id, message_id, cancel_token, builder, tool_filters,
     )
     .await;
-    finalize_agent_outcome(state, message_id, outcome, event_sender).await;
+    finalize_agent_outcome(state, message_id, outcome).await;
 }
 
 pub async fn finalize_agent_outcome(
     state: &AppState,
     message_id: &str,
     outcome: Result<AgentLoopOutcome, AppError>,
-    event_sender: Option<&EventSender>,
 ) {
     match outcome {
         Ok(AgentLoopOutcome { response }) => match response {
@@ -48,16 +44,16 @@ pub async fn finalize_agent_outcome(
                 let _ = state.chat_service.cancel_agent_message(message_id, text).await;
             }
             InferenceResponse::ExternalToolPending { tool_calls, .. } => {
-                if let Some(es) = event_sender {
-                    for te in tool_calls {
-                        es.send_kind(BroadcastEventKind::ToolCallCreated { tool_call: te });
-                    }
-                }
+                let _ = state.chat_service.pause_agent_message(
+                    message_id,
+                    crate::inference::tool_loop::PauseReason::Hitl,
+                    tool_calls,
+                ).await;
             }
         },
         Err(e) => {
             tracing::warn!(message_id, error = %e, "agent loop failed");
-            let _ = state.chat_service.fail_agent_message(message_id).await;
+            let _ = state.chat_service.fail_agent_message(message_id, e.to_string()).await;
         }
     }
 }
@@ -153,22 +149,12 @@ pub async fn resume_agent_loop(
     message_id: &str,
 ) -> Result<(), AppError> {
     let cancel_token = state.active_sessions.register(chat_id).await;
-    let space_id = state
-        .chat_service
-        .get_chat(user_id, chat_id)
-        .await
-        .ok()
-        .and_then(|c| c.space_id);
-    let event_sender = state
-        .broadcast_service
-        .create_event_sender(user_id, chat_id, space_id);
-
     let builder = Box::new(DefaultConversationBuilder {
         user_service: state.user_service.clone(),
         storage_service: state.storage_service.clone(),
     });
     run_agent_turn(
-        state, user_id, chat_id, message_id, cancel_token, builder, &[], Some(&event_sender),
+        state, user_id, chat_id, message_id, cancel_token, builder, &[],
     )
     .await;
 

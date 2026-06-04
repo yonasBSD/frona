@@ -292,7 +292,7 @@ async fn handle_voice_turn(
             }
             _ => {
                 let _ = state.chat_service
-                    .fail_agent_message(&agent_msg_id).await;
+                    .fail_agent_message(&agent_msg_id, "voice inference unexpected branch".to_string()).await;
                 return Ok((String::new(), false));
             }
         }

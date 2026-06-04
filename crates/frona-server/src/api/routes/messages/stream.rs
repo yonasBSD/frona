@@ -2,7 +2,8 @@ use axum::extract::{Path, State};
 use axum::Json;
 use rig_core::completion::Message as RigMessage;
 
-use crate::chat::broadcast::{BroadcastEventKind, EventSender};
+use crate::chat::broadcast::BroadcastEventKind;
+use crate::inference::tool_loop::{InferenceEvent, InferenceEventKind};
 use crate::chat::message::models::SendMessageRequest;
 use crate::chat::service::ChatService;
 use crate::credential::presign::presign_response;
@@ -26,7 +27,6 @@ async fn handle_inference_result(
     result: Result<Result<InferenceResponse, crate::core::error::AppError>, tokio::task::JoinError>,
     chat_service: &ChatService,
     message_id: &str,
-    event_sender: &EventSender,
 ) {
     match result {
         Ok(Ok(response)) => match response {
@@ -38,21 +38,21 @@ async fn handle_inference_result(
             InferenceResponse::Cancelled(text) => {
                 let _ = chat_service.cancel_agent_message(message_id, text).await;
             }
-            InferenceResponse::ExternalToolPending {
-                tool_calls, ..
-            } => {
-                for te in tool_calls {
-                    event_sender.send_kind(BroadcastEventKind::ToolCallCreated { tool_call: te });
-                }
+            InferenceResponse::ExternalToolPending { tool_calls, .. } => {
+                let _ = chat_service.pause_agent_message(
+                    message_id,
+                    crate::inference::tool_loop::PauseReason::Hitl,
+                    tool_calls,
+                ).await;
             }
         },
         Ok(Err(e)) => {
             tracing::error!(error = %e, "Inference failed");
-            let _ = chat_service.fail_agent_message(message_id).await;
+            let _ = chat_service.fail_agent_message(message_id, e.to_string()).await;
         }
         Err(e) => {
             tracing::error!(error = %e, "Inference task panicked");
-            let _ = chat_service.fail_agent_message(message_id).await;
+            let _ = chat_service.fail_agent_message(message_id, e.to_string()).await;
         }
     }
 }
@@ -160,21 +160,10 @@ pub(crate) async fn stream_message(
 
         let resolved_msg = resolve_result.into_message();
 
-        let executing_msg = state.chat_service
-            .find_executing_message_for_chat(&chat_id)
+        let did_flip = state.chat_service
+            .mark_message_executing(&resolved_msg.id)
             .await
             .map_err(ApiError::from)?;
-
-        let agent_msg_id = match executing_msg {
-            Some(msg) => msg.id,
-            None => {
-                let msg = state.chat_service
-                    .create_executing_agent_message(&chat_id, &agent_id)
-                    .await
-                    .map_err(ApiError::from)?;
-                msg.id
-            }
-        };
 
         let pending_conv_builder = DefaultConversationBuilder {
             user_service: state.user_service.clone(),
@@ -189,16 +178,13 @@ pub(crate) async fn stream_message(
         let chat_service = state.chat_service.clone();
         let active_sessions = state.active_sessions.clone();
         let chat_id_clone = chat_id.clone();
+        let agent_msg_id = resolved_msg.id.clone();
 
-        event_sender.send_kind(BroadcastEventKind::ToolResolved { message: resolved_msg });
+        event_sender.send(InferenceEvent {
+            kind: InferenceEventKind::Resume { message: resolved_msg },
+        });
 
-        let still_pending = state
-            .chat_service
-            .has_pending_tools_for_message(&agent_msg_id)
-            .await
-            .unwrap_or(false);
-
-        if !still_pending {
+        if did_flip {
             tokio::spawn(async move {
                 let stored_messages = match chat_service.get_stored_messages(&chat_id_clone).await {
                     Ok(m) => m,
@@ -227,7 +213,7 @@ pub(crate) async fn stream_message(
                 let result = handle.await;
 
                 handle_inference_result(
-                    result, &chat_service, &agent_msg_id, &event_sender,
+                    result, &chat_service, &agent_msg_id,
                 ).await;
                 active_sessions.remove(&chat_id_clone).await;
             });
@@ -305,7 +291,7 @@ pub(crate) async fn stream_message(
             let result = handle.await;
 
             handle_inference_result(
-                result, &chat_service, &agent_msg_id, &event_sender,
+                result, &chat_service, &agent_msg_id,
             ).await;
             active_sessions.remove(&chat_id_clone).await;
         });

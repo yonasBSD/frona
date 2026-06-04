@@ -546,7 +546,7 @@ async fn execute_background_agent(
             }
         },
         Err(e) => {
-            let _ = state.chat_service.fail_agent_message(&agent_msg_id).await;
+            let _ = state.chat_service.fail_agent_message(&agent_msg_id, e.to_string()).await;
             tracing::error!(error = %e, chat_id = %chat_id, "Background agent tool loop failed");
         }
     }
