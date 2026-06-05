@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -13,6 +14,7 @@ use crate::core::error::AppError;
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, SetupConfig, external_chat_id,
 };
+use super::super::typing::TypingIndicator;
 #[cfg(test)]
 use super::super::models::ChannelFactory;
 
@@ -23,6 +25,10 @@ use wa_rs_sqlite_storage::SqliteStore;
 use wa_rs_tokio_transport::TokioWebSocketTransportFactory;
 use wa_rs_ureq_http::UreqHttpClient;
 
+/// WhatsApp's composing indicator auto-fades around 10s. Refresh just under
+/// that so a long inference keeps showing "typing…" without spamming.
+const TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(8);
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WhatsAppUserConfig {}
 
@@ -30,12 +36,14 @@ pub struct WhatsAppUserConfig {}
 #[channel(id = "whatsapp_user", from = WhatsAppUserConfig)]
 pub struct WhatsAppUserAdapter {
     client: Mutex<Option<Arc<Client>>>,
+    typing: TypingIndicator,
 }
 
 impl From<WhatsAppUserConfig> for WhatsAppUserAdapter {
     fn from(_: WhatsAppUserConfig) -> Self {
         Self {
             client: Mutex::new(None),
+            typing: TypingIndicator::new(),
         }
     }
 }
@@ -102,22 +110,26 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         Ok(())
     }
 
-    async fn on_inference_start(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), AppError> {
+    async fn on_inference_start(&self, chat: &Chat, _ctx: &ChannelCtx) -> Result<(), AppError> {
         let Some(client) = self.client.lock().await.clone() else { return Ok(()) };
         let Ok(external) = external_chat_id(chat) else { return Ok(()) };
         let Ok(to_raw) = parse_external_id(external) else { return Ok(()) };
         let Ok(to) = to_raw.parse::<wa_rs::Jid>() else { return Ok(()) };
-        if let Err(e) = client.chatstate().send_composing(&to).await {
-            tracing::debug!(
-                channel_id = %ctx.channel.id,
-                error = %e,
-                "WhatsApp Personal send_composing failed (best-effort)",
-            );
-        }
+
+        self.typing.start(chat.id.clone(), TYPING_REFRESH_INTERVAL, move || {
+            let client = client.clone();
+            let to = to.clone();
+            async move {
+                if let Err(e) = client.chatstate().send_composing(&to).await {
+                    tracing::debug!(error = %e, "WhatsApp Personal send_composing failed (best-effort)");
+                }
+            }
+        }).await;
         Ok(())
     }
 
     async fn on_inference_done(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), AppError> {
+        self.typing.stop(&chat.id).await;
         let Some(client) = self.client.lock().await.clone() else { return Ok(()) };
         let Ok(external) = external_chat_id(chat) else { return Ok(()) };
         let Ok(to_raw) = parse_external_id(external) else { return Ok(()) };
