@@ -143,68 +143,18 @@ impl ChannelAdapter for WhatsAppUserAdapter {
             // Nothing to send; media attachments aren't wired yet.
             return Ok(());
         }
-        let client = self
-            .client
-            .lock()
-            .await
-            .clone()
-            .ok_or_else(|| {
-                tracing::warn!(
-                    channel_id = %ctx.channel.id,
-                    msg_id = %msg.id,
-                    "WhatsApp Personal send aborted - client not initialised (channel not Connected?)",
-                );
-                AppError::Internal("whatsapp_user client not initialised".into())
-            })?;
-        let to_raw = parse_external_id(external_chat_id(chat)?)?;
-        let stored: wa_rs::Jid = to_raw
-            .parse()
-            .map_err(|e| AppError::Validation(format!("invalid WhatsApp JID {to_raw:?}: {e}")))?;
-        // WhatsApp silently drops 1:1 stanzas addressed to a peer's LID;
-        // resolve to PN. `is_lid()` excludes groups (those stay `@g.us`).
-        let to = if stored.is_lid() {
-            match client.get_phone_number_from_lid(&stored.user).await {
-                Some(pn_user) => format!("{pn_user}@s.whatsapp.net")
-                    .parse::<wa_rs::Jid>()
-                    .inspect(|pn_jid| {
-                        tracing::debug!(
-                            channel_id = %ctx.channel.id,
-                            lid = %stored,
-                            pn = %pn_jid,
-                            "whatsapp_user resolved peer LID -> PN for 1:1 send",
-                        );
-                    })
-                    .unwrap_or_else(|_| stored.clone()),
-                None => {
-                    tracing::debug!(
-                        channel_id = %ctx.channel.id,
-                        lid = %stored,
-                        "whatsapp_user no LID->PN mapping; sending to LID",
-                    );
-                    stored
-                }
-            }
-        } else {
-            stored
-        };
+        let client = self.require_client(ctx, &msg.id).await?;
+        let to = resolve_send_jid(&client, chat, ctx).await?;
         let body = super::markdown::to_whatsapp(&msg.content);
-        let payload = wa_rs_proto::whatsapp::Message {
-            conversation: Some(body),
-            ..Default::default()
-        };
-        let request_id = client
-            .send_message(to.clone(), payload)
-            .await
-            .map_err(|e| {
-                tracing::warn!(
-                    channel_id = %ctx.channel.id,
-                    msg_id = %msg.id,
-                    to = %to,
-                    error = %e,
-                    "WhatsApp Personal send_message failed (check connectivity / device unlinked)",
-                );
-                AppError::Internal(format!("whatsapp_user send failed: {e}"))
-            })?;
+        let request_id = send_text(&client, &to, body).await.inspect_err(|e| {
+            tracing::warn!(
+                channel_id = %ctx.channel.id,
+                msg_id = %msg.id,
+                to = %to,
+                error = %e,
+                "WhatsApp Personal send_message failed (check connectivity / device unlinked)",
+            );
+        })?;
         tracing::info!(
             channel_id = %ctx.channel.id,
             msg_id = %msg.id,
@@ -214,6 +164,129 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         );
         Ok(())
     }
+
+    async fn on_pending_hitl(
+        &self,
+        batch: &[crate::inference::tool_call::ToolCall],
+        _msg: &Message,
+        chat: &Chat,
+        ctx: &ChannelCtx,
+    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, AppError> {
+        // wa_rs is text-only. Sequential cadence: render only the first
+        // pending HITL. The delivery cursor advances by 1; the next pending
+        // HITL renders after this one resolves (via text reply or web URL).
+        let Some(tc) = batch.first() else { return Ok(Vec::new()) };
+        let Some(h) = tc.hitl.as_ref() else { return Ok(Vec::new()) };
+
+        let client = self.require_client(ctx, &tc.id).await?;
+        let to = resolve_send_jid(&client, chat, ctx).await?;
+        // Body policy mirrors Discord/Slack: Choice/Approval → prompt only
+        // (text reply IS the resolve action); External (creds) → prompt + URL
+        // (URL is the only resolve path for vault picks).
+        let kind = crate::chat::channel::hitl::kind_for(&h.request);
+        let raw_body = match kind {
+            crate::chat::channel::hitl::HitlKind::External => {
+                crate::chat::channel::hitl::render_default_text(h)
+            }
+            _ => h.prompt.clone(),
+        };
+        let body = super::markdown::to_whatsapp(&raw_body);
+        let request_id = send_text(&client, &to, body).await.inspect_err(|e| {
+            tracing::warn!(
+                channel_id = %ctx.channel.id,
+                tool_call_id = %tc.id,
+                to = %to,
+                error = %e,
+                "whatsapp_user on_pending_hitl: send failed",
+            );
+        })?;
+        tracing::info!(
+            channel_id = %ctx.channel.id,
+            tool_call_id = %tc.id,
+            to = %to,
+            wa_request_id = %request_id,
+            "whatsapp_user HITL prompt sent",
+        );
+        Ok(vec![crate::inference::hitl::HitlDelivery {
+            channel_id: ctx.channel.id.clone(),
+            external_message_id: request_id,
+            delivered_at: chrono::Utc::now(),
+        }])
+    }
+}
+
+impl WhatsAppUserAdapter {
+    async fn require_client(
+        &self,
+        ctx: &ChannelCtx,
+        log_id: &str,
+    ) -> Result<Arc<Client>, AppError> {
+        self.client.lock().await.clone().ok_or_else(|| {
+            tracing::warn!(
+                channel_id = %ctx.channel.id,
+                id = %log_id,
+                "WhatsApp Personal send aborted - client not initialised (channel not Connected?)",
+            );
+            AppError::Internal("whatsapp_user client not initialised".into())
+        })
+    }
+}
+
+/// Parse the chat's stored JID and resolve LID → PN for 1:1 sends.
+/// WhatsApp silently drops 1:1 stanzas addressed to a peer's LID; groups
+/// (`@g.us`) are NOT LIDs and stay as-is.
+async fn resolve_send_jid(
+    client: &Client,
+    chat: &Chat,
+    ctx: &ChannelCtx,
+) -> Result<wa_rs::Jid, AppError> {
+    let to_raw = parse_external_id(external_chat_id(chat)?)?;
+    let stored: wa_rs::Jid = to_raw
+        .parse()
+        .map_err(|e| AppError::Validation(format!("invalid WhatsApp JID {to_raw:?}: {e}")))?;
+    if !stored.is_lid() {
+        return Ok(stored);
+    }
+    match client.get_phone_number_from_lid(&stored.user).await {
+        Some(pn_user) => {
+            let pn_str = format!("{pn_user}@s.whatsapp.net");
+            match pn_str.parse::<wa_rs::Jid>() {
+                Ok(pn_jid) => {
+                    tracing::debug!(
+                        channel_id = %ctx.channel.id,
+                        lid = %stored,
+                        pn = %pn_jid,
+                        "whatsapp_user resolved peer LID -> PN for 1:1 send",
+                    );
+                    Ok(pn_jid)
+                }
+                Err(_) => Ok(stored),
+            }
+        }
+        None => {
+            tracing::debug!(
+                channel_id = %ctx.channel.id,
+                lid = %stored,
+                "whatsapp_user no LID->PN mapping; sending to LID",
+            );
+            Ok(stored)
+        }
+    }
+}
+
+async fn send_text(
+    client: &Client,
+    to: &wa_rs::Jid,
+    body: String,
+) -> Result<String, AppError> {
+    let payload = wa_rs_proto::whatsapp::Message {
+        conversation: Some(body),
+        ..Default::default()
+    };
+    client
+        .send_message(to.clone(), payload)
+        .await
+        .map_err(|e| AppError::Internal(format!("whatsapp_user send failed: {e}")))
 }
 
 /// When `expect_setup`, also returns the QR string emitted on first connect.
@@ -242,6 +315,7 @@ async fn build_and_run_bot(
 
     let channel_id = ctx.channel.id.clone();
     let channel_manager = ctx.channel_manager.clone();
+    let chat_service = ctx.chat_service.clone();
     let emit = ctx.emit.clone();
 
     // Device label shows in WhatsApp → Linked Devices. Platform type
@@ -261,6 +335,7 @@ async fn build_and_run_bot(
             let qr_tx = qr_tx.clone();
             let channel_id = channel_id.clone();
             let channel_manager = channel_manager.clone();
+            let chat_service = chat_service.clone();
             let emit = emit.clone();
             async move {
                 match event {
@@ -312,8 +387,59 @@ async fn build_and_run_bot(
                             );
                             return;
                         }
+                        let quoted_id = msg
+                            .extended_text_message
+                            .as_ref()
+                            .and_then(|m| m.context_info.as_ref())
+                            .and_then(|c| c.stanza_id.clone());
                         let sender = info.source.sender.to_string();
                         let chat_id = info.source.chat.to_string();
+                        let external_chat_id = format!("wa:{chat_id}");
+
+                        // HITL resolve pre-pass: quote-reply (or single
+                        // pending) consumes the message instead of emitting a
+                        // fresh user turn.
+                        if let Ok(Some(chat)) = chat_service
+                            .find_chat_by_channel_external_id(&channel_id, &external_chat_id)
+                            .await
+                        {
+                            match crate::chat::channel::hitl::try_resolve_inbound(
+                                &chat_service,
+                                &channel_manager,
+                                &chat.id,
+                                quoted_id.as_deref(),
+                                text,
+                            )
+                            .await
+                            {
+                                Ok(Some(crate::inference::hitl::ResolveOutcome::Resolved { .. })) => {
+                                    tracing::info!(
+                                        channel_id = %channel_id,
+                                        wa_chat = %chat_id,
+                                        quoted_id = ?quoted_id,
+                                        "WhatsApp Personal inbound consumed as HITL resolution",
+                                    );
+                                    return;
+                                }
+                                Ok(Some(crate::inference::hitl::ResolveOutcome::AlreadyResolved)) => {
+                                    tracing::info!(
+                                        channel_id = %channel_id,
+                                        wa_chat = %chat_id,
+                                        "WhatsApp Personal inbound matched an already-resolved HITL; skipping",
+                                    );
+                                    return;
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    tracing::warn!(
+                                        channel_id = %channel_id,
+                                        error = %e,
+                                        "WhatsApp Personal try_resolve_inbound failed; falling through to emit",
+                                    );
+                                }
+                            }
+                        }
+
                         tracing::info!(
                             channel_id = %channel_id,
                             from = %sender,
@@ -321,7 +447,7 @@ async fn build_and_run_bot(
                             "WhatsApp Personal inbound accepted - emitting to inbound pipeline",
                         );
                         let event = ExternalMessage {
-                            external_chat_id: format!("wa:{chat_id}"),
+                            external_chat_id,
                             sender_address: sender.clone(),
                             sender_external_id: Some(sender),
                             sender_display_name: None,
