@@ -15,11 +15,12 @@ use super::{InferenceContext, ToolOutput};
 pub struct RequestCredentialsTool {
     vault_service: VaultService,
     prompts: PromptLoader,
+    public_base_url: String,
 }
 
 impl RequestCredentialsTool {
-    pub fn new(vault_service: VaultService, prompts: PromptLoader) -> Self {
-        Self { vault_service, prompts }
+    pub fn new(vault_service: VaultService, prompts: PromptLoader, public_base_url: String) -> Self {
+        Self { vault_service, prompts, public_base_url }
     }
 
     fn scope_for(grant_duration: &GrantDuration, chat_id: &str) -> (BindingScope, Option<chrono::DateTime<chrono::Utc>>) {
@@ -103,7 +104,7 @@ impl RequestCredentialsTool {
 
         Ok(ToolOutput::text("").with_hitl(Hitl {
             prompt: format!("Allow access to credential matching '{query}'?\n\n{reason}"),
-            url: format!("/chats/{}", ctx.chat.id),
+            url: format!("{}/chat?id={}", self.public_base_url, ctx.chat.id),
             request: HitlRequest::Credential { query, reason },
             status: ToolStatus::Pending,
             response: None,

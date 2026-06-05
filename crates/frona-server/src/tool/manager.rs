@@ -332,7 +332,11 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
     let prompts = state.prompts.clone();
 
     let mut tools: Vec<Arc<dyn AgentTool>> = vec![
-        Arc::new(NotifyHumanTool::new(state.vault_service.clone(), prompts.clone())),
+        Arc::new(NotifyHumanTool::new(
+            state.vault_service.clone(),
+            prompts.clone(),
+            state.config.server.external_or_local_base_url(),
+        )),
         Arc::new(super::send_message::SendMessageTool::new(
             state.chat_service.clone(), state.notification_service.clone(),
             state.broadcast_service.clone(), state.agent_service.clone(),
@@ -352,7 +356,11 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
         Arc::new(WebFetchTool::new(state.browser_session_manager.clone(), prompts.clone())),
         Arc::new(WebSearchTool::new(state.search_provider.clone(), prompts.clone())),
         Arc::new(HeartbeatTool::new(state.agent_service.clone(), state.storage_service.clone(), prompts.clone(), state.config.server.timezone.clone())),
-        Arc::new(RequestCredentialsTool::new(state.vault_service.clone(), prompts.clone())),
+        Arc::new(RequestCredentialsTool::new(
+            state.vault_service.clone(),
+            prompts.clone(),
+            state.config.server.external_or_local_base_url(),
+        )),
         Arc::new(super::manage_app::ManageAppTool::new(
             state.app_service.clone(), prompts.clone(),
             state.notification_service.clone(), state.broadcast_service.clone(),

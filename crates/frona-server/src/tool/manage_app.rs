@@ -187,14 +187,11 @@ impl ManageAppTool {
 
         if needs_approval {
             let previous = existing.map(|a| a.manifest);
-            let prompt = format!(
-                "Deploy `{}`?\n\nReview the proposed manifest in the chat.",
-                manifest.handle,
-            );
+            let prompt = format!("Deploy `{}`?", manifest.handle);
 
             return Ok(ToolOutput::text("").with_hitl(Hitl {
                 prompt,
-                url: format!("/chats/{}", ctx.chat.id),
+                url: format!("{}/chat?id={}", self.public_base_url, ctx.chat.id),
                 request: HitlRequest::App {
                     action: "deploy".to_string(),
                     manifest: manifest_value,

@@ -13,15 +13,16 @@ use super::{InferenceContext, ToolOutput};
 pub struct NotifyHumanTool {
     vault_service: VaultService,
     prompts: PromptLoader,
+    public_base_url: String,
 }
 
 impl NotifyHumanTool {
-    pub fn new(vault_service: VaultService, prompts: PromptLoader) -> Self {
-        Self { vault_service, prompts }
+    pub fn new(vault_service: VaultService, prompts: PromptLoader, public_base_url: String) -> Self {
+        Self { vault_service, prompts, public_base_url }
     }
 
-    fn url_for_chat(ctx: &InferenceContext) -> String {
-        format!("/chats/{}", ctx.chat.id)
+    fn url_for_chat(&self, ctx: &InferenceContext) -> String {
+        format!("{}/chat?id={}", self.public_base_url, ctx.chat.id)
     }
 }
 
@@ -50,7 +51,7 @@ impl NotifyHumanTool {
                     } else {
                         format!("{reason}\n\nTake over: {debugger_url}")
                     },
-                    url: Self::url_for_chat(ctx),
+                    url: self.url_for_chat(ctx),
                     request: HitlRequest::Takeover { reason, debugger_url },
                     status: ToolStatus::Pending,
                     response: None,
@@ -70,7 +71,7 @@ impl NotifyHumanTool {
 
                 Ok(ToolOutput::text("").with_hitl(Hitl {
                     prompt: question,
-                    url: Self::url_for_chat(ctx),
+                    url: self.url_for_chat(ctx),
                     request: HitlRequest::Question { options },
                     status: ToolStatus::Pending,
                     response: None,
