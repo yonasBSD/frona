@@ -65,4 +65,4 @@ Every task must declare the shape of its `result`. The schema is injected into `
   }
   ```
 
-- **Complex / nested schemas** (objects whose properties are themselves objects, arrays-of-objects, etc.) — require `process_result: true` so you (the parent) render the structured result with a fresh inference turn. Otherwise creation is rejected.
+- **Complex / nested schemas** — avoid unless you actually need them; stick to the shapes above. If you must, set `process_result: true` and include a required top-level `summary` string property.

@@ -78,6 +78,6 @@ Every recurring task must declare the shape of each fire's `result`. The schema 
   }
   ```
 
-- **Complex / nested schemas** (objects whose properties are themselves objects, arrays-of-objects, etc.) — require `process_result: true` so the parent agent renders the structured result with an inference turn. Otherwise creation is rejected.
+- **Complex / nested schemas** — avoid unless you actually need them; stick to the shapes above. If you must, set `process_result: true` and include a required top-level `summary` string property.
 
 For one-off or simply delayed work, use create_task. For periodic autonomous check-ins to your own state, use set_heartbeat.

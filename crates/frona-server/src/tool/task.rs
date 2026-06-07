@@ -311,10 +311,17 @@ impl TaskTool {
             ))?;
         crate::agent::task::schema::validate_schema_doc(&result_schema)
             .map_err(AppError::Validation)?;
-        if !crate::agent::task::schema::is_simple_schema(&result_schema) && !process_result {
-            return Err(AppError::Validation(
-                "Complex result_schema (nested objects, arrays of objects, etc.) cannot be rendered deterministically. Set process_result=true so the parent agent can render the structured result, or simplify the schema to a top-level scalar / array-of-scalars / oneOf-of-scalars / object-with-scalar-properties.".into(),
-            ));
+        if !crate::agent::task::schema::is_simple_schema(&result_schema) {
+            if !process_result {
+                return Err(AppError::Validation(
+                    "Complex result_schema (nested objects, arrays of objects, etc.) cannot be rendered deterministically. Set process_result=true so the parent agent can render the structured result, or simplify the schema to a top-level scalar / array-of-scalars / oneOf-of-scalars / object-with-scalar-properties.".into(),
+                ));
+            }
+            if !crate::agent::task::schema::has_renderable_summary_field(&result_schema) {
+                return Err(AppError::Validation(
+                    "Complex result_schema must include a required top-level `summary` string property — the user-facing renderer only shows that field when the schema is complex. Either add `summary: { type: \"string\" }` to `required`, or simplify the schema to top-level scalar / array-of-scalars / object-with-scalar-properties.".into(),
+                ));
+            }
         }
 
         let task = self
@@ -381,10 +388,17 @@ impl TaskTool {
             ))?;
         crate::agent::task::schema::validate_schema_doc(&result_schema)
             .map_err(AppError::Validation)?;
-        if !crate::agent::task::schema::is_simple_schema(&result_schema) && !process_result {
-            return Err(AppError::Validation(
-                "Complex result_schema (nested objects, arrays of objects, etc.) cannot be rendered deterministically. Set process_result=true so the parent agent can render the structured result, or simplify the schema to a top-level scalar / array-of-scalars / oneOf-of-scalars / object-with-scalar-properties.".into(),
-            ));
+        if !crate::agent::task::schema::is_simple_schema(&result_schema) {
+            if !process_result {
+                return Err(AppError::Validation(
+                    "Complex result_schema (nested objects, arrays of objects, etc.) cannot be rendered deterministically. Set process_result=true so the parent agent can render the structured result, or simplify the schema to a top-level scalar / array-of-scalars / oneOf-of-scalars / object-with-scalar-properties.".into(),
+                ));
+            }
+            if !crate::agent::task::schema::has_renderable_summary_field(&result_schema) {
+                return Err(AppError::Validation(
+                    "Complex result_schema must include a required top-level `summary` string property — the user-facing renderer only shows that field when the schema is complex. Either add `summary: { type: \"string\" }` to `required`, or simplify the schema to top-level scalar / array-of-scalars / object-with-scalar-properties.".into(),
+                ));
+            }
         }
 
         // source_agent_id set even for self-targets so kind=Delegation;
