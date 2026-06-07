@@ -24,6 +24,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+arc-swap = "1"
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 jsonwebtoken = "10"
 argon2 = "0.5"

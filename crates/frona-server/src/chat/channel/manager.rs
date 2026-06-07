@@ -505,7 +505,8 @@ impl ChannelManager {
         let mut events = state.broadcast_service.subscribe_raw();
         let manager = self;
         tokio::spawn(async move {
-            while let Ok(event) = events.recv().await {
+            loop {
+                let Some(event) = events.recv().await else { break };
                 let BroadcastEventKind::EntityUpdated {
                     table,
                     record_id,
@@ -1070,16 +1071,9 @@ async fn run_outbound(
                 return Ok(());
             }
             event = events.recv() => {
-                let event = match event {
-                    Ok(e) => e,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(channel_id = %ctx.channel.id, dropped = n, "channel dispatcher lagged");
-                        continue;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        tracing::info!(channel_id = %ctx.channel.id, "broadcast channel closed; exiting dispatcher");
-                        return Ok(());
-                    }
+                let Some(event) = event else {
+                    tracing::info!(channel_id = %ctx.channel.id, "broadcast channel closed; exiting dispatcher");
+                    return Ok(());
                 };
 
                 if let Err(e) = handle_outbound_event(adapter.clone(), &state, &space_id, &ctx, &event).await {
@@ -1464,7 +1458,7 @@ pub fn spawn_inference_dispatcher(state: AppState) {
                     break;
                 }
                 event = events.recv() => {
-                    let Ok(event) = event else { break };
+                    let Some(event) = event else { break };
                     let BroadcastEventKind::EntityUpdated {
                         table, record_id, action, ..
                     } = &event.kind else { continue };

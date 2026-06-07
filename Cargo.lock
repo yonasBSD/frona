@@ -2728,6 +2728,7 @@ dependencies = [
  "aes-gcm",
  "agent-skills",
  "approx",
+ "arc-swap",
  "argon2",
  "async-stream",
  "async-trait",
