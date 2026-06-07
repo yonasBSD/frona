@@ -192,16 +192,7 @@ impl ChannelAdapter for WhatsAppUserAdapter {
 
         let client = self.require_client(ctx, &tc.id).await?;
         let to = resolve_send_jid(&client, chat, ctx).await?;
-        // Body policy mirrors Discord/Slack: Choice/Approval → prompt only
-        // (text reply IS the resolve action); External (creds) → prompt + URL
-        // (URL is the only resolve path for vault picks).
-        let kind = crate::chat::channel::hitl::kind_for(&h.request);
-        let raw_body = match kind {
-            crate::chat::channel::hitl::HitlKind::External => {
-                crate::chat::channel::hitl::render_default_text(h)
-            }
-            _ => h.prompt.clone(),
-        };
+        let raw_body = crate::chat::channel::hitl::render_text(h);
         let body = super::markdown::to_whatsapp(&raw_body);
         let request_id = send_text(&client, &to, body).await.inspect_err(|e| {
             tracing::warn!(

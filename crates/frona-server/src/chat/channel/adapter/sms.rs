@@ -125,12 +125,12 @@ impl ChannelAdapter for SmsAdapter {
         ctx: &ChannelCtx,
     ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, AppError> {
         // SMS is text-only → sequential cadence: render only the first pending
-        // HITL with `render_default_text` (prompt + URL). The delivery cursor
-        // advances by 1; the next pending HITL renders after this one resolves.
+        // HITL. The delivery cursor advances by 1; the next pending HITL
+        // renders after this one resolves.
         let Some(tc) = batch.first() else { return Ok(Vec::new()) };
         let Some(h) = tc.hitl.as_ref() else { return Ok(Vec::new()) };
 
-        let body = crate::chat::channel::hitl::render_default_text(h);
+        let body = crate::chat::channel::hitl::render_text(h);
         let to_number = parse_external_id(external_chat_id(chat)?)?;
         let status_callback = status_callback_url(&ctx.webhook_url, &tc.id);
 

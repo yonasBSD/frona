@@ -249,16 +249,7 @@ impl ChannelAdapter for SignalAdapter {
         let Some(tc) = batch.first() else { return Ok(Vec::new()) };
         let Some(h) = tc.hitl.as_ref() else { return Ok(Vec::new()) };
 
-        // Body policy mirrors WhatsApp/Discord/Slack: Choice/Approval → prompt
-        // only (text reply IS the resolve action); External (creds) → prompt +
-        // URL (URL is the only resolve path for vault picks).
-        let kind = crate::chat::channel::hitl::kind_for(&h.request);
-        let body = match kind {
-            crate::chat::channel::hitl::HitlKind::External => {
-                crate::chat::channel::hitl::render_default_text(h)
-            }
-            _ => h.prompt.clone(),
-        };
+        let body = crate::chat::channel::hitl::render_text(h);
         let ts = self.dispatch_text(chat, &body, &tc.id, ctx).await?;
         tracing::info!(
             channel_id = %ctx.channel.id,
