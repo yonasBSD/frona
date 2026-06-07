@@ -342,7 +342,7 @@ describe("convertMessage: special roles", () => {
     expect(result).toBeNull();
   });
 
-  it("filters signal-only taskcompletion (empty content, non-failed)", () => {
+  it("suppresses taskcompletion bubble when content is empty and not failed", () => {
     const msg: MessageResponse = {
       id: "msg-tc-signal",
       chat_id: "chat-1",
@@ -352,8 +352,7 @@ describe("convertMessage: special roles", () => {
       created_at: "2026-01-01T00:00:00Z",
     };
 
-    const result = convertMessage(msg);
-    expect(result).toBeNull();
+    expect(convertMessage(msg)).toBeNull();
   });
 
   it("shows failed taskcompletion even with empty content", () => {

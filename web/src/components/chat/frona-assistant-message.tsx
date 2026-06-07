@@ -17,7 +17,9 @@ import { agentDisplayName } from "@/lib/types";
 import type { Attachment } from "@/lib/types";
 import { DefaultToolCallUI } from "./tool-uis/default-tool-call-ui";
 import { ToolTimelineProvider } from "./tool-uis/tool-timeline-context";
-import { ArrowDownTrayIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { ArrowDownTrayIcon, XMarkIcon, ClipboardDocumentListIcon } from "@heroicons/react/24/outline";
+import { useRouter } from "next/navigation";
+import * as Tooltip from "@radix-ui/react-tooltip";
 
 function ReasoningPart({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -271,17 +273,23 @@ function MessageAttachments() {
 }
 
 export function FronaAssistantMessage() {
-  const { agentId: sessionAgentId } = useSession();
+  const { agentId: sessionAgentId, activeTaskId } = useSession();
   const message = useMessage();
   const messageAgentId = (message.metadata as Record<string, any>)?.custom?.agentId;
   const agentId = messageAgentId ?? sessionAgentId ?? undefined;
   const { agents } = useNavigation();
   const tz = useTimezone();
+  const router = useRouter();
 
   const agent = agents.find((a) => a.id === agentId);
   const agentName = agentDisplayName(agentId, agent?.name);
   const custom = (message.metadata as Record<string, any>)?.custom ?? {};
   const isContinuation = custom.continuation;
+  const taskCompletion = custom.taskCompletion as
+    | { task_id: string; status: string }
+    | undefined;
+  const showTaskBadge =
+    taskCompletion && activeTaskId !== taskCompletion.task_id;
   const isoTime = message.createdAt?.toISOString();
 
   return (
@@ -294,6 +302,30 @@ export function FronaAssistantMessage() {
             <p className="text-xs font-medium text-text-tertiary">
               {agentName}
             </p>
+            {showTaskBadge && (
+              <Tooltip.Provider delayDuration={200}>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <button
+                      onClick={() => router.push(`/chat?task=${taskCompletion!.task_id}`)}
+                      className="inline-flex items-center text-text-tertiary hover:text-text-primary transition cursor-pointer"
+                    >
+                      <ClipboardDocumentListIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Content
+                      side="top"
+                      sideOffset={4}
+                      className="z-50 rounded-lg bg-surface-secondary border border-border px-3 py-2 text-xs text-text-secondary shadow-lg animate-in fade-in-0 zoom-in-95"
+                    >
+                      Open Task
+                      <Tooltip.Arrow className="fill-surface-secondary" />
+                    </Tooltip.Content>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+              </Tooltip.Provider>
+            )}
             {isoTime && (
               <time
                 dateTime={isoTime}

@@ -524,7 +524,7 @@ export function mergeConsecutiveMessages(messages: MessageResponse[]): MessageRe
     const isContinuation =
       prev &&
       prev.role === "agent" &&
-      (msg.role === "agent" || (msg.role === "system" && msg.event) || msg.role === "taskcompletion") &&
+      (msg.role === "agent" || (msg.role === "system" && msg.event)) &&
       (prev.agent_id === msg.agent_id || msg.role === "system") &&
       prev.status !== "executing";
 
