@@ -145,10 +145,6 @@ export function convertMessage(msg: MessageResponse) {
 
     const content: AssistantContentPart[] = [];
 
-    if (msg.reasoning) {
-      content.push({ type: "reasoning", text: msg.reasoning });
-    }
-
     // User-facing external tools (HITL prompts) render BEFORE text.
     if (msg.tool_calls?.length) {
       for (const te of msg.tool_calls) {
@@ -285,6 +281,7 @@ export function convertMessage(msg: MessageResponse) {
           continuation: msg._continuation,
           daySeparator: msg._daySeparator,
           gap: msg._gap,
+          ...(msg.reasoning ? { reasoning: msg.reasoning } : {}),
           ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
           ...(msg.role === "taskcompletion" && msg.event?.type === "TaskCompletion"
             ? {
