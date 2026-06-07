@@ -173,10 +173,11 @@ impl ChannelAdapter for TelegramAdapter {
         chat: &Chat,
         _ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
-        if msg.content.trim().is_empty() {
+        let body = crate::chat::channel::render::render_message_body(msg);
+        if body.trim().is_empty() {
             return Ok(());
         }
-        self.send_bubble(chat, &msg.content).await?;
+        self.send_bubble(chat, &body).await?;
         Ok(())
     }
 

@@ -123,10 +123,11 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
         ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
         let to = parse_external_id(external_chat_id(chat)?)?;
-        let body = if msg.content.trim().is_empty() {
+        let raw_body = crate::chat::channel::render::render_message_body(msg);
+        let body = if raw_body.trim().is_empty() {
             String::new()
         } else {
-            super::markdown::to_whatsapp(&msg.content)
+            super::markdown::to_whatsapp(&raw_body)
         };
         let mut text_consumed = false;
 

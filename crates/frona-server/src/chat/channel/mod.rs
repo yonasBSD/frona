@@ -3,6 +3,7 @@ pub mod hitl;
 pub mod manager;
 pub mod models;
 pub mod registry;
+pub mod render;
 pub mod repository;
 pub mod service;
 pub mod typing;

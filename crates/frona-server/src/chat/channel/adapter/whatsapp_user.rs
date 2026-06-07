@@ -151,13 +151,14 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         chat: &Chat,
         ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
-        if msg.content.trim().is_empty() {
+        let raw_body = crate::chat::channel::render::render_message_body(msg);
+        if raw_body.trim().is_empty() {
             // Nothing to send; media attachments aren't wired yet.
             return Ok(());
         }
         let client = self.require_client(ctx, &msg.id).await?;
         let to = resolve_send_jid(&client, chat, ctx).await?;
-        let body = super::markdown::to_whatsapp(&msg.content);
+        let body = super::markdown::to_whatsapp(&raw_body);
         let request_id = send_text(&client, &to, body).await.inspect_err(|e| {
             tracing::warn!(
                 channel_id = %ctx.channel.id,

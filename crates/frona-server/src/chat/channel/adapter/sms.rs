@@ -77,7 +77,8 @@ impl ChannelAdapter for SmsAdapter {
         chat: &Chat,
         ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
-        let body = compose_sms_body(tool_calls, &msg.content);
+        let raw_body = crate::chat::channel::render::render_message_body(msg);
+        let body = compose_sms_body(tool_calls, &raw_body);
 
         if body.trim().is_empty() {
             return Ok(());

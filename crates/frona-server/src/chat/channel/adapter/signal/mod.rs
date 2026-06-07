@@ -200,10 +200,11 @@ impl ChannelAdapter for SignalAdapter {
         chat: &Chat,
         ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
-        if msg.content.trim().is_empty() {
+        let body = crate::chat::channel::render::render_message_body(msg);
+        if body.trim().is_empty() {
             return Ok(());
         }
-        self.dispatch_text(chat, &msg.content, &msg.id, ctx).await.map(|_| ())
+        self.dispatch_text(chat, &body, &msg.id, ctx).await.map(|_| ())
     }
 
     async fn on_inference_start(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), AppError> {

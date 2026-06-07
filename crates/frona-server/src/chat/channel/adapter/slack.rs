@@ -165,10 +165,11 @@ impl ChannelAdapter for SlackAdapter {
         chat: &Chat,
         _ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
-        if msg.content.trim().is_empty() {
+        let body = crate::chat::channel::render::render_message_body(msg);
+        if body.trim().is_empty() {
             return Ok(());
         }
-        self.post_message(chat, &msg.content).await
+        self.post_message(chat, &body).await
     }
 
     async fn on_pending_hitl(
