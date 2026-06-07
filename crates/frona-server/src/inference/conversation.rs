@@ -6,7 +6,7 @@ use rig_core::completion::{AssistantContent, Message as RigMessage};
 use std::collections::HashMap;
 
 use crate::auth::UserService;
-use crate::chat::message::models::{Message, MessageRole, MessageStatus};
+use crate::chat::message::models::{Message, MessageEvent, MessageRole, MessageStatus};
 use crate::inference::tool_call::ToolCall;
 use crate::storage::{Attachment, StorageService, VirtualPath, is_image_content_type};
 
@@ -82,9 +82,10 @@ impl ConversationBuilder for DefaultConversationBuilder {
                         );
                         continue;
                     }
+                    let content = task_completion_content(msg);
                     result.push(
                         build_user_message(
-                            &msg.content,
+                            &content,
                             &msg.attachments,
                             &self.user_service,
                             &self.storage_service,
@@ -172,9 +173,10 @@ impl ConversationBuilder for TaskConversationBuilder {
                         );
                         continue;
                     }
+                    let content = task_completion_content(msg);
                     result.push(
                         build_user_message(
-                            &msg.content,
+                            &content,
                             &msg.attachments,
                             &self.user_service,
                             &self.storage_service,
@@ -272,9 +274,10 @@ impl ConversationBuilder for ChannelConversationBuilder {
                         );
                         continue;
                     }
+                    let content = task_completion_content(msg);
                     result.push(
                         build_user_message(
-                            &msg.content,
+                            &content,
                             &msg.attachments,
                             &self.user_service,
                             &self.storage_service,
@@ -457,6 +460,20 @@ pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage
             return None;
         }
         Some(RigMessage::user(&msg.content))
+    }
+}
+
+/// Wraps schema-bearing task results in `<task_result>{json}</task_result>`
+/// so the parent LLM sees a consistent shape. Other cases pass through.
+fn task_completion_content(msg: &Message) -> String {
+    let has_schema = matches!(
+        &msg.event,
+        Some(MessageEvent::TaskCompletion { schema: Some(_), .. })
+    );
+    if has_schema && !msg.content.is_empty() {
+        format!("<task_result>{}</task_result>", msg.content)
+    } else {
+        msg.content.clone()
     }
 }
 
@@ -709,6 +726,7 @@ mod tests {
                 chat_id: Some("c2".to_string()),
                 status: TaskStatus::Completed,
                 summary: None,
+                schema: None,
             }),
             ..make_message(MessageRole::TaskCompletion, "Task 'research' completed.")
         };
@@ -725,6 +743,7 @@ mod tests {
                 chat_id: None,
                 status: TaskStatus::Completed,
                 summary: None,
+                schema: None,
             }),
             attachments: vec![Attachment {
                 filename: "output.csv".to_string(),

@@ -297,6 +297,7 @@ async fn lifecycle_complete_event_detected() {
                 chat_id: Some(source_chat.id.clone()),
                 status: TaskStatus::Completed,
                 summary: Some("Research findings here".to_string()),
+                schema: None,
             },
         )
         .await
@@ -396,7 +397,6 @@ async fn deliver_to_source_skips_direct_tasks() {
 
     frona::agent::task::executor::deliver_event_to_source(
         &state.chat_service,
-        &state.task_service,
             &task,
             frona::agent::task::executor::TaskLifecycleEvent::Completion {
                 status: TaskStatus::Completed,
@@ -436,7 +436,6 @@ async fn deliver_to_source_sends_to_delegation() {
 
     frona::agent::task::executor::deliver_event_to_source(
         &state.chat_service,
-        &state.task_service,
             &task,
             frona::agent::task::executor::TaskLifecycleEvent::Completion {
                 status: TaskStatus::Completed,
@@ -481,7 +480,6 @@ async fn deliver_to_source_sends_to_direct_with_source_chat() {
 
     frona::agent::task::executor::deliver_event_to_source(
         &state.chat_service,
-        &state.task_service,
             &task,
             frona::agent::task::executor::TaskLifecycleEvent::Completion {
                 status: TaskStatus::Completed,
@@ -587,7 +585,6 @@ async fn deliver_to_source_signal_only_sends_empty_content() {
     // Signal-only completion: no result text, no deliverables
     frona::agent::task::executor::deliver_event_to_source(
         &state.chat_service,
-        &state.task_service,
             &task,
             frona::agent::task::executor::TaskLifecycleEvent::Completion {
                 status: TaskStatus::Completed,
@@ -639,7 +636,6 @@ async fn deliver_to_source_saves_message_to_user_chat() {
 
     frona::agent::task::executor::deliver_event_to_source(
         &state.chat_service,
-        &state.task_service,
             &task,
             frona::agent::task::executor::TaskLifecycleEvent::Completion {
                 status: TaskStatus::Completed,
@@ -696,6 +692,7 @@ async fn lifecycle_event_saved_after_assistant_message() {
                 chat_id: Some(chat.id.clone()),
                 status: TaskStatus::Completed,
                 summary: None,
+                schema: None,
             },
         )
         .await
@@ -775,7 +772,6 @@ async fn deliver_to_source_cron_run_posts_regardless_of_process_result() {
 
     frona::agent::task::executor::deliver_event_to_source(
         &state.chat_service,
-        &state.task_service,
             &run,
             frona::agent::task::executor::TaskLifecycleEvent::Completion {
                 status: TaskStatus::Completed,
@@ -823,7 +819,6 @@ async fn deliver_to_source_cron_run_posts_when_process_result_true() {
 
     frona::agent::task::executor::deliver_event_to_source(
         &state.chat_service,
-        &state.task_service,
             &run,
             frona::agent::task::executor::TaskLifecycleEvent::Completion {
                 status: TaskStatus::Completed,
@@ -859,7 +854,6 @@ async fn deliver_to_source_cron_run_skips_when_no_source_chat() {
 
     frona::agent::task::executor::deliver_event_to_source(
         &state.chat_service,
-        &state.task_service,
             &run,
             frona::agent::task::executor::TaskLifecycleEvent::Completion {
                 status: TaskStatus::Completed,

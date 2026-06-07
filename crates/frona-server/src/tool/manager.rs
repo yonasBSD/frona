@@ -280,7 +280,6 @@ impl ToolManager {
             if is_continuous_signal {
                 registry.register(Arc::new(crate::tool::report_signal::ReportSignalTool::new(
                     ctx.chat_service,
-                    ctx.task_service,
                     ctx.prompts,
                     result_schema,
                 )));

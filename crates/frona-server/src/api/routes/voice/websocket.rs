@@ -176,7 +176,6 @@ async fn handle_voice_socket(
         if let Ok(task) = state.task_service.mark_completed(&task.id, Some(summary.clone())).await {
             crate::agent::task::executor::deliver_event_to_source(
                 &state.chat_service,
-                &state.task_service,
                 &task,
                 crate::agent::task::executor::TaskLifecycleEvent::Completion {
                     status: crate::agent::task::models::TaskStatus::Completed,

@@ -49,6 +49,11 @@ pub enum MessageEvent {
         status: crate::agent::task::models::TaskStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
+        /// Schema the LLM produced its result against. Renderers (channel
+        /// adapters, web UI) read this together with `message.content` (raw
+        /// JSON) to format the result for humans.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        schema: Option<serde_json::Value>,
     },
     TaskMatch {
         task_id: String,

@@ -78,37 +78,35 @@ fn source_chat_id_and_resume(task: &Task) -> Option<(&str, bool)> {
     }
 }
 
-/// `None` means skip the row (silent fire). Schema-parse failure falls back to
-/// the raw `summary` so system-generated strings like the max-retries auto-
-/// complete sentinel still get delivered. `process_result=true` emits JSON in
-/// `<task_result>` for parent consumption; otherwise renders human-readable.
-fn render_completion_body(
+/// Returns `(content, schema)` to persist on the completion message, or
+/// `None` to silently skip delivery (parsed value is null / empty obj/arr).
+/// `schema` is `Some` only when `content` is JSON — that's the signal for
+/// renderers (LLM, adapters, UI) to re-render. `Failed` and no-schema cases
+/// pass `summary` through as plain prose.
+fn build_completion_body(
     task: &Task,
     status: &TaskStatus,
     summary: Option<&str>,
-    process_result: bool,
-) -> Option<String> {
+) -> Option<(String, Option<serde_json::Value>)> {
     let legacy = || summary.unwrap_or("").to_string();
-    // `Failed` summaries are operator-written reasons, not schema-shaped.
     if !matches!(status, TaskStatus::Completed) {
-        return Some(legacy());
+        return Some((legacy(), None));
     }
     let Some(schema) = task.result_schema.as_ref() else {
-        return Some(legacy());
+        return Some((legacy(), None));
     };
     let summary_str = summary.unwrap_or("");
     let spec = match crate::agent::task::schema::ResultSpec::new(schema.clone()) {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(task_id = %task.id, error = %e, "task.result_schema is invalid; using raw summary");
-            return Some(legacy());
+            return Some((legacy(), None));
         }
     };
     let value = match spec.parse(summary_str) {
         Ok(v) => v,
-        Err(_) => return Some(legacy()),
+        Err(_) => return Some((legacy(), None)),
     };
-    // Silent skip applies regardless of process_result.
     if value.is_null() {
         return None;
     }
@@ -122,29 +120,25 @@ fn render_completion_body(
     {
         return None;
     }
-    if process_result {
-        let json = serde_json::to_string(&value).unwrap_or_default();
-        Some(format!("<task_result>{json}</task_result>"))
-    } else {
-        crate::agent::task::schema::render_result(schema, &value)
-    }
+    let json = serde_json::to_string(&value).unwrap_or_default();
+    Some((json, Some(schema.clone())))
 }
 
 fn build_message_event(
     task: &Task,
     event: TaskLifecycleEvent,
-    process_result: bool,
 ) -> Option<(String, MessageEvent)> {
     match event {
         TaskLifecycleEvent::Completion { status, summary } => {
-            let text = render_completion_body(task, &status, summary.as_deref(), process_result)?;
+            let (content, schema) = build_completion_body(task, &status, summary.as_deref())?;
             let evt = MessageEvent::TaskCompletion {
                 task_id: task.id.clone(),
                 chat_id: task.chat_id.clone(),
                 status,
-                summary: if text.is_empty() { None } else { Some(text.clone()) },
+                summary: if content.is_empty() { None } else { Some(content.clone()) },
+                schema,
             };
-            Some((text, evt))
+            Some((content, evt))
         }
         TaskLifecycleEvent::Match { attempt_index, summary, result } => {
             let content = summary.clone();
@@ -160,30 +154,8 @@ fn build_message_event(
     }
 }
 
-/// CronRun's flag lives on the template, not the run — others read directly.
-pub async fn resolve_process_result(
-    task_service: &crate::agent::task::service::TaskService,
-    task: &Task,
-) -> bool {
-    match &task.kind {
-        TaskKind::CronRun { source_cron_id, .. } => {
-            match task_service.find_by_id(source_cron_id).await {
-                Ok(Some(template)) => matches!(
-                    template.kind,
-                    TaskKind::Cron { process_result: true, .. }
-                ),
-                _ => false,
-            }
-        }
-        TaskKind::Delegation { resume_parent, .. }
-        | TaskKind::Signal { resume_parent, .. } => *resume_parent,
-        TaskKind::Direct { .. } | TaskKind::Cron { .. } => false,
-    }
-}
-
 pub async fn deliver_event_to_source(
     chat_service: &crate::chat::service::ChatService,
-    task_service: &crate::agent::task::service::TaskService,
     task: &Task,
     event: TaskLifecycleEvent,
     attachments: Vec<Attachment>,
@@ -192,9 +164,7 @@ pub async fn deliver_event_to_source(
         return;
     };
 
-    let process_result = resolve_process_result(task_service, task).await;
-
-    let Some((content, message_event)) = build_message_event(task, event, process_result) else {
+    let Some((content, message_event)) = build_message_event(task, event) else {
         tracing::debug!(task_id = %task.id, "schema rendered to silent — skipping source-chat delivery");
         return;
     };
@@ -580,7 +550,6 @@ impl TaskExecutor {
             .await?;
         deliver_event_to_source(
             &self.harness.chat_service,
-            &self.harness.task_service,
             &task,
             TaskLifecycleEvent::Completion {
                 status: TaskStatus::Completed,
@@ -683,7 +652,6 @@ impl TaskExecutor {
                     .await?;
                 deliver_event_to_source(
                     &self.harness.chat_service,
-                    &self.harness.task_service,
                     task,
                     TaskLifecycleEvent::Completion {
                         status: TaskStatus::Completed,
@@ -706,7 +674,6 @@ impl TaskExecutor {
                     .await?;
                 deliver_event_to_source(
                     &self.harness.chat_service,
-                    &self.harness.task_service,
                     task,
                     TaskLifecycleEvent::Completion {
                         status: TaskStatus::Failed,
@@ -913,7 +880,6 @@ impl TaskExecutor {
             .await?;
         deliver_event_to_source(
             &self.harness.chat_service,
-            &self.harness.task_service,
             task,
             TaskLifecycleEvent::Completion {
                 status: TaskStatus::Failed,
