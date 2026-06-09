@@ -124,6 +124,7 @@ export function convertMessage(msg: MessageResponse) {
           contactId: msg.contact_id,
           daySeparator: msg._daySeparator,
           gap: msg._gap,
+          command: msg.command,
         },
       },
     };
@@ -444,6 +445,8 @@ export function useChatRuntime({ chatId, agentId, onChatCreated }: ChatRuntimeOp
   const filteredMessages = useMemo(() => {
     const kept = storeSnapshot.messages.filter((msg) => convertMessage(msg) !== null);
     const markers = computeTimeMarkers(kept, timeZone);
+    // Annotate each assistant message with the prior message's command (if any),
+    // so the bubble renders as a compact command-response when applicable.
     return kept.map((msg) => {
       const marker = markers.get(msg.id);
       if (!marker) return msg;
