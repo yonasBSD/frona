@@ -75,6 +75,7 @@ fn test_message_at(chat_id: &str, content: &str, created_at: chrono::DateTime<Ut
         from_address: None,
         delivery: None,
         dispatch_mode: None,
+        command: None,
         metadata: Default::default(),
         created_at,
     }
