@@ -263,6 +263,29 @@ export async function sendMessage(
   });
 }
 
+export interface CommandsResponse {
+  skills: Array<{
+    name: string;
+    description: string;
+    argument_hint?: string;
+    /** False when SKILL.md sets `disable-model-invocation: true`. */
+    model_invocable: boolean;
+  }>;
+  commands: Array<{
+    /** Wire-format name (handle for agents, plain name for static commands). */
+    name: string;
+    /** Pretty name for dropdown + chip. Equals `name` for static commands;
+     *  for agents it's the agent's display name (e.g. "Dark Matter"). */
+    display_name: string;
+    description: string;
+    argument_hint?: string;
+  }>;
+}
+
+export async function listCommands(chatId: string): Promise<CommandsResponse> {
+  return request<CommandsResponse>(`/api/chats/${chatId}/commands`);
+}
+
 export async function cancelGeneration(chatId: string): Promise<void> {
   const tokenResult = await ensureAccessToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
