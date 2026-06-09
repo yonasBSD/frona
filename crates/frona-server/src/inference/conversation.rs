@@ -5,6 +5,7 @@ use rig_core::completion::{AssistantContent, Message as RigMessage};
 
 use std::collections::HashMap;
 
+use crate::agent::service::AgentService;
 use crate::auth::UserService;
 use crate::chat::message::models::{Message, MessageEvent, MessageRole, MessageStatus};
 use crate::inference::tool_call::ToolCall;
@@ -36,6 +37,7 @@ pub trait ConversationBuilder: Send + Sync {
 pub struct DefaultConversationBuilder {
     pub user_service: UserService,
     pub storage_service: StorageService,
+    pub agent_service: AgentService,
 }
 
 #[async_trait]
@@ -106,9 +108,19 @@ impl ConversationBuilder for DefaultConversationBuilder {
                     );
                 }
                 MessageRole::Agent => {
+                    let other_handle =
+                        resolve_other_agent_handle(msg, &ctx.agent_id, &self.agent_service).await;
                     if let Some(tes) = te_map.get(&msg.id) {
-                        convert_agent_with_tool_calls(msg, tes, &ctx.agent_id, &mut result);
-                    } else if let Some(m) = convert_agent_message(msg, &ctx.agent_id) {
+                        convert_agent_with_tool_calls(
+                            msg,
+                            tes,
+                            &ctx.agent_id,
+                            other_handle.as_deref(),
+                            &mut result,
+                        );
+                    } else if let Some(m) =
+                        convert_agent_message(msg, &ctx.agent_id, other_handle.as_deref())
+                    {
                         result.push(m);
                     }
                 }
@@ -126,6 +138,7 @@ impl ConversationBuilder for DefaultConversationBuilder {
 pub struct TaskConversationBuilder {
     pub user_service: UserService,
     pub storage_service: StorageService,
+    pub agent_service: AgentService,
     pub continuation_prompt: Option<String>,
 }
 
@@ -201,10 +214,23 @@ impl ConversationBuilder for TaskConversationBuilder {
                         instruction_wrapped = true;
                         let content = format!("<task>\n{}\n</task>", msg.content);
                         result.push(RigMessage::user(&content));
-                    } else if let Some(tes) = te_map.get(&msg.id) {
-                        convert_agent_with_tool_calls(msg, tes, &ctx.agent_id, &mut result);
-                    } else if let Some(m) = convert_agent_message(msg, &ctx.agent_id) {
-                        result.push(m);
+                    } else {
+                        let other_handle =
+                            resolve_other_agent_handle(msg, &ctx.agent_id, &self.agent_service)
+                                .await;
+                        if let Some(tes) = te_map.get(&msg.id) {
+                            convert_agent_with_tool_calls(
+                                msg,
+                                tes,
+                                &ctx.agent_id,
+                                other_handle.as_deref(),
+                                &mut result,
+                            );
+                        } else if let Some(m) =
+                            convert_agent_message(msg, &ctx.agent_id, other_handle.as_deref())
+                        {
+                            result.push(m);
+                        }
                     }
                 }
                 MessageRole::System => {
@@ -226,6 +252,7 @@ impl ConversationBuilder for TaskConversationBuilder {
 pub struct ChannelConversationBuilder {
     pub user_service: UserService,
     pub storage_service: StorageService,
+    pub agent_service: AgentService,
     pub channel: String,
     pub sender: Option<String>,
     pub inbound_prompt: Option<String>,
@@ -298,9 +325,19 @@ impl ConversationBuilder for ChannelConversationBuilder {
                     );
                 }
                 MessageRole::Agent => {
+                    let other_handle =
+                        resolve_other_agent_handle(msg, &ctx.agent_id, &self.agent_service).await;
                     if let Some(tes) = te_map.get(&msg.id) {
-                        convert_agent_with_tool_calls(msg, tes, &ctx.agent_id, &mut result);
-                    } else if let Some(m) = convert_agent_message(msg, &ctx.agent_id) {
+                        convert_agent_with_tool_calls(
+                            msg,
+                            tes,
+                            &ctx.agent_id,
+                            other_handle.as_deref(),
+                            &mut result,
+                        );
+                    } else if let Some(m) =
+                        convert_agent_message(msg, &ctx.agent_id, other_handle.as_deref())
+                    {
                         result.push(m);
                     }
                 }
@@ -333,12 +370,16 @@ fn convert_agent_with_tool_calls(
     msg: &Message,
     tool_calls: &[&ToolCall],
     agent_id: &str,
+    other_agent_handle: Option<&str>,
     result: &mut Vec<RigMessage>,
 ) {
     let is_self = msg.agent_id.as_deref() == Some(agent_id);
     if !is_self {
         if !msg.content.is_empty() {
-            result.push(RigMessage::user(&msg.content));
+            result.push(RigMessage::user(&attribute_cross_agent(
+                &msg.content,
+                other_agent_handle,
+            )));
         }
         return;
     }
@@ -424,7 +465,11 @@ pub fn is_embeddable_image(attachment: &Attachment) -> bool {
         && !attachment.content_type.contains("svg")
 }
 
-pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage> {
+pub fn convert_agent_message(
+    msg: &Message,
+    agent_id: &str,
+    other_agent_handle: Option<&str>,
+) -> Option<RigMessage> {
     if matches!(
         msg.status.as_ref(),
         Some(MessageStatus::Executing) | Some(MessageStatus::Paused)
@@ -459,8 +504,35 @@ pub fn convert_agent_message(msg: &Message, agent_id: &str) -> Option<RigMessage
         if msg.content.is_empty() {
             return None;
         }
-        Some(RigMessage::user(&msg.content))
+        Some(RigMessage::user(&attribute_cross_agent(
+            &msg.content,
+            other_agent_handle,
+        )))
     }
+}
+
+async fn resolve_other_agent_handle(
+    msg: &Message,
+    current_agent_id: &str,
+    agent_service: &AgentService,
+) -> Option<String> {
+    let id = msg.agent_id.as_deref()?;
+    if id == current_agent_id {
+        return None;
+    }
+    agent_service
+        .find_by_id(id)
+        .await
+        .ok()
+        .flatten()
+        .map(|a| a.handle.to_string())
+}
+
+/// Mirrors `task_completion_content`'s `<task_result>…</task_result>`
+/// wrapper for the sibling task-delivery cross-agent flow.
+fn attribute_cross_agent(content: &str, handle: Option<&str>) -> String {
+    let label = handle.unwrap_or("unknown");
+    format!("<system source=\"agent:{label}\">\n{content}\n</system>")
 }
 
 /// Wraps schema-bearing task results in `<task_result>{json}</task_result>`
@@ -596,6 +668,7 @@ mod tests {
             from_address: None,
             delivery: None,
             dispatch_mode: None,
+            command: None,
             metadata: Default::default(),
             created_at: Utc::now(),
         }
@@ -611,7 +684,7 @@ mod tests {
     #[test]
     fn agent_same_id_converts_to_assistant() {
         let msg = make_agent_message("hello", "agent-1");
-        let result = convert_agent_message(&msg, "agent-1");
+        let result = convert_agent_message(&msg, "agent-1", None);
         assert!(result.is_some());
         assert!(matches!(result.unwrap(), RigMessage::Assistant { .. }));
     }
@@ -619,7 +692,7 @@ mod tests {
     #[test]
     fn agent_different_id_converts_to_user() {
         let msg = make_agent_message("task instruction", "agent-2");
-        let result = convert_agent_message(&msg, "agent-1");
+        let result = convert_agent_message(&msg, "agent-1", None);
         assert!(result.is_some());
         assert!(matches!(result.unwrap(), RigMessage::User { .. }));
     }
@@ -628,21 +701,21 @@ mod tests {
     fn agent_self_with_empty_content_is_skipped() {
         let mut msg = make_agent_message("", "agent-1");
         msg.status = Some(MessageStatus::Failed);
-        assert!(convert_agent_message(&msg, "agent-1").is_none());
+        assert!(convert_agent_message(&msg, "agent-1", None).is_none());
     }
 
     #[test]
     fn agent_self_with_empty_content_completed_is_skipped() {
         let mut msg = make_agent_message("", "agent-1");
         msg.status = Some(MessageStatus::Completed);
-        assert!(convert_agent_message(&msg, "agent-1").is_none());
+        assert!(convert_agent_message(&msg, "agent-1", None).is_none());
     }
 
     #[test]
     fn agent_other_with_empty_content_is_skipped() {
         let mut msg = make_agent_message("", "agent-2");
         msg.status = Some(MessageStatus::Failed);
-        assert!(convert_agent_message(&msg, "agent-1").is_none());
+        assert!(convert_agent_message(&msg, "agent-1", None).is_none());
     }
 
     #[test]
@@ -653,7 +726,7 @@ mod tests {
             content: "thinking".into(),
             signature: None,
         });
-        assert!(convert_agent_message(&msg, "agent-1").is_some());
+        assert!(convert_agent_message(&msg, "agent-1", None).is_some());
     }
 
     #[test]
@@ -773,7 +846,7 @@ mod tests {
             }),
             ..make_message(MessageRole::Agent, "Here is my answer")
         };
-        let result = convert_agent_message(&msg, "agent-1");
+        let result = convert_agent_message(&msg, "agent-1", None);
         assert!(result.is_some());
         let rig_msg = result.unwrap();
         if let RigMessage::Assistant { content, .. } = &rig_msg {
@@ -793,14 +866,14 @@ mod tests {
             status: Some(MessageStatus::Executing),
             ..make_message(MessageRole::Agent, "")
         };
-        let result = convert_agent_message(&msg, "agent-1");
+        let result = convert_agent_message(&msg, "agent-1", None);
         assert!(result.is_none(), "Executing messages should be skipped");
     }
 
     #[test]
     fn agent_without_reasoning_is_unchanged() {
         let msg = make_agent_message("hello", "agent-1");
-        let result = convert_agent_message(&msg, "agent-1");
+        let result = convert_agent_message(&msg, "agent-1", None);
         assert!(result.is_some());
         if let RigMessage::Assistant { content, .. } = result.unwrap() {
             let has_reasoning = content.iter().any(|c| matches!(c, AssistantContent::Reasoning(_)));

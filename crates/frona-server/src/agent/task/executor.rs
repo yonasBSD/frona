@@ -476,6 +476,7 @@ impl TaskExecutor {
             let builder = Box::new(TaskConversationBuilder {
                 user_service: self.harness.user_service.clone(),
                 storage_service: self.harness.storage_service.clone(),
+                agent_service: self.harness.agent_service.clone(),
                 continuation_prompt: continuation_prompt.clone(),
             });
             let filters = tool_filters_for_task(&task);
@@ -486,16 +487,20 @@ impl TaskExecutor {
                 cancel_token.clone(),
                 builder,
                 &filters,
+                None,
             )
             .await;
             drop(session_token);
             self.harness.active_sessions.remove(&chat_id).await;
 
             match result {
-                Ok(crate::agent::harness::AgentLoopOutcome { response }) => match response {
+                Ok(crate::agent::harness::AgentLoopOutcome { inference, mut response }) => match inference {
                     InferenceResponse::Completed { text, attachments, lifecycle_event, reasoning, .. } => {
+                        response.content = text;
+                        response.attachments = attachments;
+                        response.reasoning = reasoning;
                         let _ = self.harness.chat_service
-                            .complete_agent_message(&agent_msg_id, text, attachments, reasoning)
+                            .complete_agent_message(response)
                             .await;
 
                         if let Some(event) = lifecycle_event {
@@ -515,7 +520,7 @@ impl TaskExecutor {
                     InferenceResponse::ExternalToolPending { tool_calls, .. } => {
                         let _ = self.harness.chat_service
                             .pause_agent_message(
-                                &agent_msg_id,
+                                response,
                                 crate::inference::tool_loop::PauseReason::Hitl,
                                 tool_calls,
                             ).await;
@@ -524,15 +529,25 @@ impl TaskExecutor {
                         return Ok(());
                     }
                     InferenceResponse::Cancelled(text) => {
+                        response.content = text;
                         let _ = self.harness.chat_service
-                            .cancel_agent_message(&agent_msg_id, text).await;
+                            .cancel_agent_message(response).await;
                         self.handle_cancelled(&task).await?;
+                        return Ok(());
+                    }
+                    InferenceResponse::Handled => {
+                        // Command dispatch already finalized the response.
+                        // Treat as a no-op turn end — let the task continue or wrap up.
                         return Ok(());
                     }
                 },
                 Err(e) => {
-                    let _ = self.harness.chat_service
-                        .fail_agent_message(&agent_msg_id, e.to_string()).await;
+                    if let Ok(msg) = self.harness.chat_service
+                        .get_message(&task.user_id, &agent_msg_id).await
+                    {
+                        let _ = self.harness.chat_service
+                            .fail_agent_message(msg, e.to_string()).await;
+                    }
                     self.handle_error(&task, &e).await?;
                     return Ok(());
                 }
@@ -739,6 +754,7 @@ impl TaskExecutor {
         let builder = Box::new(TaskConversationBuilder {
             user_service: self.harness.user_service.clone(),
             storage_service: self.harness.storage_service.clone(),
+            agent_service: self.harness.agent_service.clone(),
             continuation_prompt: None,
         });
         let filters = tool_filters_for_task(task);
@@ -749,35 +765,41 @@ impl TaskExecutor {
             cancel_token,
             builder,
             &filters,
+            None,
         )
         .await;
 
         // Signal tasks complete via tool call, not System MessageEvent.
         let mut lifecycle_event = None;
         match outcome {
-            Ok(crate::agent::harness::AgentLoopOutcome { response }) => {
+            Ok(crate::agent::harness::AgentLoopOutcome { inference, mut response }) => {
                 if let InferenceResponse::Completed {
                     text,
                     attachments,
                     reasoning,
                     lifecycle_event: lc,
                     ..
-                } = response
+                } = inference
                 {
+                    response.content = text;
+                    response.attachments = attachments;
+                    response.reasoning = reasoning;
                     let _ = self
                         .harness
                         .chat_service
-                        .complete_agent_message(&agent_msg_id, text, attachments, reasoning)
+                        .complete_agent_message(response)
                         .await;
                     lifecycle_event = lc;
                 }
             }
             Err(e) => {
-                let _ = self
-                    .harness
-                    .chat_service
-                    .fail_agent_message(&agent_msg_id, e.to_string())
-                    .await;
+                if let Ok(msg) = self.harness.chat_service.get_message(&task.user_id, &agent_msg_id).await {
+                    let _ = self
+                        .harness
+                        .chat_service
+                        .fail_agent_message(msg, e.to_string())
+                        .await;
+                }
                 tracing::warn!(
                     task_id = %task.id,
                     error = %e,

@@ -1,5 +1,6 @@
 pub mod broadcast;
 pub mod channel;
+pub mod command;
 pub mod message;
 pub mod models;
 pub mod repository;

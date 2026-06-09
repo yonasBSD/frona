@@ -226,18 +226,18 @@ async fn handle_voice_turn(
         let builder = Box::new(DefaultConversationBuilder {
             user_service: state.user_service.clone(),
             storage_service: state.storage_service.clone(),
+            agent_service: state.agent_service.clone(),
         });
-        let outcome = state.harness.run_loop(user_id, chat_id, &agent_msg_id, cancel_token.clone(), builder, &[]).await?;
+        let outcome = state.harness.run_loop(user_id, chat_id, &agent_msg_id, cancel_token.clone(), builder, &[], None).await?;
+        let mut response = outcome.response;
 
-        match outcome.response {
+        match outcome.inference {
             InferenceResponse::ExternalToolPending {
                 ref tool_calls, ref turn_text, ..
             } if tool_calls.iter().any(|te| te.name == "send_dtmf") => {
                 let tool_call = tool_calls.iter().find(|te| te.name == "send_dtmf").unwrap();
                 tracing::debug!(chat_id = %chat_id, digits = %tool_call.result, "Sending DTMF digits");
 
-                // Tool executions already persisted by the tool loop.
-                // Send DTMF digits over WebSocket.
                 let dtmf_msg = serde_json::json!({
                     "type": "sendDigits",
                     "digits": tool_call.result
@@ -247,14 +247,13 @@ async fn handle_voice_turn(
                     .await
                     .ok();
 
-                // Resolve the external tool execution so the loop can continue
                 let _ = state.chat_service
                     .resolve_tool_call(&tool_call.id, Some("DTMF sent".to_string()))
                     .await;
 
-                // Complete the agent message for this turn
+                response.content = turn_text.clone();
                 let _ = state.chat_service
-                    .complete_agent_message(&agent_msg_id, turn_text.clone(), vec![], None)
+                    .complete_agent_message(response)
                     .await;
             }
             InferenceResponse::ExternalToolPending {
@@ -263,15 +262,13 @@ async fn handle_voice_turn(
                 let tool_call = tool_calls.iter().find(|te| te.name == "hangup_call").unwrap();
                 tracing::debug!(chat_id = %chat_id, "Hangup requested by agent");
 
-                // Tool executions already persisted by the tool loop.
-                // Resolve the external tool execution.
                 let _ = state.chat_service
                     .resolve_tool_call(&tool_call.id, Some("Call ended".to_string()))
                     .await;
 
-                // Complete the agent message
+                response.content = turn_text.clone();
                 let _ = state.chat_service
-                    .complete_agent_message(&agent_msg_id, turn_text.clone(), vec![], None)
+                    .complete_agent_message(response)
                     .await;
 
                 if let Some(cid) = call_id
@@ -283,14 +280,17 @@ async fn handle_voice_turn(
                 return Ok((turn_text.clone(), true));
             }
             InferenceResponse::Completed { text, attachments, reasoning, .. } => {
+                response.content = text.clone();
+                response.attachments = attachments;
+                response.reasoning = reasoning;
                 let _ = state.chat_service
-                    .complete_agent_message(&agent_msg_id, text.clone(), attachments, reasoning)
+                    .complete_agent_message(response)
                     .await;
                 return Ok((text, false));
             }
             _ => {
                 let _ = state.chat_service
-                    .fail_agent_message(&agent_msg_id, "voice inference unexpected branch".to_string()).await;
+                    .fail_agent_message(response, "voice inference unexpected branch".to_string()).await;
                 return Ok((String::new(), false));
             }
         }

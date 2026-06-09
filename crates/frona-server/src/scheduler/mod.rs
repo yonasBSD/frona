@@ -504,7 +504,7 @@ async fn execute_background_agent(
 ) -> Result<(), AppError> {
     state
         .chat_service
-        .create_stream_user_message(user_id, chat_id, message_content, vec![])
+        .create_stream_user_message(user_id, chat_id, message_content, vec![], None)
         .await?;
 
     let chat = state.chat_service.find_chat(chat_id).await?
@@ -517,30 +517,40 @@ async fn execute_background_agent(
     let builder = Box::new(DefaultConversationBuilder {
         user_service: state.user_service.clone(),
         storage_service: state.storage_service.clone(),
+        agent_service: state.agent_service.clone(),
     });
     let result = state.harness.run_loop(
-        user_id, chat_id, &agent_msg_id, cancel_token, builder, &[],
+        user_id, chat_id, &agent_msg_id, cancel_token, builder, &[], None,
     )
     .await;
 
     match result {
-        Ok(crate::agent::harness::AgentLoopOutcome { response }) => match response {
+        Ok(crate::agent::harness::AgentLoopOutcome { inference, mut response }) => match inference {
             InferenceResponse::Completed { text, attachments, reasoning, .. } => {
+                response.content = text;
+                response.attachments = attachments;
+                response.reasoning = reasoning;
                 let _ = state.chat_service
-                    .complete_agent_message(&agent_msg_id, text, attachments, reasoning)
+                    .complete_agent_message(response)
                     .await;
             }
             InferenceResponse::Cancelled(text) => {
+                response.content = text;
                 let _ = state.chat_service
-                    .complete_agent_message(&agent_msg_id, text, vec![], None)
+                    .complete_agent_message(response)
                     .await;
             }
             InferenceResponse::ExternalToolPending { .. } => {
                 tracing::warn!(chat_id = %chat_id, "Background agent hit external tool pending — not supported");
             }
+            InferenceResponse::Handled => {
+                // Command dispatch handled the response inline; nothing to do.
+            }
         },
         Err(e) => {
-            let _ = state.chat_service.fail_agent_message(&agent_msg_id, e.to_string()).await;
+            if let Ok(msg) = state.chat_service.get_message(user_id, &agent_msg_id).await {
+                let _ = state.chat_service.fail_agent_message(msg, e.to_string()).await;
+            }
             tracing::error!(error = %e, chat_id = %chat_id, "Background agent tool loop failed");
         }
     }

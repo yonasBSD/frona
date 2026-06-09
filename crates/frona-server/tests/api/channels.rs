@@ -1116,11 +1116,9 @@ async fn agent_message_completion_dispatches_to_outbound_adapter() {
         .create_executing_agent_message(&chat.id, &agent_id)
         .await
         .unwrap();
-    state
-        .chat_service
-        .complete_agent_message(&executing.id, "hello back".into(), vec![], None)
-        .await
-        .unwrap();
+    let mut msg = state.chat_service.get_message(&user_id, &executing.id).await.unwrap();
+    msg.content = "hello back".into();
+    state.chat_service.complete_agent_message(msg).await.unwrap();
 
     let captured_for_poll = captured.clone();
     poll_until("on_send invoked", || {
@@ -1328,11 +1326,8 @@ async fn empty_agent_message_skips_adapter_and_marks_sent() {
         .create_executing_agent_message(&chat.id, &agent_id)
         .await
         .unwrap();
-    state
-        .chat_service
-        .complete_agent_message(&executing.id, String::new(), vec![], None)
-        .await
-        .unwrap();
+    let msg = state.chat_service.get_message(&user_id, &executing.id).await.unwrap();
+    state.chat_service.complete_agent_message(msg).await.unwrap();
 
     let svc = state.chat_service.clone();
     let user_for_poll = user_id.clone();
@@ -1515,11 +1510,13 @@ async fn complete_msg(
     msg_id: &str,
     content: &str,
 ) {
-    state
-        .chat_service
-        .complete_agent_message(msg_id, content.to_string(), vec![], None)
-        .await
-        .unwrap();
+    // The terminal-write API now takes an owned Message rather than re-fetching by id.
+    // Tests don't always have user_id in scope; pull the row directly via the repo.
+    use frona::core::repository::Repository;
+    let repo = frona::db::repo::messages::SurrealMessageRepo::new(state.db.clone());
+    let mut msg = repo.find_by_id(msg_id).await.unwrap().unwrap();
+    msg.content = content.to_string();
+    state.chat_service.complete_agent_message(msg).await.unwrap();
 }
 
 async fn reload_msg(
@@ -1785,12 +1782,17 @@ async fn channel_hitl_pause_renders_pending_hitls() {
         .into_iter()
         .map(Into::into)
         .collect();
-    setup
-        .state
-        .chat_service
-        .pause_agent_message(&msg.id, frona::inference::tool_loop::PauseReason::Hitl, tcs)
-        .await
-        .unwrap();
+    {
+        use frona::core::repository::Repository;
+        let repo = frona::db::repo::messages::SurrealMessageRepo::new(setup.state.db.clone());
+        let placeholder = repo.find_by_id(&msg.id).await.unwrap().unwrap();
+        setup
+            .state
+            .chat_service
+            .pause_agent_message(placeholder, frona::inference::tool_loop::PauseReason::Hitl, tcs)
+            .await
+            .unwrap();
+    }
 
     // 4. Adapter must see the pending HITL.
     let pending_hitls_recorder = setup.pending_hitls_recorder.clone();

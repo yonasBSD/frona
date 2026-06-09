@@ -1573,6 +1573,7 @@ async fn handle_inbound_message(
     let builder = Box::new(ChannelConversationBuilder {
         user_service: state.user_service.clone(),
         storage_service: state.storage_service.clone(),
+        agent_service: state.agent_service.clone(),
         channel,
         sender: sender.map(String::from),
         inbound_prompt,
@@ -1585,6 +1586,7 @@ async fn handle_inbound_message(
         cancel_token,
         builder,
         &[],
+        None,
     )
     .await;
     Ok(())

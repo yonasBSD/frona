@@ -200,6 +200,7 @@ async fn build_session_for_chat(
     let builder = Box::new(DefaultConversationBuilder {
         user_service: state.user_service.clone(),
         storage_service: state.storage_service.clone(),
+        agent_service: state.agent_service.clone(),
     });
     ChatSessionContext::build(&state.harness, "user-1", chat, CancellationToken::new(), builder)
         .await

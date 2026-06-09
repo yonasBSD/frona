@@ -366,6 +366,7 @@ async fn delegation_delivers_task_result_to_parent_chat() {
             &parent_chat.id,
             "Ask the researcher: what is the answer to life?",
             vec![],
+            None,
         )
         .await
         .unwrap();
