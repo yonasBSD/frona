@@ -633,8 +633,12 @@ impl MemoryService {
             }
         }
 
+        // Skills flagged `disable-model-invocation: true` stay user-invocable
+        // (visible in the `/` dropdown) but are hidden from the model's
+        // `<available_skills>` block so it can't auto-trigger them.
         let skill_items: Vec<(String, String)> = skills
             .iter()
+            .filter(|s| !s.disable_model_invocation)
             .map(|s| (s.name.clone(), format!("{} (file: {}/SKILL.md)", s.description, s.path)))
             .collect();
         append_tagged_section(
