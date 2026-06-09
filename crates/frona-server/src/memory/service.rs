@@ -98,7 +98,7 @@ impl MemoryService {
             model_id,
             context_window,
             max_output_tokens,
-            &compaction_group,
+            compaction_group,
         )
         .await?;
 

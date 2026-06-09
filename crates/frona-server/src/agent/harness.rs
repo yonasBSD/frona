@@ -106,6 +106,7 @@ impl Harness {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_turn(
         &self,
         user_id: &str,
@@ -130,6 +131,7 @@ impl Harness {
         self.finalize(message_id, user_id, outcome).await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_loop(
         &self,
         user_id: &str,
@@ -226,7 +228,7 @@ impl Harness {
                         .await;
                     return Ok(AgentLoopOutcome {
                         inference: InferenceResponse::Handled,
-                        response: response,
+                        response,
                     });
                 }
                 Ok(CommandOutcome::End) => {
@@ -236,7 +238,7 @@ impl Harness {
                         .await;
                     return Ok(AgentLoopOutcome {
                         inference: InferenceResponse::Handled,
-                        response: response,
+                        response,
                     });
                 }
                 Err(e) => {
@@ -247,7 +249,7 @@ impl Harness {
                         .await;
                     return Ok(AgentLoopOutcome {
                         inference: InferenceResponse::Handled,
-                        response: response,
+                        response,
                     });
                 }
             }

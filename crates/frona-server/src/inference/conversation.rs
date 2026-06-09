@@ -376,7 +376,7 @@ fn convert_agent_with_tool_calls(
     let is_self = msg.agent_id.as_deref() == Some(agent_id);
     if !is_self {
         if !msg.content.is_empty() {
-            result.push(RigMessage::user(&attribute_cross_agent(
+            result.push(RigMessage::user(attribute_cross_agent(
                 &msg.content,
                 other_agent_handle,
             )));
@@ -504,7 +504,7 @@ pub fn convert_agent_message(
         if msg.content.is_empty() {
             return None;
         }
-        Some(RigMessage::user(&attribute_cross_agent(
+        Some(RigMessage::user(attribute_cross_agent(
             &msg.content,
             other_agent_handle,
         )))

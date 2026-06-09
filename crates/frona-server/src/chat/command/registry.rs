@@ -42,9 +42,7 @@ impl CommandRegistry {
         if let Some(cmd) = self.static_handlers.get(name) {
             return Some(cmd.clone());
         }
-        let Some(fallback) = self.switch_agent_fallback.as_ref() else {
-            return None;
-        };
+        let fallback = self.switch_agent_fallback.as_ref()?;
         if harness
             .agent_service
             .find_by_handle(&user.id, name)
