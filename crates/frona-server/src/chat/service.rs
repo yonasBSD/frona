@@ -323,6 +323,22 @@ impl ChatService {
         Ok(saved)
     }
 
+    /// Update an existing message row from a fully-constructed `Message` and
+    /// broadcast the change. Used by the command dispatch path so a handler
+    /// can mutate the placeholder agent message (e.g. swap its `agent_id`)
+    /// and have the harness persist the change in a single call.
+    pub async fn save_updated_message(&self, msg: &Message) -> Result<Message, AppError> {
+        let saved = self.message_repo.update(msg).await?;
+        if let Ok(Some(chat)) = self.chat_repo.find_by_id(&saved.chat_id).await {
+            self.broadcast_message_persisted(
+                &saved,
+                &chat,
+                crate::chat::broadcast::EntityAction::Updated,
+            );
+        }
+        Ok(saved)
+    }
+
     pub async fn patch_message_metadata(
         &self,
         message_id: &str,
@@ -345,6 +361,22 @@ impl ChatService {
         let chat = self.get_chat(user_id, chat_id).await?;
         self.chat_repo.delete(chat_id).await?;
         self.broadcast_chat_entity(&chat, crate::chat::broadcast::EntityAction::Deleted);
+        Ok(())
+    }
+
+    /// Wipe every message in a chat without deleting the chat itself.
+    /// Used by `/clear`. The chat row stays intact (same id, agent, title);
+    /// the message history goes away. Broadcasts an `EntityUpdated` event
+    /// keyed on the chat so SSE listeners refresh.
+    pub async fn delete_messages_for_chat(
+        &self,
+        user_id: &str,
+        chat_id: &str,
+    ) -> Result<(), AppError> {
+        // Authorize by ownership: get_chat returns NotFound otherwise.
+        let chat = self.get_chat(user_id, chat_id).await?;
+        self.message_repo.delete_by_chat_id(chat_id).await?;
+        self.broadcast_chat_entity(&chat, crate::chat::broadcast::EntityAction::Updated);
         Ok(())
     }
 
@@ -934,6 +966,15 @@ impl ChatService {
             ),
         });
         Ok(())
+    }
+
+    /// Generic chat row update + broadcast. Mirror of `save_updated_message`
+    /// for the Chat entity. Used by the command dispatch path so handlers can
+    /// mutate `ctx.chat.*` and have the harness persist the result.
+    pub async fn save_chat(&self, chat: &Chat) -> Result<Chat, AppError> {
+        let updated = self.chat_repo.update(chat).await?;
+        self.broadcast_chat_entity(&updated, crate::chat::broadcast::EntityAction::Updated);
+        Ok(updated)
     }
 
     /// Returns `true` iff this call performed the flip. Callers racing on the
