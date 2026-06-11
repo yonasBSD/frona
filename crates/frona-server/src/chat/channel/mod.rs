@@ -1,5 +1,6 @@
 pub mod adapter;
 pub mod attachment;
+pub mod error;
 pub mod hitl;
 pub mod manager;
 pub mod models;
@@ -11,6 +12,7 @@ pub mod typing;
 
 pub const WEBHOOK_PATH_PREFIX: &str = "/api/webhooks/channels";
 
+pub use error::{ChannelError, ChannelErrorKind};
 pub use hitl::{
     Hitl, HitlDelivery, HitlKind, HitlOutcome, HitlRequest, HitlResponse, ResolveOutcome,
     VaultGrant, kind_for, render_default_text,

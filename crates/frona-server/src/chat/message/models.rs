@@ -103,6 +103,9 @@ pub struct MessageDelivery {
     pub last_attempt_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Classification of the last send failure. Cleared on success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<crate::chat::channel::ChannelErrorKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sent_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,6 +124,7 @@ impl MessageDelivery {
             next_attempt_at: Some(now),
             last_attempt_at: None,
             last_error: None,
+            failure_kind: None,
             sent_at: None,
             delivered_at: None,
             tool_index: 0,
