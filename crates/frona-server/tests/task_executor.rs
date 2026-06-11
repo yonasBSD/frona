@@ -392,7 +392,6 @@ async fn mark_deferred_sets_pending_with_run_at() {
 #[tokio::test]
 async fn deliver_to_source_skips_direct_tasks() {
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
     let task = make_task(TaskKind::Direct { source_chat_id: None });
 
     frona::agent::task::executor::deliver_event_to_source(
@@ -410,7 +409,6 @@ async fn deliver_to_source_skips_direct_tasks() {
 #[tokio::test]
 async fn deliver_to_source_sends_to_delegation() {
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
 
     let source_chat = state
         .chat_service
@@ -456,7 +454,6 @@ async fn deliver_to_source_sends_to_delegation() {
 #[tokio::test]
 async fn deliver_to_source_sends_to_direct_with_source_chat() {
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
 
     let source_chat = state
         .chat_service
@@ -558,7 +555,6 @@ async fn concurrency_global_limit() {
 #[tokio::test]
 async fn deliver_to_source_signal_only_sends_empty_content() {
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
 
     let source_chat = state
         .chat_service
@@ -605,7 +601,6 @@ async fn deliver_to_source_signal_only_sends_empty_content() {
 #[tokio::test]
 async fn deliver_to_source_saves_message_to_user_chat() {
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
 
     // check_and_resume_parent runs, but it should bail out because
     // the source chat is not a task chat.
@@ -746,7 +741,6 @@ async fn deliver_to_source_cron_run_posts_regardless_of_process_result() {
     // caller chat. `process_result` only governs whether the caller agent
     // resumes (separate `resume_parent_if_requested` path).
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
 
     let source_chat = state
         .chat_service
@@ -793,7 +787,6 @@ async fn deliver_to_source_cron_run_posts_regardless_of_process_result() {
 #[tokio::test]
 async fn deliver_to_source_cron_run_posts_when_process_result_true() {
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
 
     let source_chat = state
         .chat_service
@@ -843,7 +836,6 @@ async fn deliver_to_source_cron_run_skips_when_no_source_chat() {
     // no calling agent). Even with process_result=true the delivery is a no-op
     // because there's nowhere to deliver to.
     let (state, _tmp) = test_app_state().await;
-    let executor = make_executor(&state);
 
     let template = make_cron_template_with(&state, None, true).await;
     let run = state
