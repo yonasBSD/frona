@@ -1,4 +1,5 @@
 pub mod adapter;
+pub mod attachment;
 pub mod hitl;
 pub mod manager;
 pub mod models;

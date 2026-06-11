@@ -195,6 +195,15 @@ pub struct ChannelCtx {
     pub user_service: crate::auth::UserService,
     pub chat_service: crate::chat::service::ChatService,
     pub data_dir: std::path::PathBuf,
+    /// External-or-local base URL used to build canonical `/api/files/...`
+    /// URLs for button channels (TG/Discord/Slack/WA Cloud). Inline channels
+    /// (SMS/Signal/WA User) get full `/s/{id}` URLs from `share_service`
+    /// directly and do not touch this field.
+    pub base_url: String,
+    /// Issues `/s/{id}` short links for inline channels (SMS/Signal/WA User).
+    pub share_service: crate::credential::share::service::ShareService,
+    /// TTL in seconds applied to `share_service.issue_file` calls.
+    pub share_ttl_secs: u64,
     /// Adapters with long-running tasks MUST observe this — sole `stop_channel` signal.
     pub cancel: tokio_util::sync::CancellationToken,
 }

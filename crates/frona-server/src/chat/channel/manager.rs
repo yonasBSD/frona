@@ -349,6 +349,9 @@ impl ChannelManager {
             user_service: state.user_service.clone(),
             chat_service: state.chat_service.clone(),
             data_dir,
+            base_url: state.config.server.external_or_local_base_url(),
+            share_service: state.share_service.clone(),
+            share_ttl_secs: state.config.share.ttl_secs,
             cancel: cancel.clone(),
         };
 
