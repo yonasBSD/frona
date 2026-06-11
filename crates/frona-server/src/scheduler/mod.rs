@@ -66,6 +66,8 @@ impl Scheduler {
         spawn_periodic!(self, memory, "user_memory_compaction", run_user_memory_compaction, shutdown);
         spawn_periodic!(self, poll, "poll_tasks", run_poll_tasks, shutdown);
         spawn_periodic!(self, space, "token_cleanup", run_token_cleanup, shutdown);
+        let share_cleanup = Duration::from_secs(cfg.share.cleanup_interval_secs);
+        spawn_periodic!(self, share_cleanup, "share_cleanup", run_share_cleanup, shutdown);
     }
 
     async fn run_poll_tasks(&self) -> Result<(), AppError> {
@@ -298,6 +300,14 @@ impl Scheduler {
         let deleted = self.app_state.token_service.cleanup_expired().await?;
         if deleted > 0 {
             tracing::info!(count = deleted, "Cleaned up expired tokens");
+        }
+        Ok(())
+    }
+
+    async fn run_share_cleanup(&self) -> Result<(), AppError> {
+        let deleted = self.app_state.share_service.cleanup_expired().await?;
+        if deleted > 0 {
+            tracing::info!(count = deleted, "Cleaned up expired share links");
         }
         Ok(())
     }

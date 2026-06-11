@@ -120,6 +120,7 @@ pub struct AppState {
     pub mcp_service: Arc<crate::tool::mcp::McpServerService>,
     pub keypair_service: KeyPairService,
     pub presign_service: PresignService,
+    pub share_service: crate::credential::share::service::ShareService,
     pub token_service: TokenService,
     pub oauth_service: Option<OAuthService>,
     pub login_tracker: LoginAttemptTracker,
@@ -212,6 +213,13 @@ impl AppState {
             user_service.clone(),
             local_base_url.clone(),
             config.auth.presign_expiry_secs,
+        );
+
+        let share_repo: Arc<dyn crate::credential::share::repository::ShareRepository> =
+            Arc::new(SurrealRepo::<crate::credential::share::models::Share>::new(db.clone()));
+        let share_service = crate::credential::share::service::ShareService::new(
+            share_repo,
+            config.share.ttl_secs,
         );
 
         let jwt_service = JwtService::new();
@@ -452,6 +460,7 @@ impl AppState {
             mcp_service,
             keypair_service,
             presign_service,
+            share_service,
             token_service,
             oauth_service,
             login_tracker: LoginAttemptTracker::new(5, 15),
