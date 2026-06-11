@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -111,13 +112,59 @@ fn classify_telegram_error(e: &RequestError) -> ChannelError {
     }
 }
 
+/// Wrap top-level GFM tables in ``` fences before MarkdownV2 conversion so
+/// Telegram renders them as aligned monospace blocks instead of escaped pipe
+/// text. Parses with the same parser+options `telegram_markdown_v2` uses, so
+/// both agree on what counts as a table.
+fn fence_tables(text: &str) -> Cow<'_, str> {
+    let Ok(::markdown::mdast::Node::Root(root)) =
+        ::markdown::to_mdast(text, &::markdown::ParseOptions::gfm())
+    else {
+        return Cow::Borrowed(text);
+    };
+
+    let ranges: Vec<(usize, usize)> = root
+        .children
+        .iter()
+        .filter_map(|node| match node {
+            ::markdown::mdast::Node::Table(t) => {
+                t.position.as_ref().map(|p| (p.start.offset, p.end.offset))
+            }
+            _ => None,
+        })
+        .collect();
+
+    if ranges.is_empty() {
+        return Cow::Borrowed(text);
+    }
+
+    let mut out = String::with_capacity(text.len() + ranges.len() * 8);
+    let mut cursor = 0;
+    for (start, end) in ranges {
+        let span = &text[start..end];
+        // Re-render the span through the converter's own table renderer
+        // (Keep = no escaping): its width-padding math aligns the columns
+        // regardless of how the model padded its cells.
+        let aligned = telegram_markdown_v2::convert_with_strategy(
+            span,
+            telegram_markdown_v2::UnsupportedTagsStrategy::Keep,
+        )
+        .unwrap_or_else(|_| span.to_string());
+        out.push_str(&text[cursor..start]);
+        out.push_str("```\n");
+        out.push_str(aligned.trim_end_matches('\n'));
+        out.push_str("\n```");
+        cursor = end;
+    }
+    out.push_str(&text[cursor..]);
+    Cow::Owned(out)
+}
+
 impl TelegramAdapter {
     async fn send_bubble(&self, chat: &Chat, text: &str) -> Result<String, ChannelError> {
         self.send_bubble_with_keyboard(chat, text, None).await
     }
 
-    /// On MarkdownV2 parse rejection (e.g. table syntax our converter
-    /// greenlights but Telegram doesn't), retry as plain text.
     async fn send_bubble_with_keyboard(
         &self,
         chat: &Chat,
@@ -125,7 +172,10 @@ impl TelegramAdapter {
         keyboard: Option<InlineKeyboardMarkup>,
     ) -> Result<String, ChannelError> {
         let (chat_id, thread_id) = parse_external_id(external_chat_id(chat)?)?;
-        let (rendered, parse_mode) = match telegram_markdown_v2::convert(text) {
+        let (rendered, parse_mode) = match telegram_markdown_v2::convert_with_strategy(
+            &fence_tables(text),
+            telegram_markdown_v2::UnsupportedTagsStrategy::Escape,
+        ) {
             Ok(v2) => (v2, Some(ParseMode::MarkdownV2)),
             Err(e) => {
                 tracing::debug!(
@@ -473,7 +523,10 @@ impl ChannelAdapter for TelegramAdapter {
                 }
             };
 
-            let (rendered, parse_mode) = match telegram_markdown_v2::convert(&h.prompt) {
+            let (rendered, parse_mode) = match telegram_markdown_v2::convert_with_strategy(
+                &fence_tables(&h.prompt),
+                telegram_markdown_v2::UnsupportedTagsStrategy::Escape,
+            ) {
                 Ok(v2) => (v2, Some(ParseMode::MarkdownV2)),
                 Err(_) => (super::markdown::to_plain(&h.prompt), None),
             };
@@ -765,6 +818,47 @@ async fn emit_inbound_update(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn fence_tables_wraps_top_level_table() {
+        let input = "Intro\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nOutro";
+        let fenced = fence_tables(input);
+        assert_eq!(
+            fenced,
+            "Intro\n\n```\n| a | b |\n| - | - |\n| 1 | 2 |\n```\n\nOutro"
+        );
+    }
+
+    #[test]
+    fn fence_tables_realigns_ragged_columns() {
+        let input = "| Col A | B |\n| - | - |\n| 1 | 2 |";
+        let fenced = fence_tables(input);
+        assert_eq!(fenced, "```\n| Col A | B |\n| -     | - |\n| 1     | 2 |\n```");
+    }
+
+    #[test]
+    fn fence_tables_leaves_plain_text_untouched() {
+        let input = "no tables here, just a | pipe";
+        assert!(matches!(fence_tables(input), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn fence_tables_skips_tables_already_inside_code_fences() {
+        let input = "```\n| a | b |\n| - | - |\n```\n";
+        assert!(matches!(fence_tables(input), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn table_converts_to_monospace_block_without_escaped_pipes() {
+        let input = "Here you go:\n\n| a | b |\n| - | - |\n| 1 | 2 |";
+        let out = telegram_markdown_v2::convert_with_strategy(
+            &fence_tables(input),
+            telegram_markdown_v2::UnsupportedTagsStrategy::Escape,
+        )
+        .unwrap();
+        assert!(out.contains("```"), "table must render as code block: {out}");
+        assert!(!out.contains("\\|"), "no escaped pipes outside code: {out}");
+    }
 
     #[test]
     fn manifest_has_bot_token_param() {

@@ -2762,6 +2762,7 @@ dependencies = [
  "keepass",
  "landlock",
  "libc",
+ "markdown",
  "metrics",
  "metrics-exporter-prometheus",
  "minijinja",

@@ -47,6 +47,9 @@ serenity = { version = "0.12", default-features = false, features = ["client", "
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 telegram-markdown-v2 = "0.2"
+# Same parser telegram-markdown-v2 uses internally; needed so fence_tables()
+# agrees with the converter on what counts as a GFM table.
+markdown = "1"
 xml-rs = "1"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "fs", "trace", "set-header"] }
