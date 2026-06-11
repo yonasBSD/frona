@@ -30,6 +30,7 @@ jsonwebtoken = "10"
 argon2 = "0.5"
 ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8"] }
 rand = "0.8"
+nanoid = "0.4"
 aes-gcm = "0.10"
 sha2 = "0.10"
 sha1 = "0.10"

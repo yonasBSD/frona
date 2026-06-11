@@ -373,6 +373,24 @@ impl Default for RetryConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(default)]
+pub struct ShareConfig {
+    #[schemars(description = "TTL in seconds for newly-issued Share rows (short links).")]
+    pub ttl_secs: u64,
+    #[schemars(description = "Interval in seconds between expired-share cleanup runs.")]
+    pub cleanup_interval_secs: u64,
+}
+
+impl Default for ShareConfig {
+    fn default() -> Self {
+        Self {
+            ttl_secs: 30 * 24 * 60 * 60,
+            cleanup_interval_secs: 6 * 60 * 60,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(default)]
 pub struct ChannelConfig {
     #[schemars(description = "Default retry policy for failed channel connections. Per-channel overrides take precedence.")]
     pub retry: RetryConfig,
@@ -856,6 +874,8 @@ pub struct Config {
     pub mcp: McpConfig,
     #[serde(default)]
     pub channel: ChannelConfig,
+    #[serde(default)]
+    pub share: ShareConfig,
     #[serde(default)]
     pub signal: SignalConfig,
     #[serde(default)]
