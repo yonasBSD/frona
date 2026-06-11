@@ -11,6 +11,7 @@ use crate::chat::message::models::Message;
 use crate::chat::models::Chat;
 use crate::core::error::AppError;
 
+use super::super::attachment;
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, external_chat_id,
 };
@@ -163,13 +164,91 @@ impl ChannelAdapter for SlackAdapter {
         msg: &Message,
         _tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
-        _ctx: &ChannelCtx,
+        ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
         let body = crate::chat::channel::render::render_message_body(msg);
-        if body.trim().is_empty() {
+        let has_attachments = !msg.attachments.is_empty();
+
+        if !has_attachments {
+            if body.trim().is_empty() {
+                return Ok(());
+            }
+            return self.post_message(chat, &body).await;
+        }
+
+        // Build URL buttons for ALL attachments (image native upload deferred
+        // in this iteration — see plan A6). Each attachment becomes one URL
+        // button labeled "📄 Open {filename}" pointing at the canonical
+        // /api/files/... URL.
+        let (channel_id, thread_ts) = parse_external_id(external_chat_id(chat)?)?;
+
+        let mut elements: Vec<SlackActionBlockElement> = Vec::new();
+        for (i, att) in msg.attachments.iter().enumerate() {
+            let url_str = match attachment::outbound_url(att, ctx, attachment::ChannelMode::Button).await {
+                Ok(u) => u,
+                Err(e) => {
+                    tracing::warn!(
+                        msg_id = %msg.id,
+                        path = %att.path,
+                        error = %e,
+                        "slack: canonical URL failed; skipping attachment",
+                    );
+                    continue;
+                }
+            };
+            let parsed = match url::Url::parse(&url_str) {
+                Ok(u) => u,
+                Err(e) => {
+                    tracing::warn!(
+                        msg_id = %msg.id,
+                        url = %url_str,
+                        error = %e,
+                        "slack: unparseable canonical URL; skipping attachment",
+                    );
+                    continue;
+                }
+            };
+            let label = attachment::button_label(att);
+            let btn = SlackBlockButtonElement::new(
+                SlackActionId(format!("att:{}:{i}", msg.id)),
+                pt(&truncate_label(&label)),
+            )
+            .with_url(parsed);
+            elements.push(btn.into());
+        }
+
+        // Compose blocks: body markdown (if any) + actions block (if any
+        // buttons were built).
+        let mut blocks: Vec<SlackBlock> = Vec::new();
+        if !body.trim().is_empty() {
+            blocks.push(SlackMarkdownBlock::new(body.clone()).into());
+        }
+        if !elements.is_empty() {
+            blocks.push(SlackActionsBlock::new(elements).into());
+        }
+
+        // If nothing to send (no body, no successful buttons), bail.
+        if blocks.is_empty() {
             return Ok(());
         }
-        self.post_message(chat, &body).await
+
+        let text_fallback = if body.trim().is_empty() {
+            "📎 Attachments".to_string()
+        } else {
+            markdown::to_plain(&body)
+        };
+        let content = SlackMessageContent::new()
+            .with_text(text_fallback)
+            .with_blocks(blocks);
+        let mut req = SlackApiChatPostMessageRequest::new(channel_id.clone(), content);
+        if let Some(ts) = thread_ts {
+            req = req.with_thread_ts(ts);
+        }
+        let session = self.client.open_session(&self.bot_token);
+        if let Err(e) = session.chat_post_message(&req).await {
+            return Err(map_post_error(e, &channel_id.0));
+        }
+        Ok(())
     }
 
     async fn on_pending_hitl(

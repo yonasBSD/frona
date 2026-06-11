@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serenity::Error as SerenityError;
 use serenity::all::{
-    ButtonStyle, ChannelId, Client, Context, CreateActionRow, CreateButton,
+    ButtonStyle, ChannelId, Client, Context, CreateActionRow, CreateAttachment, CreateButton,
     CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage, EventHandler,
     GatewayIntents, Http, Interaction, Message as DiscordMessage, UserId,
 };
@@ -15,6 +15,7 @@ use crate::chat::message::models::Message;
 use crate::chat::models::Chat;
 use crate::core::error::AppError;
 
+use super::super::attachment;
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, external_chat_id,
 };
@@ -148,13 +149,114 @@ impl ChannelAdapter for DiscordAdapter {
         msg: &Message,
         _tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
-        _ctx: &ChannelCtx,
+        ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
         let body = crate::chat::channel::render::render_message_body(msg);
-        if body.trim().is_empty() {
-            return Ok(());
+        let has_attachments = !msg.attachments.is_empty();
+
+        // Fast path: pre-existing text-only behavior.
+        if !has_attachments {
+            if body.trim().is_empty() {
+                return Ok(());
+            }
+            return self.post_message(chat, &body).await;
         }
-        self.post_message(chat, &body).await
+
+        // Discord supports content + files + components in a single message.
+        // We do one bubble per chunk if body exceeds DISCORD_MAX_MESSAGE_LEN.
+        let channel_id = parse_external_id(external_chat_id(chat)?)?;
+
+        // Build attachment payloads.
+        let mut files: Vec<CreateAttachment> = Vec::new();
+        let mut buttons: Vec<CreateButton> = Vec::new();
+        for att in &msg.attachments {
+            let kind = attachment::classify(att);
+            if attachment::is_media(kind) {
+                match attachment::read_attachment_bytes(att, ctx).await {
+                    Ok(bytes) => {
+                        files.push(CreateAttachment::bytes(bytes, att.filename.clone()));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            msg_id = %msg.id,
+                            path = %att.path,
+                            error = %e,
+                            "discord: failed to read media bytes; skipping",
+                        );
+                    }
+                }
+            } else {
+                let url = match attachment::outbound_url(att, ctx, attachment::ChannelMode::Button).await {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::warn!(
+                            msg_id = %msg.id,
+                            path = %att.path,
+                            error = %e,
+                            "discord: canonical URL failed; skipping doc",
+                        );
+                        continue;
+                    }
+                };
+                let label = attachment::button_label(att);
+                buttons.push(CreateButton::new_link(url).label(label));
+            }
+        }
+
+        // Discord cap: 5 rows × 5 = 25 buttons max. Truncate beyond that.
+        const MAX_BUTTONS: usize = 25;
+        let truncated_count = buttons.len().saturating_sub(MAX_BUTTONS);
+        buttons.truncate(MAX_BUTTONS);
+        let action_rows: Vec<CreateActionRow> = buttons
+            .chunks(5)
+            .map(|chunk| CreateActionRow::Buttons(chunk.to_vec()))
+            .collect();
+
+        let mut body_with_overflow = body.clone();
+        if truncated_count > 0 {
+            tracing::warn!(
+                msg_id = %msg.id,
+                truncated = truncated_count,
+                "discord: too many doc buttons; truncated",
+            );
+            body_with_overflow.push_str(&format!(
+                "\n\n(plus {} more attachment{} — see in app)",
+                truncated_count,
+                if truncated_count == 1 { "" } else { "s" }
+            ));
+        }
+
+        // Discord requires non-empty content if there are no embeds/files.
+        // Our message always has files OR components when there are attachments
+        // (we only reach this branch when `has_attachments`), so empty body
+        // is fine.
+        let mut req = CreateMessage::new();
+        if !body_with_overflow.is_empty() {
+            // Discord caps content at 2000; chunk if needed.
+            // For attachment messages we keep the first chunk (the rest goes
+            // before the attachments as separate text messages).
+            let chunks = chunk_for_discord(&body_with_overflow);
+            let mut iter = chunks.into_iter();
+            if let Some(first) = iter.next() {
+                req = req.content(first);
+            }
+            for extra in iter {
+                let _ = channel_id
+                    .send_message(&*self.http, CreateMessage::new().content(extra))
+                    .await;
+            }
+        }
+        if !files.is_empty() {
+            req = req.add_files(files);
+        }
+        if !action_rows.is_empty() {
+            req = req.components(action_rows);
+        }
+
+        if let Err(e) = channel_id.send_message(&*self.http, req).await {
+            return Err(map_send_error(e, channel_id));
+        }
+        Ok(())
     }
 
     async fn on_inference_start(

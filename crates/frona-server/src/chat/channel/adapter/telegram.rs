@@ -7,11 +7,14 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use teloxide::Bot;
 use teloxide::payloads::{
-    AnswerCallbackQuerySetters, DeleteWebhookSetters, EditMessageTextSetters, SendMessageSetters,
+    AnswerCallbackQuerySetters, DeleteWebhookSetters, EditMessageTextSetters,
+    SendAudioSetters, SendMediaGroupSetters, SendMessageSetters,
+    SendPhotoSetters, SendVideoSetters,
 };
 use teloxide::prelude::Requester;
 use teloxide::types::{
-    ChatAction, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, Recipient, ThreadId,
+    ChatAction, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMedia,
+    InputMediaPhoto, ParseMode, Recipient, ThreadId,
 };
 use url::Url;
 
@@ -19,6 +22,7 @@ use crate::chat::message::models::Message;
 use crate::chat::models::Chat;
 use crate::core::error::AppError;
 
+use super::super::attachment;
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, external_chat_id,
 };
@@ -53,6 +57,15 @@ impl From<TelegramConfig> for TelegramAdapter {
 
 impl TelegramAdapter {
     async fn send_bubble(&self, chat: &Chat, text: &str) -> Result<String, AppError> {
+        self.send_bubble_with_keyboard(chat, text, None).await
+    }
+
+    async fn send_bubble_with_keyboard(
+        &self,
+        chat: &Chat,
+        text: &str,
+        keyboard: Option<InlineKeyboardMarkup>,
+    ) -> Result<String, AppError> {
         let (chat_id, thread_id) = parse_external_id(external_chat_id(chat)?)?;
         let (rendered, parse_mode) = match telegram_markdown_v2::convert(text) {
             Ok(v2) => (v2, Some(ParseMode::MarkdownV2)),
@@ -70,6 +83,9 @@ impl TelegramAdapter {
         }
         if let Some(t) = thread_id {
             send = send.message_thread_id(t);
+        }
+        if let Some(kb) = keyboard {
+            send = send.reply_markup(kb);
         }
         let sent = send
             .await
@@ -171,13 +187,151 @@ impl ChannelAdapter for TelegramAdapter {
         msg: &Message,
         _tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
-        _ctx: &ChannelCtx,
+        ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
         let body = crate::chat::channel::render::render_message_body(msg);
-        if body.trim().is_empty() {
+        let has_attachments = !msg.attachments.is_empty();
+
+        if !has_attachments {
+            if !body.trim().is_empty() {
+                self.send_bubble(chat, &body).await?;
+            }
             return Ok(());
         }
-        self.send_bubble(chat, &body).await?;
+
+        let (chat_id, thread_id) = parse_external_id(external_chat_id(chat)?)?;
+
+        let mut photo_group: Vec<InputMedia> = Vec::new();
+        let mut audio_atts = Vec::new();
+        let mut video_atts = Vec::new();
+        let mut doc_atts = Vec::new();
+        for att in &msg.attachments {
+            match attachment::classify(att) {
+                attachment::AttachmentKind::Image => {
+                    match attachment::read_attachment_bytes(att, ctx).await {
+                        Ok(bytes) => {
+                            let f = InputFile::memory(bytes).file_name(att.filename.clone());
+                            photo_group.push(InputMedia::Photo(InputMediaPhoto::new(f)));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                msg_id = %msg.id,
+                                path = %att.path,
+                                error = %e,
+                                "telegram: failed to read image bytes; skipping",
+                            );
+                        }
+                    }
+                }
+                attachment::AttachmentKind::Audio => audio_atts.push(att),
+                attachment::AttachmentKind::Video => video_atts.push(att),
+                attachment::AttachmentKind::Document => doc_atts.push(att),
+            }
+        }
+
+        // Built before the body send so it can ride on the body bubble — or,
+        // if the body is empty, on the paperclip-only fallback bubble below.
+        let mut doc_keyboard: Option<InlineKeyboardMarkup> = None;
+        if !doc_atts.is_empty() {
+            let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::with_capacity(doc_atts.len());
+            for att in &doc_atts {
+                let url_str = match attachment::outbound_url(att, ctx, attachment::ChannelMode::Button).await {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::warn!(msg_id = %msg.id, path = %att.path, error = %e, "telegram: canonical URL failed; skipping doc");
+                        continue;
+                    }
+                };
+                let Ok(parsed) = Url::parse(&url_str) else {
+                    tracing::warn!(msg_id = %msg.id, url = %url_str, "telegram: unparseable canonical URL; skipping doc");
+                    continue;
+                };
+                let label = attachment::button_label(att);
+                rows.push(vec![InlineKeyboardButton::url(label, parsed)]);
+            }
+            if !rows.is_empty() {
+                doc_keyboard = Some(InlineKeyboardMarkup::new(rows));
+            }
+        }
+
+        let mut keyboard_consumed = false;
+        if !body.trim().is_empty() {
+            self.send_bubble_with_keyboard(chat, &body, doc_keyboard.clone()).await?;
+            keyboard_consumed = doc_keyboard.is_some();
+        }
+
+        // sendMediaGroup is capped at 10 items per album.
+        for chunk in photo_group.chunks(10) {
+            if chunk.len() == 1 {
+                if let InputMedia::Photo(p) = &chunk[0] {
+                    let mut req = self.bot.send_photo(Recipient::Id(chat_id), p.media.clone());
+                    if let Some(t) = thread_id {
+                        req = req.message_thread_id(t);
+                    }
+                    if let Err(e) = req.await {
+                        tracing::warn!(msg_id = %msg.id, error = %e, "telegram send_photo failed");
+                    }
+                }
+            } else {
+                let mut req = self
+                    .bot
+                    .send_media_group(Recipient::Id(chat_id), chunk.to_vec());
+                if let Some(t) = thread_id {
+                    req = req.message_thread_id(t);
+                }
+                if let Err(e) = req.await {
+                    tracing::warn!(msg_id = %msg.id, error = %e, "telegram send_media_group failed");
+                }
+            }
+        }
+
+        for att in audio_atts {
+            match attachment::read_attachment_bytes(att, ctx).await {
+                Ok(bytes) => {
+                    let f = InputFile::memory(bytes).file_name(att.filename.clone());
+                    let mut req = self.bot.send_audio(Recipient::Id(chat_id), f);
+                    if let Some(t) = thread_id {
+                        req = req.message_thread_id(t);
+                    }
+                    if let Err(e) = req.await {
+                        tracing::warn!(msg_id = %msg.id, error = %e, "telegram send_audio failed");
+                    }
+                }
+                Err(e) => tracing::warn!(msg_id = %msg.id, path = %att.path, error = %e, "telegram: audio read failed; skipping"),
+            }
+        }
+
+        for att in video_atts {
+            match attachment::read_attachment_bytes(att, ctx).await {
+                Ok(bytes) => {
+                    let f = InputFile::memory(bytes).file_name(att.filename.clone());
+                    let mut req = self.bot.send_video(Recipient::Id(chat_id), f);
+                    if let Some(t) = thread_id {
+                        req = req.message_thread_id(t);
+                    }
+                    if let Err(e) = req.await {
+                        tracing::warn!(msg_id = %msg.id, error = %e, "telegram send_video failed");
+                    }
+                }
+                Err(e) => tracing::warn!(msg_id = %msg.id, path = %att.path, error = %e, "telegram: video read failed; skipping"),
+            }
+        }
+
+        if !keyboard_consumed && let Some(kb) = doc_keyboard {
+            // sendMessage requires non-empty text; this paperclip is the
+            // smallest valid placeholder.
+            let mut req = self
+                .bot
+                .send_message(Recipient::Id(chat_id), "📎".to_string())
+                .reply_markup(kb);
+            if let Some(t) = thread_id {
+                req = req.message_thread_id(t);
+            }
+            if let Err(e) = req.await {
+                tracing::warn!(msg_id = %msg.id, error = %e, "telegram doc-button send_message failed");
+            }
+        }
+
         Ok(())
     }
 

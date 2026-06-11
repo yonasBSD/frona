@@ -13,6 +13,7 @@ use crate::core::error::AppError;
 use crate::storage::Attachment;
 
 use super::storage::download_to_attachment;
+use super::super::attachment;
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, external_chat_id,
 };
@@ -129,31 +130,12 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
         } else {
             super::markdown::to_whatsapp(&raw_body)
         };
-        let mut text_consumed = false;
 
-        for attachment in &msg.attachments {
-            let bytes = read_attachment_bytes(ctx, attachment)?;
-            let media_id = self
-                .upload_media(&attachment.filename, &attachment.content_type, bytes)
-                .await?;
-            let caption = if !text_consumed && !body.is_empty() {
-                text_consumed = true;
-                Some(body.as_str())
-            } else {
-                None
-            };
-            self.send_media(&to, &attachment.content_type, &media_id, caption)
-                .await?;
-            tracing::info!(
-                channel_id = %ctx.channel.id,
-                msg_id = %msg.id,
-                to = %to,
-                content_type = %attachment.content_type,
-                "WhatsApp Cloud media sent",
-            );
-        }
-
-        if !text_consumed && !body.is_empty() {
+        // Plain text path — no attachments.
+        if msg.attachments.is_empty() {
+            if body.is_empty() {
+                return Ok(());
+            }
             self.send_text(&to, &body).await?;
             tracing::info!(
                 channel_id = %ctx.channel.id,
@@ -161,7 +143,139 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
                 to = %to,
                 "WhatsApp Cloud text message sent",
             );
+            return Ok(());
         }
+
+        // Sequential per-attachment delivery. Body only on message 1; subsequent
+        // messages carry `📄 {filename}` as body/caption (WA Cloud APIs require
+        // non-empty bodies on cta_url).
+        let mut body_consumed = false;
+        for att in &msg.attachments {
+            let kind = attachment::classify(att);
+            let attachment_body = if !body_consumed && !body.is_empty() {
+                body_consumed = true;
+                body.clone()
+            } else {
+                format!("📄 {}", att.filename)
+            };
+
+            match kind {
+                attachment::AttachmentKind::Image
+                | attachment::AttachmentKind::Audio
+                | attachment::AttachmentKind::Video => {
+                    let bytes = match attachment::read_attachment_bytes(att, ctx).await
+                    {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!(
+                                channel_id = %ctx.channel.id,
+                                msg_id = %msg.id,
+                                path = %att.path,
+                                error = %e,
+                                "WhatsApp Cloud: read_attachment_bytes failed; skipping",
+                            );
+                            continue;
+                        }
+                    };
+                    let media_id = match self
+                        .upload_media(&att.filename, &att.content_type, bytes)
+                        .await
+                    {
+                        Ok(id) => id,
+                        Err(e) => {
+                            tracing::warn!(
+                                channel_id = %ctx.channel.id,
+                                msg_id = %msg.id,
+                                path = %att.path,
+                                error = %e,
+                                "WhatsApp Cloud: upload_media failed; skipping",
+                            );
+                            // If body was consumed by this failed attachment,
+                            // hand it back to the next one.
+                            if body_consumed && !body.is_empty() && attachment_body == body {
+                                body_consumed = false;
+                            }
+                            continue;
+                        }
+                    };
+                    if let Err(e) = self
+                        .send_media(
+                            &to,
+                            &att.content_type,
+                            &media_id,
+                            Some(&attachment_body),
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            channel_id = %ctx.channel.id,
+                            msg_id = %msg.id,
+                            path = %att.path,
+                            error = %e,
+                            "WhatsApp Cloud: send_media failed; skipping",
+                        );
+                        if body_consumed && !body.is_empty() && attachment_body == body {
+                            body_consumed = false;
+                        }
+                        continue;
+                    }
+                    tracing::info!(
+                        channel_id = %ctx.channel.id,
+                        msg_id = %msg.id,
+                        to = %to,
+                        content_type = %att.content_type,
+                        "WhatsApp Cloud media sent",
+                    );
+                }
+                attachment::AttachmentKind::Document => {
+                    let url = match attachment::outbound_url(att, ctx, attachment::ChannelMode::Button).await
+                    {
+                        Ok(u) => u,
+                        Err(e) => {
+                            tracing::warn!(
+                                channel_id = %ctx.channel.id,
+                                msg_id = %msg.id,
+                                path = %att.path,
+                                error = %e,
+                                "WhatsApp Cloud: canonical_file_url failed; skipping",
+                            );
+                            if body_consumed && !body.is_empty() && attachment_body == body {
+                                body_consumed = false;
+                            }
+                            continue;
+                        }
+                    };
+                    let display_text = attachment::button_label(att);
+                    let payload = build_cta_url_payload(&to, &attachment_body, &display_text, &url);
+                    if let Err(e) = self.send_message(payload).await {
+                        tracing::warn!(
+                            channel_id = %ctx.channel.id,
+                            msg_id = %msg.id,
+                            path = %att.path,
+                            error = %e,
+                            "WhatsApp Cloud: cta_url send failed; skipping",
+                        );
+                        if body_consumed && !body.is_empty() && attachment_body == body {
+                            body_consumed = false;
+                        }
+                        continue;
+                    }
+                    tracing::info!(
+                        channel_id = %ctx.channel.id,
+                        msg_id = %msg.id,
+                        to = %to,
+                        "WhatsApp Cloud cta_url sent",
+                    );
+                }
+            }
+        }
+
+        // If every attachment failed and body never got delivered, ship it as
+        // a fallback text message so the user at least sees the prose.
+        if !body_consumed && !body.is_empty() {
+            self.send_text(&to, &body).await?;
+        }
+
         Ok(())
     }
 
@@ -631,20 +745,6 @@ impl WhatsAppCloudAdapter {
         }
         true
     }
-}
-
-fn read_attachment_bytes(ctx: &ChannelCtx, att: &Attachment) -> Result<Vec<u8>, AppError> {
-    let owner_str = att
-        .owner
-        .strip_prefix("user:")
-        .ok_or_else(|| AppError::Validation(format!("unsupported attachment owner: {}", att.owner)))?;
-    let owner_handle = crate::core::Handle::try_new(owner_str)
-        .map_err(|e| AppError::Validation(format!("invalid owner handle in {}: {e}", att.owner)))?;
-    let workspace = ctx.storage_service.user_workspace(&owner_handle);
-    let abs = workspace
-        .resolve_path(&att.path)
-        .ok_or_else(|| AppError::NotFound(format!("attachment {} not in workspace", att.path)))?;
-    std::fs::read(&abs).map_err(|e| AppError::Internal(format!("read attachment {}: {e}", att.path)))
 }
 
 fn wa_media_kind(content_type: &str) -> &'static str {

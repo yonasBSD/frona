@@ -13,6 +13,7 @@ use crate::chat::message::models::Message;
 use crate::chat::models::Chat;
 use crate::core::error::AppError;
 
+use super::super::attachment;
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, external_chat_id,
 };
@@ -78,7 +79,29 @@ impl ChannelAdapter for SmsAdapter {
         ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
         let raw_body = crate::chat::channel::render::render_message_body(msg);
-        let body = compose_sms_body(tool_calls, &raw_body);
+        let mut body = compose_sms_body(tool_calls, &raw_body);
+
+        // Inline short links for any attachments. No emoji to save char
+        // budget in SMS segments.
+        for att in &msg.attachments {
+            match attachment::outbound_url(att, ctx, attachment::ChannelMode::Inline).await {
+                Ok(url) => {
+                    if !body.is_empty() {
+                        body.push_str("\n\n");
+                    }
+                    body.push_str(&format!("{} — {url}", att.filename));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        channel_id = %ctx.channel.id,
+                        msg_id = %msg.id,
+                        path = %att.path,
+                        error = %e,
+                        "SMS: share_url issue failed; skipping attachment",
+                    );
+                }
+            }
+        }
 
         if body.trim().is_empty() {
             return Ok(());

@@ -11,6 +11,7 @@ use crate::chat::message::models::Message;
 use crate::chat::models::Chat;
 use crate::core::error::AppError;
 
+use super::super::attachment;
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, SetupConfig, external_chat_id,
 };
@@ -152,14 +153,42 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
         let raw_body = crate::chat::channel::render::render_message_body(msg);
-        if raw_body.trim().is_empty() {
-            // Nothing to send; media attachments aren't wired yet.
+        let has_attachments = !msg.attachments.is_empty();
+        if raw_body.trim().is_empty() && !has_attachments {
             return Ok(());
         }
         let client = self.require_client(ctx, &msg.id).await?;
         let to = resolve_send_jid(&client, chat, ctx).await?;
         let body = super::markdown::to_whatsapp(&raw_body);
-        let request_id = send_text(&client, &to, body).await.inspect_err(|e| {
+
+        // Inline channel — append "📄 {filename} — {short_url}" per attachment
+        // (no native media wiring in this iteration; see plan).
+        let mut combined = body.clone();
+        for att in &msg.attachments {
+            match attachment::outbound_url(att, ctx, attachment::ChannelMode::Inline).await {
+                Ok(url) => {
+                    let line = attachment::inline_list_line(att, &url);
+                    if !combined.is_empty() {
+                        combined.push_str("\n\n");
+                    }
+                    combined.push_str(&line);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        channel_id = %ctx.channel.id,
+                        msg_id = %msg.id,
+                        path = %att.path,
+                        error = %e,
+                        "WA User: share_url issue failed; skipping attachment",
+                    );
+                }
+            }
+        }
+        if combined.trim().is_empty() {
+            return Ok(());
+        }
+
+        let request_id = send_text(&client, &to, combined).await.inspect_err(|e| {
             tracing::warn!(
                 channel_id = %ctx.channel.id,
                 msg_id = %msg.id,

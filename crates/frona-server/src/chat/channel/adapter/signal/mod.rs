@@ -58,6 +58,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use tokio::sync::{Mutex, oneshot};
 
+use crate::chat::channel::attachment;
 use crate::chat::channel::models::{
     ChannelAdapter, ChannelCtx, SetupConfig, external_chat_id,
 };
@@ -201,10 +202,35 @@ impl ChannelAdapter for SignalAdapter {
         ctx: &ChannelCtx,
     ) -> Result<(), AppError> {
         let body = crate::chat::channel::render::render_message_body(msg);
-        if body.trim().is_empty() {
+        let has_attachments = !msg.attachments.is_empty();
+        if body.trim().is_empty() && !has_attachments {
             return Ok(());
         }
-        self.dispatch_text(chat, &body, &msg.id, ctx).await.map(|_| ())
+        let mut combined = body.clone();
+        for att in &msg.attachments {
+            match attachment::outbound_url(att, ctx, attachment::ChannelMode::Inline).await {
+                Ok(url) => {
+                    let line = attachment::inline_list_line(att, &url);
+                    if !combined.is_empty() {
+                        combined.push_str("\n\n");
+                    }
+                    combined.push_str(&line);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        channel_id = %ctx.channel.id,
+                        msg_id = %msg.id,
+                        path = %att.path,
+                        error = %e,
+                        "signal: share_url issue failed; skipping attachment",
+                    );
+                }
+            }
+        }
+        if combined.trim().is_empty() {
+            return Ok(());
+        }
+        self.dispatch_text(chat, &combined, &msg.id, ctx).await.map(|_| ())
     }
 
     async fn on_inference_start(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), AppError> {
