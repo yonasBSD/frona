@@ -158,18 +158,25 @@ impl ChannelManager {
         }
     }
 
+    /// Idempotent: no-op if a retry-loop is already in flight. To force a
+    /// restart, callers must `stop_channel` first to clear the retry slot.
     pub fn start_with_retry(self: Arc<Self>, state: AppState, channel_id: String) {
         let cancel = state.shutdown_token.child_token();
         let manager = self.clone();
         let id_for_task = channel_id.clone();
         let cancel_for_task = cancel.clone();
         tokio::spawn(async move {
-            let prev = {
+            let inserted = {
                 let mut map = manager.retry_cancels.lock().await;
-                map.insert(id_for_task.clone(), cancel_for_task.clone())
+                if map.contains_key(&id_for_task) {
+                    false
+                } else {
+                    map.insert(id_for_task.clone(), cancel_for_task.clone());
+                    true
+                }
             };
-            if let Some(p) = prev {
-                p.cancel();
+            if !inserted {
+                return;
             }
             manager
                 .clone()
@@ -544,20 +551,19 @@ impl ChannelManager {
                                 let tasks = manager.tasks.lock().await;
                                 tasks.get(&record_id).map(|t| t.ctx.channel.clone())
                             };
-                            if let Some(prior) = prior
-                                && !channel_needs_restart(&prior, &new_channel)
-                            {
-                                if new_channel.status == ChannelStatus::Failed {
-                                    let already = manager
-                                        .retry_cancels
-                                        .lock()
-                                        .await
-                                        .contains_key(&record_id);
-                                    if !already {
-                                        manager.start_with_retry(state, record_id);
-                                    }
+                            if let Some(prior) = prior {
+                                let needs_restart =
+                                    channel_needs_restart(&prior, &new_channel);
+                                let recovering =
+                                    new_channel.status == ChannelStatus::Failed;
+                                if !needs_restart && !recovering {
+                                    return;
                                 }
-                                return;
+                                if needs_restart {
+                                    // Clear the retry slot so the idempotent
+                                    // start_with_retry below actually re-spawns.
+                                    manager.stop_channel(&record_id).await;
+                                }
                             }
                             manager.start_with_retry(state, record_id);
                         }

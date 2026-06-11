@@ -772,6 +772,7 @@ struct StubFactory {
     inference_start_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     config: std::sync::Arc<StdMutex<StubConfig>>,
     disconnect_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    create_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl StubFactory {
@@ -783,6 +784,7 @@ impl StubFactory {
             inference_start_count: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             config: std::sync::Arc::new(StdMutex::new(StubConfig::default())),
             disconnect_count: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            create_count: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -807,6 +809,8 @@ impl frona::chat::channel::ChannelFactory for StubFactory {
         &self,
         _config: serde_json::Value,
     ) -> Result<Box<dyn frona::chat::channel::ChannelAdapter>, frona::core::error::AppError> {
+        self.create_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(Box::new(StubAdapter {
             captured: self.captured.clone(),
             tool_calls: self.tool_calls.clone(),
@@ -2117,5 +2121,96 @@ async fn slack_pairing_binds_slack_user_id_into_user_address() {
         still.user_address.and_then(|ua| ua.address).as_deref(),
         Some("U07AB12C"),
         "second attempt does not overwrite the paired address",
+    );
+}
+
+// Regression: a single channel_service.start() once spawned the adapter
+// twice — direct start_with_retry plus a second one from the watcher
+// catching its own mark_status(Connecting) broadcast — producing duplicate
+// gateways (inbound dup) and duplicate run_outbound subscribers (outbound dup).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn channel_service_start_spawns_adapter_exactly_once() {
+    use frona::core::repository::Repository;
+
+    let (state, _tmp) = test_app_state().await;
+    let (token, user_id) = register_user(
+        &state,
+        "racr",
+        "racr@example.com",
+        "password123",
+    )
+    .await;
+    let agent = create_agent(&state, &token, "RaceAgent").await;
+    let agent_id = agent["id"].as_str().unwrap().to_string();
+
+    let captured = std::sync::Arc::new(StdMutex::new(Vec::<CapturedSend>::new()));
+    let factory = std::sync::Arc::new(StubFactory::new(captured.clone()));
+    let create_count = factory.create_count.clone();
+    state.channel_registry.register_factory(factory);
+
+    let app = build_app(state.clone());
+    let resp = app
+        .oneshot(auth_post_json(
+            "/api/spaces",
+            &token,
+            serde_json::json!({"name": "RaceSpace"}),
+        ))
+        .await
+        .unwrap();
+    let space_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    // Direct write keeps the row Disconnected so manager.start() below
+    // doesn't auto-iterate it via find_active.
+    let now = chrono::Utc::now();
+    let channel = frona::chat::channel::Channel {
+        id: frona::core::repository::new_id(),
+        user_id: user_id.clone(),
+        handle: frona::handle!("test"),
+        space_id: space_id.clone(),
+        provider: "test".into(),
+        agent_id: agent_id.clone(),
+        config: Default::default(),
+        dispatch_mode: frona::chat::channel::DispatchMode::Message,
+        status: frona::chat::channel::ChannelStatus::Disconnected,
+        error_message: None,
+        last_started_at: None,
+        user_address: None,
+        setup: None,
+        retry: None,
+        created_at: now,
+        updated_at: now,
+        webhook_url: None,
+    };
+    SurrealRepo::<frona::chat::channel::Channel>::new(state.db.clone())
+        .create(&channel)
+        .await
+        .unwrap();
+
+    state
+        .channel_manager
+        .clone()
+        .start(state.clone())
+        .await
+        .unwrap();
+
+    let before = create_count.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        before, 0,
+        "factory.create must not run during manager.start() for a Disconnected channel \
+         (got {before}) — test invariant broken",
+    );
+
+    state
+        .channel_service
+        .start(&user_id, &channel.id)
+        .await
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let count = create_count.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        count, 1,
+        "factory.create should run exactly once per channel start; got {count}",
     );
 }
