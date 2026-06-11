@@ -236,7 +236,8 @@ impl ChannelAdapter for DiscordAdapter {
             // Discord caps content at 2000; chunk if needed.
             // For attachment messages we keep the first chunk (the rest goes
             // before the attachments as separate text messages).
-            let chunks = chunk_for_discord(&body_with_overflow);
+            let fenced = super::markdown::fence_tables(&body_with_overflow);
+            let chunks = chunk_for_discord(&fenced);
             let mut iter = chunks.into_iter();
             if let Some(first) = iter.next() {
                 req = req.content(first);
@@ -305,7 +306,7 @@ impl ChannelAdapter for DiscordAdapter {
         for tc in batch {
             let Some(h) = tc.hitl.as_ref() else { continue };
             let kind = crate::chat::channel::hitl::kind_for(&h.request);
-            let body = h.prompt.clone();
+            let body = super::markdown::fence_tables(&h.prompt).into_owned();
             let components = build_discord_components(&tc.id, &kind, &h.url);
             let req = CreateMessage::new().content(body).components(components);
             match channel_id.send_message(&*self.http, req).await {
@@ -358,7 +359,8 @@ fn classify_discord_error(err: &SerenityError) -> ChannelError {
 impl DiscordAdapter {
     async fn post_message(&self, chat: &Chat, text: &str) -> Result<(), ChannelError> {
         let channel_id = parse_external_id(external_chat_id(chat)?)?;
-        for chunk in chunk_for_discord(text) {
+        let fenced = super::markdown::fence_tables(text);
+        for chunk in chunk_for_discord(&fenced) {
             let req = CreateMessage::new().content(chunk);
             channel_id
                 .send_message(&*self.http, req)
