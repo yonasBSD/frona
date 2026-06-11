@@ -219,11 +219,14 @@ pub trait ChannelAdapter: Send + Sync {
     async fn on_setup_begin(
         &self,
         _ctx: &ChannelCtx,
-    ) -> Result<Option<SetupConfig>, AppError> {
+    ) -> Result<Option<SetupConfig>, super::ChannelError> {
         Ok(None)
     }
 
-    async fn on_setup_complete(&self, _ctx: &ChannelCtx) -> Result<(), AppError> {
+    async fn on_setup_complete(
+        &self,
+        _ctx: &ChannelCtx,
+    ) -> Result<(), super::ChannelError> {
         Ok(())
     }
 
@@ -233,7 +236,7 @@ pub trait ChannelAdapter: Send + Sync {
         _msg: &Message,
         _chat: &Chat,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), super::ChannelError> {
         Ok(())
     }
 
@@ -243,17 +246,20 @@ pub trait ChannelAdapter: Send + Sync {
         tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<(), AppError>;
+    ) -> Result<(), super::ChannelError>;
 
     async fn on_webhook(
         &self,
         _ctx: &ChannelCtx,
         _request: Request<Bytes>,
-    ) -> Result<Response, AppError> {
-        Err(AppError::Validation(format!(
-            "channel provider {:?} does not accept inbound webhooks",
-            _ctx.channel.provider,
-        )))
+    ) -> Result<Response, super::ChannelError> {
+        Err(super::ChannelError::terminal(
+            format!(
+                "channel provider {:?} does not accept inbound webhooks",
+                _ctx.channel.provider,
+            ),
+            super::ChannelErrorKind::PayloadInvalid,
+        ))
     }
 
     /// Called ONCE at the start of an inference turn (initial submit, or
@@ -263,7 +269,7 @@ pub trait ChannelAdapter: Send + Sync {
         &self,
         _chat: &Chat,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), super::ChannelError> {
         Ok(())
     }
 
@@ -274,7 +280,7 @@ pub trait ChannelAdapter: Send + Sync {
         &self,
         _chat: &Chat,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), super::ChannelError> {
         Ok(())
     }
 
@@ -285,7 +291,7 @@ pub trait ChannelAdapter: Send + Sync {
         _chat: &Chat,
         _text: &str,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), super::ChannelError> {
         Ok(())
     }
 
@@ -296,7 +302,7 @@ pub trait ChannelAdapter: Send + Sync {
         _chat: &Chat,
         _text: &str,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), super::ChannelError> {
         Ok(())
     }
 
@@ -307,7 +313,7 @@ pub trait ChannelAdapter: Send + Sync {
         _name: &str,
         _arguments: &serde_json::Value,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), super::ChannelError> {
         Ok(())
     }
 
@@ -319,7 +325,7 @@ pub trait ChannelAdapter: Send + Sync {
         _success: bool,
         _result_summary: &str,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), super::ChannelError> {
         Ok(())
     }
 
@@ -343,7 +349,7 @@ pub trait ChannelAdapter: Send + Sync {
         _msg: &Message,
         _chat: &Chat,
         _ctx: &ChannelCtx,
-    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, AppError> {
+    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, super::ChannelError> {
         Ok(Vec::new())
     }
 }

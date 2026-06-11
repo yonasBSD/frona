@@ -16,6 +16,7 @@ use crate::chat::models::Chat;
 use crate::core::error::AppError;
 
 use super::super::attachment;
+use super::super::error::{ChannelError, ChannelErrorKind};
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, external_chat_id,
 };
@@ -134,7 +135,7 @@ impl ChannelAdapter for DiscordAdapter {
         _msg: &Message,
         chat: &Chat,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let Some(text) = tool_call.turn_text.as_deref() else {
             return Ok(());
         };
@@ -150,7 +151,7 @@ impl ChannelAdapter for DiscordAdapter {
         _tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let body = crate::chat::channel::render::render_message_body(msg);
         let has_attachments = !msg.attachments.is_empty();
 
@@ -254,7 +255,7 @@ impl ChannelAdapter for DiscordAdapter {
         }
 
         if let Err(e) = channel_id.send_message(&*self.http, req).await {
-            return Err(map_send_error(e, channel_id));
+            return Err(classify_discord_error(&e));
         }
         Ok(())
     }
@@ -263,7 +264,7 @@ impl ChannelAdapter for DiscordAdapter {
         &self,
         chat: &Chat,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let Ok(external_id) = external_chat_id(chat) else { return Ok(()) };
         let Ok(discord_channel_id) = parse_external_id(external_id) else { return Ok(()) };
 
@@ -287,7 +288,7 @@ impl ChannelAdapter for DiscordAdapter {
         &self,
         chat: &Chat,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         self.typing.stop(&chat.id).await;
         Ok(())
     }
@@ -298,7 +299,7 @@ impl ChannelAdapter for DiscordAdapter {
         _msg: &Message,
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, AppError> {
+    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, ChannelError> {
         let channel_id = parse_external_id(external_chat_id(chat)?)?;
         let mut out = Vec::with_capacity(batch.len());
         for tc in batch {
@@ -314,18 +315,16 @@ impl ChannelAdapter for DiscordAdapter {
                     delivered_at: chrono::Utc::now(),
                 }),
                 Err(e) => {
-                    let retryable = is_discord_retryable_error(&e);
+                    let classified = classify_discord_error(&e);
                     tracing::warn!(
                         channel_id = %ctx.channel.id,
                         tool_call_id = %tc.id,
-                        retryable = retryable,
+                        kind = ?classified.kind,
                         error = %e,
                         "Discord on_pending_hitl: send failed",
                     );
-                    if retryable {
-                        return Err(AppError::Internal(format!(
-                            "Discord send failed: {e}"
-                        )));
+                    if !classified.kind.is_terminal() && out.is_empty() {
+                        return Err(classified);
                     }
                     break;
                 }
@@ -335,28 +334,36 @@ impl ChannelAdapter for DiscordAdapter {
     }
 }
 
-/// 5xx, 429, and non-HTTP errors (network, gateway) are transient — propagate
-/// as `Err` so `record_segment_failure` schedules backoff retry. 4xx (except
-/// 429) is permanent (validation, missing perms, unknown channel) — return
-/// `Ok(partial)` so the batch parks instead of burning the retry budget.
-fn is_discord_retryable_error(err: &SerenityError) -> bool {
+fn classify_discord_error(err: &SerenityError) -> ChannelError {
+    let msg = err.to_string();
     match err {
         SerenityError::Http(HttpError::UnsuccessfulRequest(resp)) => {
             let code = resp.status_code.as_u16();
-            code == 429 || (500..=599).contains(&code)
+            match code {
+                429 => ChannelError::transient(msg),
+                401 => ChannelError::terminal(msg, ChannelErrorKind::Unauthorized),
+                403 => ChannelError::terminal(msg, ChannelErrorKind::Forbidden),
+                404 => ChannelError::terminal(msg, ChannelErrorKind::NotFound),
+                413 => ChannelError::terminal(msg, ChannelErrorKind::PayloadTooLarge),
+                400 => ChannelError::terminal(msg, ChannelErrorKind::PayloadInvalid),
+                500..=599 => ChannelError::transient(msg),
+                _ => ChannelError::terminal(msg, ChannelErrorKind::Other),
+            }
         }
-        _ => true,
+        // Non-HTTP errors are gateway/network: transient by default.
+        _ => ChannelError::transient(msg),
     }
 }
 
 impl DiscordAdapter {
-    async fn post_message(&self, chat: &Chat, text: &str) -> Result<(), AppError> {
+    async fn post_message(&self, chat: &Chat, text: &str) -> Result<(), ChannelError> {
         let channel_id = parse_external_id(external_chat_id(chat)?)?;
         for chunk in chunk_for_discord(text) {
             let req = CreateMessage::new().content(chunk);
-            if let Err(e) = channel_id.send_message(&*self.http, req).await {
-                return Err(map_send_error(e, channel_id));
-            }
+            channel_id
+                .send_message(&*self.http, req)
+                .await
+                .map_err(|e| classify_discord_error(&e))?;
         }
         Ok(())
     }
@@ -563,16 +570,6 @@ fn parse_external_id(s: &str) -> Result<ChannelId, AppError> {
     Ok(ChannelId::new(id))
 }
 
-fn map_send_error(err: SerenityError, channel_id: ChannelId) -> AppError {
-    if let SerenityError::Http(HttpError::UnsuccessfulRequest(resp)) = &err
-        && resp.status_code.as_u16() == 403
-    {
-        return AppError::Validation(format!(
-            "Discord rejected send_message on {channel_id}: bot lacks `View Channel` or `Send Messages` permission"
-        ));
-    }
-    AppError::Internal(format!("Discord send_message failed: {err}"))
-}
 
 fn chunk_for_discord(text: &str) -> Vec<String> {
     if text.len() <= DISCORD_MAX_MESSAGE_LEN {

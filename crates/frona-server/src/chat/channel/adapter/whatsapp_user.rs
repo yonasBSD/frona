@@ -12,6 +12,7 @@ use crate::chat::models::Chat;
 use crate::core::error::AppError;
 
 use super::super::attachment;
+use super::super::error::ChannelError;
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, SetupConfig, external_chat_id,
 };
@@ -54,7 +55,7 @@ impl ChannelAdapter for WhatsAppUserAdapter {
     async fn on_setup_begin(
         &self,
         ctx: &ChannelCtx,
-    ) -> Result<Option<SetupConfig>, AppError> {
+    ) -> Result<Option<SetupConfig>, ChannelError> {
         // Building a bot when paired makes WhatsApp kick one of the sessions
         // with `conflict=replaced`, breaking delivery.
         if is_already_paired(&ctx.data_dir).await {
@@ -84,7 +85,7 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         }))
     }
 
-    async fn on_setup_complete(&self, ctx: &ChannelCtx) -> Result<(), AppError> {
+    async fn on_setup_complete(&self, ctx: &ChannelCtx) -> Result<(), ChannelError> {
         // wa-rs has already persisted device keys; nothing else to do.
         tracing::info!(
             channel_id = %ctx.channel.id,
@@ -111,7 +112,7 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         Ok(())
     }
 
-    async fn on_inference_start(&self, chat: &Chat, _ctx: &ChannelCtx) -> Result<(), AppError> {
+    async fn on_inference_start(&self, chat: &Chat, _ctx: &ChannelCtx) -> Result<(), ChannelError> {
         let Some(client) = self.client.lock().await.clone() else { return Ok(()) };
         let Ok(external) = external_chat_id(chat) else { return Ok(()) };
         let Ok(to_raw) = parse_external_id(external) else { return Ok(()) };
@@ -129,7 +130,7 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         Ok(())
     }
 
-    async fn on_inference_done(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), AppError> {
+    async fn on_inference_done(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), ChannelError> {
         self.typing.stop(&chat.id).await;
         let Some(client) = self.client.lock().await.clone() else { return Ok(()) };
         let Ok(external) = external_chat_id(chat) else { return Ok(()) };
@@ -151,7 +152,7 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         _tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let raw_body = crate::chat::channel::render::render_message_body(msg);
         let has_attachments = !msg.attachments.is_empty();
         if raw_body.trim().is_empty() && !has_attachments {
@@ -213,7 +214,7 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         _msg: &Message,
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, AppError> {
+    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, ChannelError> {
         // wa_rs is text-only. Sequential cadence: render only the first
         // pending HITL. The delivery cursor advances by 1; the next pending
         // HITL renders after this one resolves (via text reply or web URL).

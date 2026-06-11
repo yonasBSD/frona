@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -12,6 +13,7 @@ use crate::chat::models::Chat;
 use crate::core::error::AppError;
 
 use super::super::attachment;
+use super::super::error::{ChannelError, ChannelErrorKind};
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, external_chat_id,
 };
@@ -149,7 +151,7 @@ impl ChannelAdapter for SlackAdapter {
         _msg: &Message,
         chat: &Chat,
         _ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let Some(text) = tool_call.turn_text.as_deref() else {
             return Ok(());
         };
@@ -165,7 +167,7 @@ impl ChannelAdapter for SlackAdapter {
         _tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let body = crate::chat::channel::render::render_message_body(msg);
         let has_attachments = !msg.attachments.is_empty();
 
@@ -245,9 +247,10 @@ impl ChannelAdapter for SlackAdapter {
             req = req.with_thread_ts(ts);
         }
         let session = self.client.open_session(&self.bot_token);
-        if let Err(e) = session.chat_post_message(&req).await {
-            return Err(map_post_error(e, &channel_id.0));
-        }
+        session
+            .chat_post_message(&req)
+            .await
+            .map_err(|e| classify_slack_error(&e))?;
         Ok(())
     }
 
@@ -257,7 +260,7 @@ impl ChannelAdapter for SlackAdapter {
         _msg: &Message,
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, AppError> {
+    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, ChannelError> {
         let (channel_id, thread_ts) = parse_external_id(external_chat_id(chat)?)?;
         let session = self.client.open_session(&self.bot_token);
         let mut out = Vec::with_capacity(batch.len());
@@ -280,18 +283,16 @@ impl ChannelAdapter for SlackAdapter {
                     delivered_at: chrono::Utc::now(),
                 }),
                 Err(e) => {
-                    let retryable = is_slack_retryable_error(&e);
+                    let classified = classify_slack_error(&e);
                     tracing::warn!(
                         channel_id = %ctx.channel.id,
                         tool_call_id = %tc.id,
-                        retryable = retryable,
+                        kind = ?classified.kind,
                         error = %e,
                         "Slack on_pending_hitl: send failed",
                     );
-                    if retryable && out.is_empty() {
-                        return Err(AppError::Internal(format!(
-                            "Slack chat.postMessage failed: {e}"
-                        )));
+                    if !classified.kind.is_terminal() && out.is_empty() {
+                        return Err(classified);
                     }
                     break;
                 }
@@ -302,7 +303,7 @@ impl ChannelAdapter for SlackAdapter {
 }
 
 impl SlackAdapter {
-    async fn post_message(&self, chat: &Chat, text: &str) -> Result<(), AppError> {
+    async fn post_message(&self, chat: &Chat, text: &str) -> Result<(), ChannelError> {
         let (channel_id, thread_ts) = parse_external_id(external_chat_id(chat)?)?;
         if text.trim().is_empty() {
             return Ok(());
@@ -319,22 +320,118 @@ impl SlackAdapter {
         }
 
         let session = self.client.open_session(&self.bot_token);
-        if let Err(e) = session.chat_post_message(&req).await {
-            return Err(map_post_error(e, &channel_id.0));
-        }
+        session
+            .chat_post_message(&req)
+            .await
+            .map_err(|e| classify_slack_error(&e))?;
         Ok(())
     }
 }
 
-fn map_post_error(err: SlackClientError, channel_id: &str) -> AppError {
-    if let SlackClientError::ApiError(api) = &err
-        && api.code == "not_in_channel"
-    {
-        return AppError::Validation(format!(
-            "Slack rejected chat.postMessage with `not_in_channel` for {channel_id}: invite the bot to the channel (`/invite @YourBot`)"
-        ));
+/// Slack's Web API returns only HTTP 200 / 429 (per their docs); failure
+/// detail lives in the `ApiError` `code` string. We parse it into typed
+/// variants here so the classifier is exhaustive. Unknown codes default to
+/// Transient; the cap bounds the retry budget.
+#[derive(Debug, Clone)]
+enum SlackError {
+    /// HTTP 429 supplies `retry_after`; the tier-specific
+    /// `ApiError("ratelimited")` returned over HTTP 200 does not.
+    RateLimited { retry_after: Option<Duration> },
+    Other,
+    NotInChannel,
+    ChannelArchived,
+    RestrictedAction,
+    MissingScope,
+    NotAllowedTokenType,
+    UserNotInChannel,
+    ChannelNotFound,
+    UserNotFound,
+    TeamNotFound,
+    InvalidAuth,
+    NotAuthed,
+    TokenRevoked,
+    TokenExpired,
+    AccountInactive,
+    MsgTooLong,
+    NoText,
+    InvalidBlocks,
+    InvalidBlocksFormat,
+    InvalidArguments,
+    InvalidJson,
+    Unknown,
+}
+
+impl SlackError {
+    fn from_sdk(err: &SlackClientError) -> Self {
+        match err {
+            SlackClientError::RateLimitError(rl) => Self::RateLimited {
+                retry_after: rl.retry_after,
+            },
+            SlackClientError::ApiError(api) => match api.code.as_str() {
+                "ratelimited" => Self::RateLimited { retry_after: None },
+                "not_in_channel" => Self::NotInChannel,
+                "is_archived" => Self::ChannelArchived,
+                "restricted_action" => Self::RestrictedAction,
+                "missing_scope" => Self::MissingScope,
+                "not_allowed_token_type" => Self::NotAllowedTokenType,
+                "user_not_in_channel" => Self::UserNotInChannel,
+                "channel_not_found" => Self::ChannelNotFound,
+                "user_not_found" | "users_not_found" => Self::UserNotFound,
+                "team_not_found" => Self::TeamNotFound,
+                "invalid_auth" => Self::InvalidAuth,
+                "not_authed" => Self::NotAuthed,
+                "token_revoked" => Self::TokenRevoked,
+                "token_expired" => Self::TokenExpired,
+                "account_inactive" => Self::AccountInactive,
+                "msg_too_long" => Self::MsgTooLong,
+                "no_text" => Self::NoText,
+                "invalid_blocks" => Self::InvalidBlocks,
+                "invalid_blocks_format" => Self::InvalidBlocksFormat,
+                "invalid_arguments" => Self::InvalidArguments,
+                "invalid_json" => Self::InvalidJson,
+                _ => Self::Unknown,
+            },
+            _ => Self::Other,
+        }
     }
-    AppError::Internal(format!("Slack chat.postMessage failed: {err}"))
+
+    fn to_channel_error(&self, msg: String) -> ChannelError {
+        use ChannelErrorKind::*;
+        match self {
+            Self::RateLimited { retry_after } => {
+                let mut e = ChannelError::transient(msg);
+                if let Some(after) = retry_after {
+                    e = e.with_retry_hint(*after);
+                }
+                e
+            }
+            Self::Unknown | Self::Other => ChannelError::transient(msg),
+            Self::NotInChannel
+            | Self::ChannelArchived
+            | Self::RestrictedAction
+            | Self::MissingScope
+            | Self::NotAllowedTokenType
+            | Self::UserNotInChannel => ChannelError::terminal(msg, Forbidden),
+            Self::ChannelNotFound | Self::UserNotFound | Self::TeamNotFound => {
+                ChannelError::terminal(msg, NotFound)
+            }
+            Self::InvalidAuth
+            | Self::NotAuthed
+            | Self::TokenRevoked
+            | Self::TokenExpired
+            | Self::AccountInactive => ChannelError::terminal(msg, Unauthorized),
+            Self::MsgTooLong
+            | Self::NoText
+            | Self::InvalidBlocks
+            | Self::InvalidBlocksFormat
+            | Self::InvalidArguments
+            | Self::InvalidJson => ChannelError::terminal(msg, PayloadInvalid),
+        }
+    }
+}
+
+fn classify_slack_error(err: &SlackClientError) -> ChannelError {
+    SlackError::from_sdk(err).to_channel_error(err.to_string())
 }
 
 async fn handle_push_event(
@@ -526,12 +623,6 @@ fn pt(s: &str) -> SlackBlockPlainTextOnly {
     SlackBlockPlainTextOnly::from(s.to_string())
 }
 
-fn is_slack_retryable_error(err: &SlackClientError) -> bool {
-    match err {
-        SlackClientError::ApiError(api) => matches!(api.code.as_str(), "ratelimited"),
-        _ => true,
-    }
-}
 
 fn socket_mode_error_handler(
     err: Box<dyn std::error::Error + Send + Sync + 'static>,

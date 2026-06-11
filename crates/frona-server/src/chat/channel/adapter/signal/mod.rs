@@ -59,6 +59,7 @@ use serde::Deserialize;
 use tokio::sync::{Mutex, oneshot};
 
 use crate::chat::channel::attachment;
+use crate::chat::channel::error::ChannelError;
 use crate::chat::channel::models::{
     ChannelAdapter, ChannelCtx, SetupConfig, external_chat_id,
 };
@@ -107,7 +108,7 @@ impl ChannelAdapter for SignalAdapter {
     async fn on_setup_begin(
         &self,
         ctx: &ChannelCtx,
-    ) -> Result<Option<SetupConfig>, AppError> {
+    ) -> Result<Option<SetupConfig>, ChannelError> {
         // `link_secondary_device` would wipe the existing registration, so
         // skip setup entirely when the store already has one.
         let db_path = ctx.data_dir.join("store.db");
@@ -146,7 +147,7 @@ impl ChannelAdapter for SignalAdapter {
         }))
     }
 
-    async fn on_setup_complete(&self, _ctx: &ChannelCtx) -> Result<(), AppError> {
+    async fn on_setup_complete(&self, _ctx: &ChannelCtx) -> Result<(), ChannelError> {
         Ok(())
     }
 
@@ -184,7 +185,7 @@ impl ChannelAdapter for SignalAdapter {
         msg: &Message,
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let Some(text) = tool_call.turn_text.as_deref() else {
             return Ok(());
         };
@@ -200,7 +201,7 @@ impl ChannelAdapter for SignalAdapter {
         _tool_calls: &[ToolCall],
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let body = crate::chat::channel::render::render_message_body(msg);
         let has_attachments = !msg.attachments.is_empty();
         if body.trim().is_empty() && !has_attachments {
@@ -233,7 +234,7 @@ impl ChannelAdapter for SignalAdapter {
         self.dispatch_text(chat, &combined, &msg.id, ctx).await.map(|_| ())
     }
 
-    async fn on_inference_start(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), AppError> {
+    async fn on_inference_start(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), ChannelError> {
         let Ok(target) = SignalTarget::parse(match external_chat_id(chat) {
             Ok(s) => s,
             Err(_) => return Ok(()),
@@ -258,7 +259,7 @@ impl ChannelAdapter for SignalAdapter {
         Ok(())
     }
 
-    async fn on_inference_done(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), AppError> {
+    async fn on_inference_done(&self, chat: &Chat, ctx: &ChannelCtx) -> Result<(), ChannelError> {
         self.typing.stop(&chat.id).await;
         self.dispatch_typing(chat, ctx, TypingAction::Stopped).await
     }
@@ -269,7 +270,7 @@ impl ChannelAdapter for SignalAdapter {
         _msg: &Message,
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, AppError> {
+    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, ChannelError> {
         // Sequential cadence: render only the first pending HITL. The cursor
         // advances by 1; the next pending HITL renders after this one resolves
         // (via text reply or web URL).
@@ -315,7 +316,7 @@ impl SignalAdapter {
         text: &str,
         msg_id: &str,
         ctx: &ChannelCtx,
-    ) -> Result<u64, AppError> {
+    ) -> Result<u64, ChannelError> {
         let target = SignalTarget::parse(external_chat_id(chat)?)?;
         let cmd_tx = self.cmd_tx(&ctx.channel.id).await?;
         let (reply, rx) = oneshot::channel();
@@ -327,9 +328,11 @@ impl SignalAdapter {
                 reply,
             })
             .await
-            .map_err(|_| AppError::Internal("Signal worker command channel closed".into()))?;
+            .map_err(|_| {
+                ChannelError::transient("Signal worker command channel closed")
+            })?;
         rx.await
-            .map_err(|_| AppError::Internal("Signal worker dropped reply oneshot".into()))?
+            .map_err(|_| ChannelError::transient("Signal worker dropped reply oneshot"))?
     }
 
     async fn dispatch_typing(
@@ -337,7 +340,7 @@ impl SignalAdapter {
         chat: &Chat,
         ctx: &ChannelCtx,
         action: TypingAction,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         // Best-effort: never propagate errors, they'd block delivery.
         let Ok(target) = SignalTarget::parse(match external_chat_id(chat) {
             Ok(s) => s,

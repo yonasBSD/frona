@@ -68,18 +68,6 @@ pub enum CarrierStatus {
     Failed { error: String },
 }
 
-fn is_permanent_error(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    [
-        "bot was blocked",
-        "chat not found",
-        "user not found",
-        "forbidden",
-        "recipient is not a valid",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
 
 pub(super) struct ChannelTask {
     cancel: CancellationToken,
@@ -414,7 +402,7 @@ impl ChannelManager {
                     .channel_service
                     .mark_status(&channel.id, ChannelStatus::Failed, Some(e.to_string()))
                     .await?;
-                return Err(e);
+                return Err(AppError::Internal(e.to_string()));
             }
         }
 
@@ -499,7 +487,10 @@ impl ChannelManager {
             })?;
             (task.adapter.clone(), task.ctx.clone())
         };
-        adapter.on_webhook(&ctx, request).await
+        adapter
+            .on_webhook(&ctx, request)
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))
     }
 
     pub async fn running_adapter(
@@ -592,6 +583,7 @@ impl ChannelManager {
         delivery.last_attempt_at = Some(now);
         delivery.tool_index = delivery.tool_index.saturating_add(1);
         delivery.last_error = None;
+        delivery.failure_kind = None;
         delivery.next_attempt_at = Some(now);
         self.message_repo.update(&message).await?;
         Ok(())
@@ -615,7 +607,7 @@ impl ChannelManager {
         message_id: &str,
         adapter: &dyn ChannelAdapter,
         ctx: &ChannelCtx,
-    ) -> Result<DeliverHitlReport, AppError> {
+    ) -> Result<DeliverHitlReport, super::ChannelError> {
         let tool_calls = self
             .chat_service
             .get_tool_calls_by_message(message_id)
@@ -741,6 +733,7 @@ impl ChannelManager {
         delivery.last_attempt_at = Some(now);
         delivery.next_attempt_at = None;
         delivery.last_error = None;
+        delivery.failure_kind = None;
         self.message_repo.update(&message).await?;
         Ok(())
     }
@@ -748,7 +741,7 @@ impl ChannelManager {
     pub async fn record_segment_failure(
         &self,
         message_id: &str,
-        err: String,
+        err: super::ChannelError,
     ) -> Result<(), AppError> {
         let mut message = self
             .message_repo
@@ -761,14 +754,27 @@ impl ChannelManager {
         let now = Utc::now();
         delivery.last_attempt_at = Some(now);
         delivery.attempts = delivery.attempts.saturating_add(1);
-        delivery.last_error = Some(err.clone());
-        let terminal = is_permanent_error(&err) || delivery.attempts >= DELIVERY_MAX_ATTEMPTS;
+        delivery.last_error = Some(err.message.clone());
+        delivery.failure_kind = Some(err.kind);
+        let terminal = err.kind.is_terminal() || delivery.attempts >= DELIVERY_MAX_ATTEMPTS;
         delivery.state = DeliveryState::Failed;
         delivery.next_attempt_at = if terminal {
             None
         } else {
-            Some(now + chrono::Duration::from_std(backoff_for(delivery.attempts)).unwrap())
+            let backoff = err
+                .retry_hint
+                .unwrap_or_else(|| backoff_for(delivery.attempts));
+            Some(now + chrono::Duration::from_std(backoff).unwrap())
         };
+        tracing::warn!(
+            msg_id = %message_id,
+            attempts = delivery.attempts,
+            kind = ?err.kind,
+            terminal = terminal,
+            retry_at = ?delivery.next_attempt_at,
+            error = %err.message,
+            "channel delivery segment failed",
+        );
         self.message_repo.update(&message).await?;
         Ok(())
     }
@@ -957,7 +963,7 @@ impl ChannelManager {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    self.record_segment_failure(&msg.id, e.to_string()).await?;
+                    self.record_segment_failure(&msg.id, e).await?;
                     return Ok(SegmentOutcome::Halted);
                 }
             };
@@ -1020,7 +1026,7 @@ impl ChannelManager {
                     Ok(SegmentOutcome::Continue)
                 }
                 Err(e) => {
-                    self.record_segment_failure(&msg.id, e.to_string()).await?;
+                    self.record_segment_failure(&msg.id, e).await?;
                     Ok(SegmentOutcome::Halted)
                 }
             }
@@ -1037,7 +1043,7 @@ impl ChannelManager {
                     Ok(SegmentOutcome::Done)
                 }
                 Err(e) => {
-                    self.record_segment_failure(&msg.id, e.to_string()).await?;
+                    self.record_segment_failure(&msg.id, e).await?;
                     Ok(SegmentOutcome::Halted)
                 }
             }
@@ -1187,37 +1193,60 @@ async fn handle_outbound_event(
             if chat.channel_id.is_none() {
                 return Ok(());
             }
+            // Streaming hooks are best-effort. Log the classified failure but
+            // don't bubble — one failed typing-indicator or token-edit
+            // shouldn't kill the whole event loop.
+            macro_rules! log_streaming_err {
+                ($result:expr, $hook:literal) => {
+                    if let Err(e) = $result {
+                        tracing::warn!(
+                            channel_id = %ctx.channel.id,
+                            chat_id = %chat.id,
+                            kind = ?e.kind,
+                            error = %e.message,
+                            "{} failed", $hook,
+                        );
+                    }
+                };
+            }
             match kind {
                 InferenceEventKind::Start | InferenceEventKind::Resume { .. } => {
-                    adapter.on_inference_start(&chat, ctx).await?;
+                    log_streaming_err!(adapter.on_inference_start(&chat, ctx).await, "on_inference_start");
                 }
                 InferenceEventKind::Text(text) => {
-                    adapter.on_text(&chat, text, ctx).await?;
+                    log_streaming_err!(adapter.on_text(&chat, text, ctx).await, "on_text");
                 }
                 InferenceEventKind::Reasoning(text) => {
-                    adapter.on_reasoning(&chat, text, ctx).await?;
+                    log_streaming_err!(adapter.on_reasoning(&chat, text, ctx).await, "on_reasoning");
                 }
                 InferenceEventKind::ToolCall { name, arguments, .. } => {
-                    adapter.on_tool_call(&chat, name, arguments, ctx).await?;
+                    log_streaming_err!(adapter.on_tool_call(&chat, name, arguments, ctx).await, "on_tool_call");
                 }
                 InferenceEventKind::ToolResult { name, success, result } => {
-                    adapter.on_tool_result(&chat, name, *success, result, ctx).await?;
+                    log_streaming_err!(adapter.on_tool_result(&chat, name, *success, result, ctx).await, "on_tool_result");
                 }
                 InferenceEventKind::Done { .. }
                 | InferenceEventKind::Cancelled { .. }
                 | InferenceEventKind::Failed { .. } => {
-                    adapter.on_inference_done(&chat, ctx).await?;
+                    log_streaming_err!(adapter.on_inference_done(&chat, ctx).await, "on_inference_done");
                 }
                 InferenceEventKind::Paused { reason, message } => {
-                    // Universal lifecycle: stop typing.
-                    adapter.on_inference_done(&chat, ctx).await?;
-                    // Reason-specific render.
+                    log_streaming_err!(adapter.on_inference_done(&chat, ctx).await, "on_inference_done");
                     match reason {
                         crate::inference::tool_loop::PauseReason::Hitl => {
-                            state
+                            if let Err(e) = state
                                 .channel_manager
                                 .deliver_pending_hitls(&chat, &message.id, adapter.as_ref(), ctx)
-                                .await?;
+                                .await
+                            {
+                                tracing::warn!(
+                                    channel_id = %ctx.channel.id,
+                                    chat_id = %chat.id,
+                                    kind = ?e.kind,
+                                    error = %e.message,
+                                    "deliver_pending_hitls during Paused event failed",
+                                );
+                            }
                         }
                     }
                 }
@@ -1662,14 +1691,14 @@ mod tests {
     }
 
     #[test]
-    fn permanent_error_detection() {
-        assert!(is_permanent_error("Forbidden: bot was blocked by the user"));
-        assert!(is_permanent_error("chat not found"));
-        assert!(is_permanent_error("FORBIDDEN: bot was kicked"));
-        assert!(is_permanent_error("user not found"));
-        assert!(is_permanent_error("recipient is not a valid telegram user"));
-        assert!(!is_permanent_error("connection timeout"));
-        assert!(!is_permanent_error("Telegram returned 503"));
-        assert!(!is_permanent_error("rate limit exceeded"));
+    fn channel_error_kind_terminality() {
+        use super::super::ChannelErrorKind;
+        assert!(!ChannelErrorKind::Transient.is_terminal());
+        assert!(ChannelErrorKind::Forbidden.is_terminal());
+        assert!(ChannelErrorKind::NotFound.is_terminal());
+        assert!(ChannelErrorKind::PayloadInvalid.is_terminal());
+        assert!(ChannelErrorKind::PayloadTooLarge.is_terminal());
+        assert!(ChannelErrorKind::Unauthorized.is_terminal());
+        assert!(ChannelErrorKind::Other.is_terminal());
     }
 }

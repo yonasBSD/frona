@@ -14,6 +14,7 @@ use crate::storage::Attachment;
 
 use super::storage::download_to_attachment;
 use super::super::attachment;
+use super::super::error::{ChannelError, ChannelErrorKind};
 use super::super::models::{
     ChannelAdapter, ChannelCtx, ExternalMessage, external_chat_id,
 };
@@ -122,7 +123,7 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
         _tool_calls: &[crate::inference::tool_call::ToolCall],
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let to = parse_external_id(external_chat_id(chat)?)?;
         let raw_body = crate::chat::channel::render::render_message_body(msg);
         let body = if raw_body.trim().is_empty() {
@@ -283,7 +284,7 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
         &self,
         ctx: &ChannelCtx,
         request: Request<Bytes>,
-    ) -> Result<Response, AppError> {
+    ) -> Result<Response, ChannelError> {
         if request.method() == Method::GET {
             return self.handle_verify(request);
         }
@@ -315,7 +316,7 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
         _msg: &Message,
         chat: &Chat,
         ctx: &ChannelCtx,
-    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, AppError> {
+    ) -> Result<Vec<crate::inference::hitl::HitlDelivery>, ChannelError> {
         let to = parse_external_id(external_chat_id(chat)?)?;
         let mut out = Vec::with_capacity(batch.len());
         for tc in batch {
@@ -329,15 +330,14 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
                     delivered_at: chrono::Utc::now(),
                 }),
                 Err(e) => {
-                    let retryable = is_whatsapp_cloud_retryable_error(&e);
                     tracing::warn!(
                         channel_id = %ctx.channel.id,
                         tool_call_id = %tc.id,
-                        retryable = retryable,
-                        error = %e,
+                        kind = ?e.kind,
+                        error = %e.message,
                         "WhatsApp Cloud on_pending_hitl: send failed",
                     );
-                    if retryable && out.is_empty() {
+                    if !e.kind.is_terminal() && out.is_empty() {
                         return Err(e);
                     }
                     break;
@@ -349,7 +349,7 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
 }
 
 impl WhatsAppCloudAdapter {
-    fn handle_verify(&self, request: Request<Bytes>) -> Result<Response, AppError> {
+    fn handle_verify(&self, request: Request<Bytes>) -> Result<Response, ChannelError> {
         let mut mode: Option<String> = None;
         let mut token: Option<String> = None;
         let mut challenge: Option<String> = None;
@@ -418,7 +418,7 @@ impl WhatsAppCloudAdapter {
         Ok(parsed.id)
     }
 
-    async fn send_text(&self, to: &str, body: &str) -> Result<(), AppError> {
+    async fn send_text(&self, to: &str, body: &str) -> Result<(), ChannelError> {
         let payload = serde_json::json!({
             "messaging_product": "whatsapp",
             "to": to,
@@ -434,7 +434,7 @@ impl WhatsAppCloudAdapter {
         content_type: &str,
         media_id: &str,
         caption: Option<&str>,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let media_kind = wa_media_kind(content_type);
         let mut media_obj = serde_json::json!({ "id": media_id });
         if matches!(media_kind, "image" | "document" | "video")
@@ -451,7 +451,7 @@ impl WhatsAppCloudAdapter {
         self.send_message(payload).await
     }
 
-    async fn send_message(&self, payload: serde_json::Value) -> Result<(), AppError> {
+    async fn send_message(&self, payload: serde_json::Value) -> Result<(), ChannelError> {
         let _ = self.send_message_capturing_id(payload).await?;
         Ok(())
     }
@@ -462,7 +462,7 @@ impl WhatsAppCloudAdapter {
     async fn send_message_capturing_id(
         &self,
         payload: serde_json::Value,
-    ) -> Result<String, AppError> {
+    ) -> Result<String, ChannelError> {
         let url = format!("{CLOUD_API_BASE}/{}/messages", self.config.phone_number_id);
         let resp = self
             .http
@@ -471,11 +471,20 @@ impl WhatsAppCloudAdapter {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| AppError::Internal(format!("WA send failed: {e}")))?;
+            .map_err(|e| {
+                classify_wa_cloud_error(
+                    &WaCloudError::Transport,
+                    format!("WA send failed: {e}"),
+                )
+            })?;
         if !resp.status().is_success() {
-            let status = resp.status();
+            let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::Internal(format!("WA send {status}: {body}")));
+            let msg = format!("WA send {status}: {body}");
+            return Err(classify_wa_cloud_error(
+                &WaCloudError::from_http(status, &body),
+                msg,
+            ));
         }
         #[derive(Deserialize)]
         struct SendResp {
@@ -487,7 +496,10 @@ impl WhatsAppCloudAdapter {
             id: String,
         }
         let parsed: SendResp = resp.json().await.map_err(|e| {
-            AppError::Internal(format!("WA send response parse failed: {e}"))
+            classify_wa_cloud_error(
+                &WaCloudError::Transport,
+                format!("WA send response parse failed: {e}"),
+            )
         })?;
         Ok(parsed.messages.into_iter().next().map(|m| m.id).unwrap_or_default())
     }
@@ -496,7 +508,7 @@ impl WhatsAppCloudAdapter {
         &self,
         ctx: &ChannelCtx,
         raw: serde_json::Value,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), ChannelError> {
         let payload: WebhookPayload = serde_json::from_value(raw).map_err(|e| {
             AppError::Validation(format!("invalid WhatsApp Cloud webhook payload: {e}"))
         })?;
@@ -1009,26 +1021,142 @@ fn build_cta_url_payload(
     })
 }
 
-/// 5xx, 429, and non-HTTP errors (network / DNS / TLS) are transient → caller
-/// returns `Err` so `record_segment_failure` schedules backoff retry. 4xx
-/// (except 429) is permanent (bad token, missing perms, malformed payload) —
-/// caller breaks instead of burning the retry budget.
-///
-/// `send_message_capturing_id` collapses every transport error into
-/// `AppError::Internal`. Status-bearing errors are formatted as
-/// `"WA send {status}: <body>"` so we recognise them by prefix; everything
-/// else (`"WA send failed: …"`, `"WA send response parse failed: …"`) is
-/// treated as transient.
-fn is_whatsapp_cloud_retryable_error(err: &AppError) -> bool {
-    let AppError::Internal(s) = err else { return false };
-    let Some(rest) = s.strip_prefix("WA send ") else {
-        return true;
-    };
-    let status_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    match status_str.parse::<u16>() {
-        Ok(code) => code == 429 || (500..=599).contains(&code),
-        Err(_) => true,
+/// Either a transport-level failure (network, bad JSON), or an HTTP response
+/// whose body carries Meta's numeric `error.code`. Unknown codes default to
+/// Transient; the cap bounds the retry budget.
+/// See https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes/
+#[derive(Debug, Clone)]
+enum WaCloudError {
+    Transport,
+    /// Upstream proxy/CDN responded directly (no Meta JSON body).
+    HttpStatusOnly(u16),
+    /// 190
+    AccessTokenInvalid,
+    /// 200..=299
+    PermissionMissing,
+    /// 100
+    InvalidParameter,
+    /// 131000
+    MessageFailedGeneric,
+    /// 131005
+    AccessDenied,
+    /// 131008
+    RequiredParamMissing,
+    /// 131009 — bad phone format.
+    ParameterValueInvalid,
+    /// 131021
+    RecipientCannotBeSender,
+    /// 131026 — recipient hasn't accepted WA business policy.
+    MessageUndeliverable,
+    /// 131031
+    AccountLocked,
+    /// 131047 — 24h session expired, must use template.
+    ReEngagementRequired,
+    /// 131048 — per phone-pair throttle.
+    SpamRateLimit,
+    /// 131051
+    UnsupportedMessageType,
+    /// 131052 — URL we passed didn't resolve.
+    MediaDownloadError,
+    /// 131053
+    MediaUploadError,
+    /// 131057
+    AccountMaintenance,
+    /// 130429 / 131056
+    RateLimit,
+    /// 132000..=132099 — param mismatch, unapproved, deleted.
+    TemplateProblem,
+    /// 133000..=133015 — registration / 2FA / phone number state.
+    RegistrationProblem,
+    Unknown,
+}
+
+#[derive(Debug, Deserialize)]
+struct WaErrorBody {
+    error: WaErrorPayload,
+}
+
+#[derive(Debug, Deserialize)]
+struct WaErrorPayload {
+    code: u32,
+    #[serde(default)]
+    #[allow(dead_code)] // useful for logs, not for classification
+    message: Option<String>,
+}
+
+impl WaCloudError {
+    fn from_http(status: u16, body: &str) -> Self {
+        if let Ok(parsed) = serde_json::from_str::<WaErrorBody>(body) {
+            return Self::from_code(parsed.error.code);
+        }
+        Self::HttpStatusOnly(status)
     }
+
+    fn from_code(code: u32) -> Self {
+        match code {
+            190 => Self::AccessTokenInvalid,
+            200..=299 => Self::PermissionMissing,
+            100 => Self::InvalidParameter,
+            131000 => Self::MessageFailedGeneric,
+            131005 => Self::AccessDenied,
+            131008 => Self::RequiredParamMissing,
+            131009 => Self::ParameterValueInvalid,
+            131021 => Self::RecipientCannotBeSender,
+            131026 => Self::MessageUndeliverable,
+            131031 => Self::AccountLocked,
+            131047 => Self::ReEngagementRequired,
+            131048 => Self::SpamRateLimit,
+            131051 => Self::UnsupportedMessageType,
+            131052 => Self::MediaDownloadError,
+            131053 => Self::MediaUploadError,
+            131057 => Self::AccountMaintenance,
+            130429 | 131056 => Self::RateLimit,
+            132000..=132099 => Self::TemplateProblem,
+            133000..=133015 => Self::RegistrationProblem,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn to_channel_error(&self, msg: String) -> ChannelError {
+        use ChannelErrorKind::*;
+        match self {
+            Self::Transport | Self::Unknown | Self::MessageFailedGeneric => {
+                ChannelError::transient(msg)
+            }
+            Self::RateLimit | Self::SpamRateLimit | Self::AccountMaintenance => {
+                ChannelError::transient(msg)
+            }
+            Self::HttpStatusOnly(status) => match status {
+                401 => ChannelError::terminal(msg, Unauthorized),
+                403 => ChannelError::terminal(msg, Forbidden),
+                404 => ChannelError::terminal(msg, NotFound),
+                413 => ChannelError::terminal(msg, PayloadTooLarge),
+                429 => ChannelError::transient(msg),
+                500..=599 => ChannelError::transient(msg),
+                400 | 422 => ChannelError::terminal(msg, PayloadInvalid),
+                _ => ChannelError::transient(msg),
+            },
+            Self::AccessTokenInvalid => ChannelError::terminal(msg, Unauthorized),
+            Self::PermissionMissing
+            | Self::AccessDenied
+            | Self::AccountLocked
+            | Self::MessageUndeliverable
+            | Self::ReEngagementRequired
+            | Self::RegistrationProblem => ChannelError::terminal(msg, Forbidden),
+            Self::RecipientCannotBeSender => ChannelError::terminal(msg, NotFound),
+            Self::InvalidParameter
+            | Self::RequiredParamMissing
+            | Self::ParameterValueInvalid
+            | Self::UnsupportedMessageType
+            | Self::MediaDownloadError
+            | Self::MediaUploadError
+            | Self::TemplateProblem => ChannelError::terminal(msg, PayloadInvalid),
+        }
+    }
+}
+
+fn classify_wa_cloud_error(err: &WaCloudError, msg: String) -> ChannelError {
+    err.to_channel_error(msg)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1438,29 +1566,53 @@ mod tests {
     }
 
     #[test]
-    fn retry_classifier_5xx_is_retryable() {
-        let e = AppError::Internal("WA send 503: gateway".into());
-        assert!(is_whatsapp_cloud_retryable_error(&e));
+    fn wa_cloud_classifies_token_expired_as_unauthorized() {
+        let body = r#"{"error":{"code":190,"message":"invalid token"}}"#;
+        let e = WaCloudError::from_http(401, body).to_channel_error(body.into());
+        assert_eq!(e.kind, ChannelErrorKind::Unauthorized);
     }
 
     #[test]
-    fn retry_classifier_429_is_retryable() {
-        let e = AppError::Internal("WA send 429: rate limited".into());
-        assert!(is_whatsapp_cloud_retryable_error(&e));
+    fn wa_cloud_classifies_opt_in_required_as_forbidden() {
+        let body = r#"{"error":{"code":131047,"message":"Re-engagement message"}}"#;
+        let e = WaCloudError::from_http(400, body).to_channel_error(body.into());
+        assert_eq!(e.kind, ChannelErrorKind::Forbidden);
     }
 
     #[test]
-    fn retry_classifier_4xx_is_permanent() {
-        for code in [400, 401, 403, 404, 422] {
-            let e = AppError::Internal(format!("WA send {code}: bad request"));
-            assert!(!is_whatsapp_cloud_retryable_error(&e), "code {code}");
+    fn wa_cloud_classifies_rate_limit_as_transient() {
+        for code in [130429u32, 131056, 131048] {
+            let body = format!(r#"{{"error":{{"code":{code},"message":"rate"}}}}"#);
+            let e = WaCloudError::from_http(429, &body).to_channel_error(body.clone());
+            assert_eq!(e.kind, ChannelErrorKind::Transient, "code {code}");
         }
     }
 
     #[test]
-    fn retry_classifier_network_error_is_retryable() {
-        let e = AppError::Internal("WA send failed: tcp connect".into());
-        assert!(is_whatsapp_cloud_retryable_error(&e));
+    fn wa_cloud_classifies_template_problem_as_payload_invalid() {
+        for code in [132000u32, 132012, 132068] {
+            let body = format!(r#"{{"error":{{"code":{code},"message":"template"}}}}"#);
+            let e = WaCloudError::from_http(400, &body).to_channel_error(body.clone());
+            assert_eq!(e.kind, ChannelErrorKind::PayloadInvalid, "code {code}");
+        }
+    }
+
+    #[test]
+    fn wa_cloud_falls_back_to_http_status_when_body_unparseable() {
+        let e = WaCloudError::from_http(500, "<html>Bad Gateway</html>")
+            .to_channel_error("transient".into());
+        assert_eq!(e.kind, ChannelErrorKind::Transient);
+
+        let e = WaCloudError::from_http(401, "no body")
+            .to_channel_error("auth".into());
+        assert_eq!(e.kind, ChannelErrorKind::Unauthorized);
+    }
+
+    #[test]
+    fn wa_cloud_unknown_code_defaults_to_transient() {
+        let body = r#"{"error":{"code":999999,"message":"never seen this"}}"#;
+        let e = WaCloudError::from_http(400, body).to_channel_error(body.into());
+        assert_eq!(e.kind, ChannelErrorKind::Transient);
     }
 
     #[test]

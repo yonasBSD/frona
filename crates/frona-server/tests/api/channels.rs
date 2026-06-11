@@ -622,6 +622,21 @@ struct StubConfig {
     fail_on_send: Option<String>,
 }
 
+/// Mirrors what a real adapter's classify_<provider> does: maps the test
+/// injected free-form string into a typed ChannelError. Tests use it via
+/// `fail_on_tool`/`fail_on_send`.
+fn stub_classify_error(msg: &str) -> frona::chat::channel::ChannelError {
+    use frona::chat::channel::{ChannelError, ChannelErrorKind};
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("blocked") || lower.contains("forbidden") || lower.contains("kicked") {
+        ChannelError::terminal(msg.to_string(), ChannelErrorKind::Forbidden)
+    } else if lower.contains("chat not found") || lower.contains("user not found") {
+        ChannelError::terminal(msg.to_string(), ChannelErrorKind::NotFound)
+    } else {
+        ChannelError::transient(msg.to_string())
+    }
+}
+
 struct StubAdapter {
     captured: std::sync::Arc<StdMutex<Vec<CapturedSend>>>,
     tool_calls: std::sync::Arc<StdMutex<Vec<CapturedToolCall>>>,
@@ -653,7 +668,7 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
         msg: &frona::chat::message::models::Message,
         _chat: &frona::chat::models::Chat,
         _ctx: &frona::chat::channel::ChannelCtx,
-    ) -> Result<(), frona::core::error::AppError> {
+    ) -> Result<(), frona::chat::channel::ChannelError> {
         let injected = {
             let mut cfg = self.config.lock().unwrap();
             if let Some((id, _)) = &cfg.fail_on_tool {
@@ -667,7 +682,7 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
             }
         };
         if let Some((_, err)) = injected {
-            return Err(frona::core::error::AppError::Internal(err));
+            return Err(stub_classify_error(&err));
         }
         let render = self.config.lock().unwrap().render_tool_segments;
         if !render {
@@ -686,10 +701,10 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
         _tool_calls: &[frona::inference::tool_call::ToolCall],
         chat: &frona::chat::models::Chat,
         _ctx: &frona::chat::channel::ChannelCtx,
-    ) -> Result<(), frona::core::error::AppError> {
+    ) -> Result<(), frona::chat::channel::ChannelError> {
         let injected = self.config.lock().unwrap().fail_on_send.take();
         if let Some(err) = injected {
-            return Err(frona::core::error::AppError::Internal(err));
+            return Err(stub_classify_error(&err));
         }
         if msg.content.trim().is_empty() {
             return Ok(());
@@ -705,7 +720,7 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
         &self,
         _chat: &frona::chat::models::Chat,
         _ctx: &frona::chat::channel::ChannelCtx,
-    ) -> Result<(), frona::core::error::AppError> {
+    ) -> Result<(), frona::chat::channel::ChannelError> {
         self.inference_start_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
@@ -716,7 +731,7 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
         msg: &frona::chat::message::models::Message,
         _chat: &frona::chat::models::Chat,
         ctx: &frona::chat::channel::ChannelCtx,
-    ) -> Result<Vec<frona::inference::hitl::HitlDelivery>, frona::core::error::AppError> {
+    ) -> Result<Vec<frona::inference::hitl::HitlDelivery>, frona::chat::channel::ChannelError> {
         self.pending_hitls
             .lock()
             .unwrap()
@@ -741,7 +756,7 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
         &self,
         ctx: &frona::chat::channel::ChannelCtx,
         request: axum::http::Request<axum::body::Bytes>,
-    ) -> Result<axum::response::Response, frona::core::error::AppError> {
+    ) -> Result<axum::response::Response, frona::chat::channel::ChannelError> {
         let params: std::collections::HashMap<String, String> =
             url::form_urlencoded::parse(request.body())
                 .into_owned()
@@ -759,7 +774,7 @@ impl frona::chat::channel::ChannelAdapter for StubAdapter {
         ctx.emit
             .send(event)
             .await
-            .map_err(|e| frona::core::error::AppError::Internal(format!("emit: {e}")))?;
+            .map_err(|e| frona::chat::channel::ChannelError::transient(format!("emit: {e}")))?;
         use axum::response::IntoResponse;
         Ok((axum::http::StatusCode::OK, "ok").into_response())
     }

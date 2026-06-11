@@ -10,6 +10,7 @@ use presage::Manager;
 use tokio::sync::oneshot;
 
 use crate::chat::channel::adapter::markdown::{self, SignalStyle, SignalText};
+use crate::chat::channel::error::{ChannelError, ChannelErrorKind};
 use crate::core::error::AppError;
 
 use super::external_id::SignalTarget;
@@ -38,7 +39,7 @@ pub enum SignalCommand {
         /// which is Signal's protocol-level message identifier — used as
         /// `HitlDelivery.external_message_id` for HITL prompts so quote-replies
         /// can be matched back to the originating tool call.
-        reply: oneshot::Sender<Result<u64, AppError>>,
+        reply: oneshot::Sender<Result<u64, ChannelError>>,
     },
     SendTyping {
         target: SignalTarget,
@@ -118,7 +119,7 @@ async fn send_text<S: Store>(
     target: SignalTarget,
     body: String,
     ts: u64,
-) -> Result<(), AppError> {
+) -> Result<(), ChannelError> {
     let SignalText { body, ranges } = markdown::to_signal(&body);
     let body_ranges = ranges.into_iter().map(to_proto_body_range).collect();
     match target {
@@ -131,7 +132,7 @@ async fn send_text<S: Store>(
             };
             mgr.send_message(ServiceId::Aci(aci.into()), ContentBody::DataMessage(dm), ts)
                 .await
-                .map_err(into_app_error)
+                .map_err(|e| classify_signal_error(&e))
         }
         SignalTarget::Group { master_key } => {
             let dm = DataMessage {
@@ -146,7 +147,7 @@ async fn send_text<S: Store>(
             };
             mgr.send_message_to_group(&master_key, ContentBody::DataMessage(dm), ts)
                 .await
-                .map_err(into_app_error)
+                .map_err(|e| classify_signal_error(&e))
         }
     }
 }
@@ -206,6 +207,43 @@ async fn send_typing<S: Store>(
 
 fn into_app_error<E: std::fmt::Display>(e: E) -> AppError {
     AppError::Internal(format!("Signal send: {e}"))
+}
+
+pub fn classify_signal_error<S: std::error::Error>(
+    e: &presage::Error<S>,
+) -> ChannelError {
+    use presage::Error;
+    let msg = format!("Signal send: {e}");
+    match e {
+        Error::UnknownGroup | Error::UnknownRecipient => {
+            ChannelError::terminal(msg, ChannelErrorKind::NotFound)
+        }
+        // User must re-link the device for any of these.
+        Error::NotYetRegisteredError
+        | Error::AlreadyRegisteredError
+        | Error::RelinkNecessary
+        | Error::NotPrimaryDevice
+        | Error::CaptchaRequired
+        | Error::PushChallengeRequired
+        | Error::UnverifiedRegistrationSession => {
+            ChannelError::terminal(msg, ChannelErrorKind::Unauthorized)
+        }
+        Error::PhoneNumberError(_)
+        | Error::InvalidThread(_)
+        | Error::InvalidUsername(_)
+        | Error::InvalidDeviceId
+        | Error::ParseContactError(_) => {
+            ChannelError::terminal(msg, ChannelErrorKind::PayloadInvalid)
+        }
+        Error::IoError(_)
+        | Error::Timeout(_)
+        | Error::MessagePipeNotStarted
+        | Error::MessagePipeInterruptedError
+        | Error::ServiceError(_)
+        | Error::MessageSenderError(_)
+        | Error::ProtocolError(_) => ChannelError::transient(msg),
+        _ => ChannelError::transient(msg),
+    }
 }
 
 pub fn now_ms() -> u64 {
