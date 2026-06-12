@@ -41,6 +41,10 @@ struct SlackChannelState {
     bot_token: SlackApiToken,
 }
 
+/// Slack `chat.postMessage` text-field hard cap. Slack recommends 4k for
+/// readability but accepts up to 40k.
+const SLACK_MAX_MESSAGE_LEN: usize = 40_000;
+
 #[derive(crate::ChannelFactory)]
 #[channel(id = "slack", from = SlackConfig)]
 pub struct SlackAdapter {
@@ -48,6 +52,7 @@ pub struct SlackAdapter {
     app_token: SlackApiToken,
     client: Arc<SlackHyperClient>,
     identity: OnceCell<SlackSelfIdentity>,
+    splitter: super::split::PlainSplitter,
 }
 
 impl From<SlackConfig> for SlackAdapter {
@@ -59,6 +64,7 @@ impl From<SlackConfig> for SlackAdapter {
             app_token: SlackApiToken::new(SlackApiTokenValue::from(cfg.app_token)),
             client: Arc::new(SlackClient::new(connector)),
             identity: OnceCell::new(),
+            splitter: super::split::PlainSplitter::new(SLACK_MAX_MESSAGE_LEN, None),
         }
     }
 }
@@ -150,7 +156,7 @@ impl ChannelAdapter for SlackAdapter {
         tool_call: &crate::inference::tool_call::ToolCall,
         _msg: &Message,
         chat: &Chat,
-        _ctx: &ChannelCtx,
+        ctx: &ChannelCtx,
     ) -> Result<(), ChannelError> {
         let Some(text) = tool_call.turn_text.as_deref() else {
             return Ok(());
@@ -158,7 +164,7 @@ impl ChannelAdapter for SlackAdapter {
         if text.trim().is_empty() {
             return Ok(());
         }
-        self.post_message(chat, text).await
+        self.post_message(chat, text, ctx).await
     }
 
     async fn on_send(
@@ -175,7 +181,7 @@ impl ChannelAdapter for SlackAdapter {
             if body.trim().is_empty() {
                 return Ok(());
             }
-            return self.post_message(chat, &body).await;
+            return self.post_message(chat, &body, ctx).await;
         }
 
         // Build URL buttons for ALL attachments (image native upload deferred
@@ -303,27 +309,38 @@ impl ChannelAdapter for SlackAdapter {
 }
 
 impl SlackAdapter {
-    async fn post_message(&self, chat: &Chat, text: &str) -> Result<(), ChannelError> {
+    async fn post_message(
+        &self,
+        chat: &Chat,
+        text: &str,
+        ctx: &ChannelCtx,
+    ) -> Result<(), ChannelError> {
         let (channel_id, thread_ts) = parse_external_id(external_chat_id(chat)?)?;
-        if text.trim().is_empty() {
+        let plain = markdown::to_plain(text);
+        let sctx = super::split::SplitCtx {
+            chat_id: &chat.id,
+            user_id: &ctx.channel.user_id,
+        };
+        let chunks = self.splitter.split(&plain, ctx, sctx).await?;
+        if chunks.is_empty() {
             return Ok(());
         }
-
-        // Block Kit `markdown` renders CommonMark server-side, not Slack mrkdwn.
-        // https://api.slack.com/reference/block-kit/blocks#markdown
-        let content = SlackMessageContent::new()
-            .with_text(markdown::to_plain(text))
-            .with_blocks(vec![SlackMarkdownBlock::new(text.to_string()).into()]);
-        let mut req = SlackApiChatPostMessageRequest::new(channel_id.clone(), content);
-        if let Some(ts) = thread_ts {
-            req = req.with_thread_ts(ts);
-        }
-
         let session = self.client.open_session(&self.bot_token);
-        session
-            .chat_post_message(&req)
-            .await
-            .map_err(|e| classify_slack_error(&e))?;
+        for chunk in chunks {
+            // Block Kit `markdown` renders CommonMark server-side, not Slack mrkdwn.
+            // https://api.slack.com/reference/block-kit/blocks#markdown
+            let content = SlackMessageContent::new()
+                .with_text(chunk.clone())
+                .with_blocks(vec![SlackMarkdownBlock::new(chunk).into()]);
+            let mut req = SlackApiChatPostMessageRequest::new(channel_id.clone(), content);
+            if let Some(ts) = thread_ts.clone() {
+                req = req.with_thread_ts(ts);
+            }
+            session
+                .chat_post_message(&req)
+                .await
+                .map_err(|e| classify_slack_error(&e))?;
+        }
         Ok(())
     }
 }
