@@ -47,13 +47,22 @@ pub struct TelegramConfig {
 pub struct TelegramAdapter {
     bot: Bot,
     typing: TypingIndicator,
+    splitter: super::split::TelegramMarkdownV2Splitter,
 }
+
+/// Telegram MarkdownV2 caps a single `send_message` at 4096 chars. Longer
+/// agent replies split into sequential top-level messages.
+const TELEGRAM_MAX_MESSAGE_LEN: usize = 4096;
 
 impl From<TelegramConfig> for TelegramAdapter {
     fn from(cfg: TelegramConfig) -> Self {
         Self {
             bot: Bot::new(cfg.bot_token),
             typing: TypingIndicator::new(),
+            splitter: super::split::TelegramMarkdownV2Splitter::new(
+                TELEGRAM_MAX_MESSAGE_LEN,
+                None,
+            ),
         }
     }
 }
@@ -123,53 +132,78 @@ impl TelegramAdapter {
         keyboard: Option<InlineKeyboardMarkup>,
     ) -> Result<String, ChannelError> {
         let (chat_id, thread_id) = parse_external_id(external_chat_id(chat)?)?;
-        let (rendered, parse_mode) = match telegram_markdown_v2::convert_with_strategy(
+
+        // The keyboard rides on the final chunk so the user reads the whole
+        // reply before deciding.
+        let (chunks, parse_mode) = match telegram_markdown_v2::convert_with_strategy(
             &super::markdown::fence_tables(text),
             telegram_markdown_v2::UnsupportedTagsStrategy::Escape,
         ) {
-            Ok(v2) => (v2, Some(ParseMode::MarkdownV2)),
+            Ok(v2) => (self.splitter.split(&v2), Some(ParseMode::MarkdownV2)),
             Err(e) => {
                 tracing::debug!(
                     error = %e,
                     "telegram MarkdownV2 conversion failed; falling back to plain text",
                 );
-                (super::markdown::to_plain(text), None)
+                (
+                    super::split::silent_split_plain(
+                        &super::markdown::to_plain(text),
+                        TELEGRAM_MAX_MESSAGE_LEN,
+                    ),
+                    None,
+                )
             }
         };
-        let mut send = self.bot.send_message(Recipient::Id(chat_id), rendered.clone());
-        if let Some(mode) = parse_mode {
-            send = send.parse_mode(mode);
+
+        if chunks.is_empty() {
+            // No body to send. Callers ignore the id.
+            return Ok(String::new());
         }
-        if let Some(t) = thread_id {
-            send = send.message_thread_id(t);
-        }
-        if let Some(kb) = keyboard.clone() {
-            send = send.reply_markup(kb);
-        }
-        match send.await {
-            Ok(sent) => Ok(sent.id.0.to_string()),
-            Err(RequestError::Api(ApiError::CantParseEntities(detail)))
-                if parse_mode.is_some() =>
-            {
-                tracing::warn!(
-                    detail = %detail,
-                    "Telegram rejected MarkdownV2; retrying as plain text",
-                );
-                let plain = super::markdown::to_plain(text);
-                let mut retry = self.bot.send_message(Recipient::Id(chat_id), plain);
-                if let Some(t) = thread_id {
-                    retry = retry.message_thread_id(t);
-                }
-                if let Some(kb) = keyboard {
-                    retry = retry.reply_markup(kb);
-                }
-                retry
-                    .await
-                    .map(|sent| sent.id.0.to_string())
-                    .map_err(|e| classify_telegram_error(&e))
+
+        let last_idx = chunks.len() - 1;
+        let mut last_sent_id = String::new();
+        for (i, chunk) in chunks.into_iter().enumerate() {
+            let is_last = i == last_idx;
+            let mut send = self.bot.send_message(Recipient::Id(chat_id), chunk.clone());
+            if let Some(mode) = parse_mode {
+                send = send.parse_mode(mode);
             }
-            Err(e) => Err(classify_telegram_error(&e)),
+            if let Some(t) = thread_id {
+                send = send.message_thread_id(t);
+            }
+            if is_last {
+                if let Some(kb) = keyboard.clone() {
+                    send = send.reply_markup(kb);
+                }
+            }
+            match send.await {
+                Ok(sent) => last_sent_id = sent.id.0.to_string(),
+                Err(RequestError::Api(ApiError::CantParseEntities(detail)))
+                    if parse_mode.is_some() =>
+                {
+                    tracing::warn!(
+                        detail = %detail,
+                        chunk_idx = i,
+                        "Telegram rejected MarkdownV2 chunk; retrying as plain text",
+                    );
+                    let mut retry = self.bot.send_message(Recipient::Id(chat_id), chunk);
+                    if let Some(t) = thread_id {
+                        retry = retry.message_thread_id(t);
+                    }
+                    if is_last {
+                        if let Some(kb) = keyboard.clone() {
+                            retry = retry.reply_markup(kb);
+                        }
+                    }
+                    match retry.await {
+                        Ok(sent) => last_sent_id = sent.id.0.to_string(),
+                        Err(e) => return Err(classify_telegram_error(&e)),
+                    }
+                }
+                Err(e) => return Err(classify_telegram_error(&e)),
+            }
         }
+        Ok(last_sent_id)
     }
 }
 
@@ -474,32 +508,55 @@ impl ChannelAdapter for TelegramAdapter {
                 }
             };
 
-            let (rendered, parse_mode) = match telegram_markdown_v2::convert_with_strategy(
+            let (chunks, parse_mode) = match telegram_markdown_v2::convert_with_strategy(
                 &super::markdown::fence_tables(&h.prompt),
                 telegram_markdown_v2::UnsupportedTagsStrategy::Escape,
             ) {
-                Ok(v2) => (v2, Some(ParseMode::MarkdownV2)),
-                Err(_) => (super::markdown::to_plain(&h.prompt), None),
+                Ok(v2) => (self.splitter.split(&v2), Some(ParseMode::MarkdownV2)),
+                Err(_) => (
+                    super::split::silent_split_plain(
+                        &super::markdown::to_plain(&h.prompt),
+                        TELEGRAM_MAX_MESSAGE_LEN,
+                    ),
+                    None,
+                ),
             };
 
-            let mut send = self
-                .bot
-                .send_message(Recipient::Id(chat_id), rendered)
-                .reply_markup(keyboard);
-            if let Some(mode) = parse_mode {
-                send = send.parse_mode(mode);
-            }
-            if let Some(t) = thread_id {
-                send = send.message_thread_id(t);
+            if chunks.is_empty() {
+                continue;
             }
 
-            match send.await {
-                Ok(sent) => out.push(crate::inference::hitl::HitlDelivery {
+            let last_idx = chunks.len() - 1;
+            let mut send_err: Option<RequestError> = None;
+            let mut last_sent_id = String::new();
+            for (i, chunk) in chunks.into_iter().enumerate() {
+                let is_last = i == last_idx;
+                let mut send = self.bot.send_message(Recipient::Id(chat_id), chunk);
+                if let Some(mode) = parse_mode {
+                    send = send.parse_mode(mode);
+                }
+                if let Some(t) = thread_id {
+                    send = send.message_thread_id(t);
+                }
+                if is_last {
+                    send = send.reply_markup(keyboard.clone());
+                }
+                match send.await {
+                    Ok(sent) => last_sent_id = sent.id.0.to_string(),
+                    Err(e) => {
+                        send_err = Some(e);
+                        break;
+                    }
+                }
+            }
+
+            match send_err {
+                None => out.push(crate::inference::hitl::HitlDelivery {
                     channel_id: ctx.channel.id.clone(),
-                    external_message_id: sent.id.0.to_string(),
+                    external_message_id: last_sent_id,
                     delivered_at: chrono::Utc::now(),
                 }),
-                Err(e) => {
+                Some(e) => {
                     tracing::warn!(
                         tool_call_id = %tc.id,
                         error = %e,
