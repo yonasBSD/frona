@@ -26,7 +26,6 @@ use super::super::models::ChannelFactory;
 
 // Discord API cap. https://discord.com/developers/docs/resources/message
 const DISCORD_MAX_MESSAGE_LEN: usize = 2000;
-const DISCORD_CHUNK_TARGET: usize = 1900;
 
 /// Discord's typing indicator auto-fades in ~10s. Refresh a bit early so a
 /// long inference keeps showing "typing…" continuously.
@@ -44,6 +43,7 @@ pub struct DiscordAdapter {
     http: Arc<Http>,
     self_id: Arc<OnceLock<UserId>>,
     typing: TypingIndicator,
+    splitter: super::split::MarkdownSplitter,
 }
 
 impl From<DiscordConfig> for DiscordAdapter {
@@ -54,6 +54,7 @@ impl From<DiscordConfig> for DiscordAdapter {
             http,
             self_id: Arc::new(OnceLock::new()),
             typing: TypingIndicator::new(),
+            splitter: super::split::MarkdownSplitter::new(DISCORD_MAX_MESSAGE_LEN, None),
         }
     }
 }
@@ -237,7 +238,7 @@ impl ChannelAdapter for DiscordAdapter {
             // For attachment messages we keep the first chunk (the rest goes
             // before the attachments as separate text messages).
             let fenced = super::markdown::fence_tables(&body_with_overflow);
-            let chunks = chunk_for_discord(&fenced);
+            let chunks = self.splitter.split(&fenced);
             let mut iter = chunks.into_iter();
             if let Some(first) = iter.next() {
                 req = req.content(first);
@@ -360,7 +361,7 @@ impl DiscordAdapter {
     async fn post_message(&self, chat: &Chat, text: &str) -> Result<(), ChannelError> {
         let channel_id = parse_external_id(external_chat_id(chat)?)?;
         let fenced = super::markdown::fence_tables(text);
-        for chunk in chunk_for_discord(&fenced) {
+        for chunk in self.splitter.split(&fenced) {
             let req = CreateMessage::new().content(chunk);
             channel_id
                 .send_message(&*self.http, req)
@@ -572,36 +573,6 @@ fn parse_external_id(s: &str) -> Result<ChannelId, AppError> {
     Ok(ChannelId::new(id))
 }
 
-
-fn chunk_for_discord(text: &str) -> Vec<String> {
-    if text.len() <= DISCORD_MAX_MESSAGE_LEN {
-        return vec![text.to_string()];
-    }
-    let mut chunks = Vec::new();
-    let mut remaining = text;
-    while !remaining.is_empty() {
-        if remaining.len() <= DISCORD_MAX_MESSAGE_LEN {
-            chunks.push(remaining.to_string());
-            break;
-        }
-        let upper = remaining
-            .char_indices()
-            .take_while(|(i, _)| *i < DISCORD_CHUNK_TARGET)
-            .last()
-            .map(|(i, c)| i + c.len_utf8())
-            .unwrap_or(remaining.len());
-        let slice = &remaining[..upper];
-        let split_at = slice
-            .rfind('\n')
-            .map(|i| i + 1)
-            .or_else(|| slice.rfind(' ').map(|i| i + 1))
-            .unwrap_or(upper);
-        chunks.push(remaining[..split_at].to_string());
-        remaining = remaining[split_at..].trim_start();
-    }
-    chunks
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -713,34 +684,4 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn chunk_for_discord_under_limit_returns_one_chunk() {
-        let chunks = chunk_for_discord("hello world");
-        assert_eq!(chunks, vec!["hello world".to_string()]);
-    }
-
-    #[test]
-    fn chunk_for_discord_splits_on_newline_boundary() {
-        let line = "a".repeat(500);
-        let blob = format!("{line}\n{line}\n{line}\n{line}\n{line}");
-        let chunks = chunk_for_discord(&blob);
-        assert!(chunks.len() >= 2, "expected at least 2 chunks, got {}", chunks.len());
-        for c in &chunks {
-            assert!(c.len() <= DISCORD_MAX_MESSAGE_LEN, "chunk exceeds limit: {}", c.len());
-        }
-        let rejoined: String = chunks.join("\n");
-        assert_eq!(rejoined.replace('\n', ""), blob.replace('\n', ""));
-    }
-
-    #[test]
-    fn chunk_for_discord_falls_back_to_hard_split_when_no_boundary() {
-        let blob = "x".repeat(2500);
-        let chunks = chunk_for_discord(&blob);
-        assert!(chunks.len() >= 2);
-        for c in &chunks {
-            assert!(c.len() <= DISCORD_MAX_MESSAGE_LEN);
-        }
-        let rejoined: String = chunks.concat();
-        assert_eq!(rejoined, blob);
-    }
 }
