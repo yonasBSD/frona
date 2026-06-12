@@ -32,11 +32,17 @@ pub struct WhatsAppCloudConfig {
     pub app_secret: String,
 }
 
+/// WhatsApp Cloud `text` message body cap. Interactive components have
+/// their own per-element caps (see `WA_BODY_TEXT_MAX` etc.) — those don't
+/// flow through this splitter.
+const WA_CLOUD_MAX_MESSAGE_LEN: usize = 4096;
+
 #[derive(crate::ChannelFactory)]
 #[channel(id = "whatsapp_cloud", from = WhatsAppCloudConfig)]
 pub struct WhatsAppCloudAdapter {
     config: WhatsAppCloudConfig,
     http: reqwest::Client,
+    splitter: super::split::MarkdownSplitter,
 }
 
 impl From<WhatsAppCloudConfig> for WhatsAppCloudAdapter {
@@ -44,6 +50,7 @@ impl From<WhatsAppCloudConfig> for WhatsAppCloudAdapter {
         Self {
             config,
             http: reqwest::Client::new(),
+            splitter: super::split::MarkdownSplitter::new(WA_CLOUD_MAX_MESSAGE_LEN, None),
         }
     }
 }
@@ -137,7 +144,9 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
             if body.is_empty() {
                 return Ok(());
             }
-            self.send_text(&to, &body).await?;
+            for chunk in self.splitter.split(&body) {
+                self.send_text(&to, &chunk).await?;
+            }
             tracing::info!(
                 channel_id = %ctx.channel.id,
                 msg_id = %msg.id,
@@ -274,7 +283,9 @@ impl ChannelAdapter for WhatsAppCloudAdapter {
         // If every attachment failed and body never got delivered, ship it as
         // a fallback text message so the user at least sees the prose.
         if !body_consumed && !body.is_empty() {
-            self.send_text(&to, &body).await?;
+            for chunk in self.splitter.split(&body) {
+                self.send_text(&to, &chunk).await?;
+            }
         }
 
         Ok(())
