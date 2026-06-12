@@ -33,12 +33,13 @@ impl From<TypingAction> for typing_message::Action {
 pub enum SignalCommand {
     SendText {
         target: SignalTarget,
-        body: String,
+        chunks: Vec<SignalText>,
         msg_id: String,
-        /// On success the reply carries the Signal message timestamp (ms),
-        /// which is Signal's protocol-level message identifier — used as
-        /// `HitlDelivery.external_message_id` for HITL prompts so quote-replies
-        /// can be matched back to the originating tool call.
+        /// On success the reply carries the Signal message timestamp (ms)
+        /// of the last chunk, which is Signal's protocol-level message
+        /// identifier — used as `HitlDelivery.external_message_id` for
+        /// HITL prompts so quote-replies can be matched back to the
+        /// originating tool call.
         reply: oneshot::Sender<Result<u64, ChannelError>>,
     },
     SendTyping {
@@ -58,9 +59,9 @@ pub async fn handle<S: Store>(
 ) {
     let now = now_ms();
     match cmd {
-        SignalCommand::SendText { target, body, msg_id, reply } => {
+        SignalCommand::SendText { target, chunks, msg_id, reply } => {
             let signal_chat = target_label(&target);
-            let r = send_text(mgr, target, body, now).await.map(|()| now);
+            let r = send_text_chunks(mgr, target, chunks, now).await.map(|()| now);
             match &r {
                 Ok(ts) => tracing::info!(
                     channel_id = %channel_id,
@@ -114,42 +115,46 @@ fn target_label(target: &SignalTarget) -> String {
     }
 }
 
-async fn send_text<S: Store>(
+async fn send_text_chunks<S: Store>(
     mgr: &mut Manager<S, Registered>,
     target: SignalTarget,
-    body: String,
-    ts: u64,
+    chunks: Vec<SignalText>,
+    base_ts: u64,
 ) -> Result<(), ChannelError> {
-    let SignalText { body, ranges } = markdown::to_signal(&body);
-    let body_ranges = ranges.into_iter().map(to_proto_body_range).collect();
-    match target {
-        SignalTarget::Dm { aci } => {
-            let dm = DataMessage {
-                body: Some(body),
-                body_ranges,
-                timestamp: Some(ts),
-                ..Default::default()
-            };
-            mgr.send_message(ServiceId::Aci(aci.into()), ContentBody::DataMessage(dm), ts)
-                .await
-                .map_err(|e| classify_signal_error(&e))
-        }
-        SignalTarget::Group { master_key } => {
-            let dm = DataMessage {
-                body: Some(body),
-                body_ranges,
-                timestamp: Some(ts),
-                group_v2: Some(GroupContextV2 {
-                    master_key: Some(master_key.to_vec()),
+    for (i, SignalText { body, ranges }) in chunks.into_iter().enumerate() {
+        // Signal requires each message to have a distinct timestamp.
+        let ts = base_ts + i as u64;
+        let body_ranges = ranges.into_iter().map(to_proto_body_range).collect();
+        match target.clone() {
+            SignalTarget::Dm { aci } => {
+                let dm = DataMessage {
+                    body: Some(body),
+                    body_ranges,
+                    timestamp: Some(ts),
                     ..Default::default()
-                }),
-                ..Default::default()
-            };
-            mgr.send_message_to_group(&master_key, ContentBody::DataMessage(dm), ts)
-                .await
-                .map_err(|e| classify_signal_error(&e))
+                };
+                mgr.send_message(ServiceId::Aci(aci.into()), ContentBody::DataMessage(dm), ts)
+                    .await
+                    .map_err(|e| classify_signal_error(&e))?;
+            }
+            SignalTarget::Group { master_key } => {
+                let dm = DataMessage {
+                    body: Some(body),
+                    body_ranges,
+                    timestamp: Some(ts),
+                    group_v2: Some(GroupContextV2 {
+                        master_key: Some(master_key.to_vec()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                mgr.send_message_to_group(&master_key, ContentBody::DataMessage(dm), ts)
+                    .await
+                    .map_err(|e| classify_signal_error(&e))?;
+            }
         }
     }
+    Ok(())
 }
 
 fn to_proto_body_range(r: markdown::SignalBodyRange) -> BodyRange {

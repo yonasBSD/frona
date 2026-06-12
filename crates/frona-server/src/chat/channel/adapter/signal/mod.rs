@@ -87,11 +87,16 @@ const TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(12);
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SignalConfig {}
 
+/// Practical body cap for a single Signal `DataMessage`. The libsignal
+/// proto accepts more, but clients chunk visually above ~2k characters.
+const SIGNAL_MAX_MESSAGE_LEN: usize = 2000;
+
 #[derive(crate::ChannelFactory)]
 #[channel(id = "signal", from = SignalConfig)]
 pub struct SignalAdapter {
     handle: Mutex<Option<SignalHandle>>,
     typing: TypingIndicator,
+    splitter: super::split::SignalSplitter,
 }
 
 impl From<SignalConfig> for SignalAdapter {
@@ -99,6 +104,9 @@ impl From<SignalConfig> for SignalAdapter {
         Self {
             handle: Mutex::new(None),
             typing: TypingIndicator::new(),
+            splitter: super::split::SignalSplitter::new(
+                super::split::MarkdownSplitter::new(SIGNAL_MAX_MESSAGE_LEN, None),
+            ),
         }
     }
 }
@@ -319,11 +327,15 @@ impl SignalAdapter {
     ) -> Result<u64, ChannelError> {
         let target = SignalTarget::parse(external_chat_id(chat)?)?;
         let cmd_tx = self.cmd_tx(&ctx.channel.id).await?;
+        let chunks = self.splitter.split(text);
+        if chunks.is_empty() {
+            return Ok(0);
+        }
         let (reply, rx) = oneshot::channel();
         cmd_tx
             .send(SignalCommand::SendText {
                 target,
-                body: text.to_string(),
+                chunks,
                 msg_id: msg_id.to_string(),
                 reply,
             })
