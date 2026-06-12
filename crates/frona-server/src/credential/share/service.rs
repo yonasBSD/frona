@@ -74,6 +74,34 @@ impl ShareService {
         Ok(id)
     }
 
+    /// One chat = one stable `/s/{id}` short link, reused across SMS
+    /// overflow events instead of minting one row per long reply.
+    /// Concurrent first-issues may produce two rows; both redirect to the
+    /// same `/chats/{chat_id}`, so no uniqueness constraint is needed.
+    pub async fn lookup_or_issue_chat(
+        &self,
+        chat_id: &str,
+        user_id: &str,
+        ttl_secs: u64,
+    ) -> Result<String, AppError> {
+        if let Some(existing) = self.repo.find_active_chat_share(user_id, chat_id).await? {
+            return Ok(existing.id);
+        }
+        let now = Utc::now();
+        let id = nanoid::nanoid!(8);
+        let row = Share {
+            id: id.clone(),
+            user_id: user_id.to_string(),
+            kind: ShareKind::Chat {
+                chat_id: chat_id.to_string(),
+            },
+            expires_at: now + Duration::seconds(ttl_secs as i64),
+            created_at: now,
+        };
+        self.repo.create(&row).await?;
+        Ok(id)
+    }
+
     /// `Ok(None)` for both "unknown id" and "expired" — the route handler
     /// returns byte-identical 404s so the route can't be used as an oracle.
     pub async fn resolve(&self, id: &str) -> Result<Option<Share>, AppError> {
@@ -125,6 +153,7 @@ mod tests {
                 assert_eq!(path, "report.md");
                 assert!(!public);
             }
+            other => panic!("unexpected kind: {other:?}"),
         }
     }
 
@@ -138,7 +167,47 @@ mod tests {
         let row = svc.resolve(&id).await.unwrap().unwrap();
         match row.kind {
             ShareKind::File { public, .. } => assert!(public),
+            other => panic!("unexpected kind: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn lookup_or_issue_chat_mints_then_reuses() {
+        let svc = make_test_service().await;
+        let first = svc
+            .lookup_or_issue_chat("chat-abc", "user-1", 3600)
+            .await
+            .unwrap();
+        let second = svc
+            .lookup_or_issue_chat("chat-abc", "user-1", 3600)
+            .await
+            .unwrap();
+        assert_eq!(first, second, "second call must reuse the same row");
+
+        let row = svc.resolve(&first).await.unwrap().unwrap();
+        match row.kind {
+            ShareKind::Chat { chat_id } => assert_eq!(chat_id, "chat-abc"),
+            other => panic!("unexpected kind: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_or_issue_chat_scoped_per_user_and_chat() {
+        let svc = make_test_service().await;
+        let a = svc.lookup_or_issue_chat("chat-1", "user-1", 3600).await.unwrap();
+        let b = svc.lookup_or_issue_chat("chat-2", "user-1", 3600).await.unwrap();
+        let c = svc.lookup_or_issue_chat("chat-1", "user-2", 3600).await.unwrap();
+        assert_ne!(a, b, "different chats must produce different rows");
+        assert_ne!(a, c, "different users must produce different rows");
+    }
+
+    #[tokio::test]
+    async fn lookup_or_issue_chat_remints_when_existing_expired() {
+        let svc = make_test_service().await;
+        let first = svc.lookup_or_issue_chat("chat-x", "user-1", 0).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let second = svc.lookup_or_issue_chat("chat-x", "user-1", 3600).await.unwrap();
+        assert_ne!(first, second, "expired row must not be reused");
     }
 
     #[tokio::test]

@@ -27,6 +27,10 @@ async fn resolve_share(
     };
 
     match row.kind {
+        ShareKind::Chat { chat_id } => {
+            // Relative redirect — the user is already on this host via `/s/{id}`.
+            Redirect::to(&format!("/chats/{chat_id}")).into_response()
+        }
         ShareKind::File { owner, path, public } => {
             let target = if public {
                 match state
