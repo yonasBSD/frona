@@ -171,10 +171,8 @@ impl TelegramAdapter {
             if let Some(t) = thread_id {
                 send = send.message_thread_id(t);
             }
-            if is_last {
-                if let Some(kb) = keyboard.clone() {
-                    send = send.reply_markup(kb);
-                }
+            if is_last && let Some(kb) = keyboard.clone() {
+                send = send.reply_markup(kb);
             }
             match send.await {
                 Ok(sent) => last_sent_id = sent.id.0.to_string(),
@@ -190,10 +188,8 @@ impl TelegramAdapter {
                     if let Some(t) = thread_id {
                         retry = retry.message_thread_id(t);
                     }
-                    if is_last {
-                        if let Some(kb) = keyboard.clone() {
-                            retry = retry.reply_markup(kb);
-                        }
+                    if is_last && let Some(kb) = keyboard.clone() {
+                        retry = retry.reply_markup(kb);
                     }
                     match retry.await {
                         Ok(sent) => last_sent_id = sent.id.0.to_string(),

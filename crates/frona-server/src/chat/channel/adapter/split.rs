@@ -272,19 +272,19 @@ impl PlainSplitter {
             return Ok(Vec::new());
         }
 
-        if let Some(hard) = self.hard_limit {
-            if text.len() > hard {
-                let url = ensure_chat_share(
-                    &ctx.share_service,
-                    &ctx.base_url,
-                    ctx.share_ttl_secs,
-                    &ctx.cancel,
-                    sctx.chat_id,
-                    sctx.user_id,
-                )
-                .await?;
-                return Ok(vec![append_overflow(text, &url, self.provider_limit)]);
-            }
+        if let Some(hard) = self.hard_limit
+            && text.len() > hard
+        {
+            let url = ensure_chat_share(
+                &ctx.share_service,
+                &ctx.base_url,
+                ctx.share_ttl_secs,
+                &ctx.cancel,
+                sctx.chat_id,
+                sctx.user_id,
+            )
+            .await?;
+            return Ok(vec![append_overflow(text, &url, self.provider_limit)]);
         }
 
         Ok(silent_split_plain(text, self.provider_limit))
