@@ -34,11 +34,18 @@ const TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(8);
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WhatsAppUserConfig {}
 
+/// Practical cap for a single text-message via `wa-rs`. WhatsApp accepts
+/// well above 4k for non-WA-Cloud text in the personal protocol; we use the
+/// same 4096 ceiling as WA Cloud for symmetry until a real upper bound is
+/// established.
+const WA_USER_MAX_MESSAGE_LEN: usize = 4096;
+
 #[derive(crate::ChannelFactory)]
 #[channel(id = "whatsapp_user", from = WhatsAppUserConfig)]
 pub struct WhatsAppUserAdapter {
     client: Mutex<Option<Arc<Client>>>,
     typing: TypingIndicator,
+    splitter: super::split::MarkdownSplitter,
 }
 
 impl From<WhatsAppUserConfig> for WhatsAppUserAdapter {
@@ -46,6 +53,7 @@ impl From<WhatsAppUserConfig> for WhatsAppUserAdapter {
         Self {
             client: Mutex::new(None),
             typing: TypingIndicator::new(),
+            splitter: super::split::MarkdownSplitter::new(WA_USER_MAX_MESSAGE_LEN, None),
         }
     }
 }
@@ -189,20 +197,27 @@ impl ChannelAdapter for WhatsAppUserAdapter {
             return Ok(());
         }
 
-        let request_id = send_text(&client, &to, combined).await.inspect_err(|e| {
-            tracing::warn!(
-                channel_id = %ctx.channel.id,
-                msg_id = %msg.id,
-                to = %to,
-                error = %e,
-                "WhatsApp Personal send_message failed (check connectivity / device unlinked)",
-            );
-        })?;
+        let chunks = self.splitter.split(&combined);
+        if chunks.is_empty() {
+            return Ok(());
+        }
+        let mut last_request_id = String::new();
+        for chunk in chunks {
+            last_request_id = send_text(&client, &to, chunk).await.inspect_err(|e| {
+                tracing::warn!(
+                    channel_id = %ctx.channel.id,
+                    msg_id = %msg.id,
+                    to = %to,
+                    error = %e,
+                    "WhatsApp Personal send_message failed (check connectivity / device unlinked)",
+                );
+            })?;
+        }
         tracing::info!(
             channel_id = %ctx.channel.id,
             msg_id = %msg.id,
             to = %to,
-            wa_request_id = %request_id,
+            wa_request_id = %last_request_id,
             "WhatsApp Personal message sent",
         );
         Ok(())
@@ -225,15 +240,22 @@ impl ChannelAdapter for WhatsAppUserAdapter {
         let to = resolve_send_jid(&client, chat, ctx).await?;
         let raw_body = crate::chat::channel::hitl::render_text(h);
         let body = super::markdown::to_whatsapp(&raw_body);
-        let request_id = send_text(&client, &to, body).await.inspect_err(|e| {
-            tracing::warn!(
-                channel_id = %ctx.channel.id,
-                tool_call_id = %tc.id,
-                to = %to,
-                error = %e,
-                "whatsapp_user on_pending_hitl: send failed",
-            );
-        })?;
+        let chunks = self.splitter.split(&body);
+        if chunks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut request_id = String::new();
+        for chunk in chunks {
+            request_id = send_text(&client, &to, chunk).await.inspect_err(|e| {
+                tracing::warn!(
+                    channel_id = %ctx.channel.id,
+                    tool_call_id = %tc.id,
+                    to = %to,
+                    error = %e,
+                    "whatsapp_user on_pending_hitl: send failed",
+                );
+            })?;
+        }
         tracing::info!(
             channel_id = %ctx.channel.id,
             tool_call_id = %tc.id,
