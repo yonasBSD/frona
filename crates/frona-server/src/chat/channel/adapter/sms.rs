@@ -24,12 +24,39 @@ use super::super::models::{ChannelFactory, ConfigRef};
 const TWIML_EMPTY_RESPONSE: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response/>";
 const TWILIO_API_BASE: &str = "https://api.twilio.com/2010-04-01";
 
-#[derive(Debug, Clone, Deserialize, crate::ChannelFactory)]
-#[channel(id = "sms")]
+/// Twilio Programmable Messaging hard cap (concatenated SMS, segmented at
+/// the carrier). Used as both `provider_limit` and `hard_limit` — SMS
+/// triggers truncate-with-link mode for replies exceeding the cap.
+const SMS_MAX_MESSAGE_LEN: usize = 1600;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SmsConfig {
+    pub account_sid: String,
+    pub auth_token: String,
+    pub from_number: String,
+}
+
+#[derive(crate::ChannelFactory)]
+#[channel(id = "sms", from = SmsConfig)]
 pub struct SmsAdapter {
     pub account_sid: String,
     pub auth_token: String,
     pub from_number: String,
+    splitter: super::split::PlainSplitter,
+}
+
+impl From<SmsConfig> for SmsAdapter {
+    fn from(cfg: SmsConfig) -> Self {
+        Self {
+            account_sid: cfg.account_sid,
+            auth_token: cfg.auth_token,
+            from_number: cfg.from_number,
+            splitter: super::split::PlainSplitter::new(
+                SMS_MAX_MESSAGE_LEN,
+                Some(SMS_MAX_MESSAGE_LEN),
+            ),
+        }
+    }
 }
 
 impl SmsAdapter {
@@ -111,28 +138,37 @@ impl ChannelAdapter for SmsAdapter {
         let to_number = parse_external_id(external_chat_id(chat)?)?;
         let status_callback = status_callback_url(&ctx.webhook_url, &msg.id);
 
+        let sctx = super::split::SplitCtx {
+            chat_id: &chat.id,
+            user_id: &ctx.channel.user_id,
+        };
+        let chunks = self.splitter.split(&body, ctx, sctx).await?;
+
         tracing::info!(
             channel_id = %ctx.channel.id,
             msg_id = %msg.id,
             from = %self.from_number,
             to = %to_number,
             content_len = body.len(),
+            chunks = chunks.len(),
             tool_count = tool_calls.len(),
-            "SMS on_send: dispatching composed body to Twilio",
+            "SMS on_send: dispatching split body to Twilio",
         );
-        self.twilio()
-            .send_message(&self.from_number, &to_number, &body, &status_callback)
-            .await
-            .map_err(|e| {
-                tracing::warn!(
-                    channel_id = %ctx.channel.id,
-                    msg_id = %msg.id,
-                    to = %to_number,
-                    error = %e,
-                    "SMS on_send: Twilio synchronously rejected message",
-                );
-                e
-            })?;
+        for chunk in chunks {
+            self.twilio()
+                .send_message(&self.from_number, &to_number, &chunk, &status_callback)
+                .await
+                .map_err(|e| {
+                    tracing::warn!(
+                        channel_id = %ctx.channel.id,
+                        msg_id = %msg.id,
+                        to = %to_number,
+                        error = %e,
+                        "SMS on_send: Twilio synchronously rejected message",
+                    );
+                    e
+                })?;
+        }
         tracing::debug!(
             channel_id = %ctx.channel.id,
             msg_id = %msg.id,
@@ -159,26 +195,38 @@ impl ChannelAdapter for SmsAdapter {
         let to_number = parse_external_id(external_chat_id(chat)?)?;
         let status_callback = status_callback_url(&ctx.webhook_url, &tc.id);
 
-        let sid = match self
-            .twilio()
-            .send_message(&self.from_number, &to_number, &body, &status_callback)
-            .await
-        {
-            Ok(sid) => sid,
-            Err(e) => {
-                tracing::warn!(
-                    channel_id = %ctx.channel.id,
-                    tool_call_id = %tc.id,
-                    error = %e,
-                    "SMS on_pending_hitl: send failed",
-                );
-                return Ok(Vec::new());
-            }
+        let sctx = super::split::SplitCtx {
+            chat_id: &chat.id,
+            user_id: &ctx.channel.user_id,
         };
+        let chunks = self.splitter.split(&body, ctx, sctx).await?;
+        if chunks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut last_sid = String::new();
+        for chunk in chunks {
+            match self
+                .twilio()
+                .send_message(&self.from_number, &to_number, &chunk, &status_callback)
+                .await
+            {
+                Ok(sid) => last_sid = sid,
+                Err(e) => {
+                    tracing::warn!(
+                        channel_id = %ctx.channel.id,
+                        tool_call_id = %tc.id,
+                        error = %e,
+                        "SMS on_pending_hitl: send failed",
+                    );
+                    return Ok(Vec::new());
+                }
+            }
+        }
 
         Ok(vec![crate::inference::hitl::HitlDelivery {
             channel_id: ctx.channel.id.clone(),
-            external_message_id: sid,
+            external_message_id: last_sid,
             delivered_at: chrono::Utc::now(),
         }])
     }
