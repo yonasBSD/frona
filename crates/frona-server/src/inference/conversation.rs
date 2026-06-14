@@ -249,6 +249,47 @@ impl ConversationBuilder for TaskConversationBuilder {
     }
 }
 
+/// The injected heartbeat turn is never written to the message table —
+/// it exists only inside the inference request.
+pub struct HeartbeatConversationBuilder {
+    pub user_service: UserService,
+    pub storage_service: StorageService,
+    pub agent_service: AgentService,
+    pub continuation_prompt: Option<String>,
+    pub heartbeat_content: String,
+}
+
+#[async_trait]
+impl ConversationBuilder for HeartbeatConversationBuilder {
+    async fn build(
+        &self,
+        messages: &[Message],
+        tool_calls: &[ToolCall],
+        ctx: &ConversationContext,
+    ) -> Vec<RigMessage> {
+        let default = DefaultConversationBuilder {
+            user_service: self.user_service.clone(),
+            storage_service: self.storage_service.clone(),
+            agent_service: self.agent_service.clone(),
+        };
+        let mut result = default.build(messages, tool_calls, ctx).await;
+
+        let mut injected = String::new();
+        if let Some(prompt) = &self.continuation_prompt
+            && !prompt.is_empty()
+        {
+            injected.push_str("<heartbeat_instructions>\n");
+            injected.push_str(prompt);
+            injected.push_str("\n</heartbeat_instructions>\n\n");
+        }
+        injected.push_str("<heartbeat_checklist file=\"HEARTBEAT.md\">\n");
+        injected.push_str(&self.heartbeat_content);
+        injected.push_str("\n</heartbeat_checklist>");
+        result.push(RigMessage::user(&injected));
+        result
+    }
+}
+
 pub struct ChannelConversationBuilder {
     pub user_service: UserService,
     pub storage_service: StorageService,

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 
-use crate::inference::conversation::DefaultConversationBuilder;
+use crate::inference::conversation::HeartbeatConversationBuilder;
 use crate::agent::models::Agent;
 use crate::agent::task::models::TaskKind;
 use crate::db::repo::generic::SurrealRepo;
@@ -497,42 +497,30 @@ async fn execute_heartbeat(
         chat.id
     };
 
-    let message = format!(
-        "Heartbeat: review and act on your checklist.\n\n{}",
-        heartbeat_content
-    );
     let cancel_token = state.active_sessions.register(&chat_id).await;
-    execute_background_agent(state, user_id, &chat_id, &message, cancel_token).await
-}
 
-async fn execute_background_agent(
-    state: &AppState,
-    user_id: &str,
-    chat_id: &str,
-    message_content: &str,
-    cancel_token: tokio_util::sync::CancellationToken,
-) -> Result<(), AppError> {
-    state
+    // No create_stream_user_message — heartbeats are transient. Persisting
+    // shows them in the UI as if the user typed it, and they reinforce the
+    // "respond conversationally" pattern in subsequent ticks.
+    let agent_msg = state
         .chat_service
-        .create_stream_user_message(user_id, chat_id, message_content, vec![], None)
-        .await?;
-
-    let chat = state.chat_service.find_chat(chat_id).await?
-        .ok_or_else(|| AppError::NotFound("Chat not found".into()))?;
-    let agent_msg = state.chat_service
-        .create_executing_agent_message(chat_id, &chat.agent_id)
+        .create_executing_agent_message(&chat_id, agent_id)
         .await?;
     let agent_msg_id = agent_msg.id.clone();
 
-    let builder = Box::new(DefaultConversationBuilder {
+    let continuation_prompt = state.prompts.read("HEARTBEAT_TASK.md");
+
+    let builder = Box::new(HeartbeatConversationBuilder {
         user_service: state.user_service.clone(),
         storage_service: state.storage_service.clone(),
         agent_service: state.agent_service.clone(),
+        continuation_prompt,
+        heartbeat_content: heartbeat_content.to_string(),
     });
-    let result = state.harness.run_loop(
-        user_id, chat_id, &agent_msg_id, cancel_token, builder, &[], None,
-    )
-    .await;
+    let result = state
+        .harness
+        .run_loop(user_id, &chat_id, &agent_msg_id, cancel_token, builder, &[], None)
+        .await;
 
     match result {
         Ok(crate::agent::harness::AgentLoopOutcome { inference, mut response }) => match inference {
@@ -540,18 +528,14 @@ async fn execute_background_agent(
                 response.content = text;
                 response.attachments = attachments;
                 response.reasoning = reasoning;
-                let _ = state.chat_service
-                    .complete_agent_message(response)
-                    .await;
+                let _ = state.chat_service.complete_agent_message(response).await;
             }
             InferenceResponse::Cancelled(text) => {
                 response.content = text;
-                let _ = state.chat_service
-                    .complete_agent_message(response)
-                    .await;
+                let _ = state.chat_service.complete_agent_message(response).await;
             }
             InferenceResponse::ExternalToolPending { .. } => {
-                tracing::warn!(chat_id = %chat_id, "Background agent hit external tool pending — not supported");
+                tracing::warn!(chat_id = %chat_id, "Heartbeat agent hit external tool pending — not supported");
             }
             InferenceResponse::Handled => {
                 // Command dispatch handled the response inline; nothing to do.
@@ -561,10 +545,11 @@ async fn execute_background_agent(
             if let Ok(msg) = state.chat_service.get_message(user_id, &agent_msg_id).await {
                 let _ = state.chat_service.fail_agent_message(msg, e.to_string()).await;
             }
-            tracing::error!(error = %e, chat_id = %chat_id, "Background agent tool loop failed");
+            tracing::error!(error = %e, chat_id = %chat_id, "Heartbeat agent tool loop failed");
         }
     }
 
-    state.active_sessions.remove(chat_id).await;
+    state.active_sessions.remove(&chat_id).await;
     Ok(())
 }
+
