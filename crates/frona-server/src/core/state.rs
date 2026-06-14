@@ -41,7 +41,7 @@ use crate::tool::browser::session::BrowserSessionManager;
 use crate::tool::cli::{CliToolConfig, load_cli_tool_configs};
 use crate::tool::voice::{VoiceProvider, create_voice_provider};
 use crate::tool::web_search::{SearchProvider, create_search_provider};
-use crate::tool::sandbox::SandboxManager;
+use crate::tool::sandbox::{SandboxFactory, SandboxManager};
 use crate::tool::sandbox::driver::resource_monitor::SystemResourceManager;
 use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
@@ -103,6 +103,7 @@ pub struct AppState {
     pub active_sessions: ActiveSessions,
     pub memory_service: MemoryService,
     pub notification_service: NotificationService,
+    pub sandbox_factory: Arc<SandboxFactory>,
     pub sandbox_manager: Arc<SandboxManager>,
     pub cli_tools_config: Arc<Vec<CliToolConfig>>,
     pub search_provider: Option<Arc<dyn SearchProvider>>,
@@ -161,11 +162,13 @@ impl AppState {
         let shared_config_abs = std::fs::canonicalize(&shared_config_dir)
             .unwrap_or_else(|_| shared_config_dir.clone());
 
-        let sandbox_manager = Arc::new(SandboxManager::new(
-            config.sandbox.disabled,
-            resource_manager.clone(),
-        ).with_default_timeout(config.sandbox.default_limits.timeout_secs)
-         .with_shared_read_paths(vec![shared_config_abs.to_string_lossy().into_owned()]));
+        let sandbox_factory = Arc::new(
+            SandboxFactory::new(config.sandbox.disabled, resource_manager.clone())
+                .with_default_timeout(config.sandbox.default_limits.timeout_secs)
+                .with_shared_read_paths(vec![shared_config_abs.to_string_lossy().into_owned()]),
+        );
+        // `SandboxManager` (the orchestrator that bundles services and provides
+        // `for_context`) is constructed below, after PolicyService et al. exist.
         let search_provider = create_search_provider(http_client.clone(), &config.search);
         let local_base_url = config.server.base_url.clone()
             .unwrap_or_else(|| format!("http://localhost:{}", config.server.port));
@@ -292,6 +295,18 @@ impl AppState {
             config.sandbox.disabled,
         );
 
+        let sandbox_manager = Arc::new(SandboxManager::new(
+            sandbox_factory.clone(),
+            policy_service.clone(),
+            skill_service.clone(),
+            storage.clone(),
+            token_service.clone(),
+            keypair_service.clone(),
+            config.server.public_base_url(),
+            config.auth.ephemeral_token_expiry_secs,
+            config.server.timezone.clone(),
+        ));
+
         let agent_service = AgentService::new(
             SurrealRepo::new(db.clone()),
             &config.cache,
@@ -302,10 +317,8 @@ impl AppState {
 
         let app_manager = Arc::new(AppManager::new(
             sandbox_manager.clone(),
-            storage.clone(),
             config.app.port_range_start,
             config.app.port_range_end,
-            policy_service.clone(),
             user_service.clone(),
             agent_service.clone(),
             http_client.clone(),
@@ -316,7 +329,6 @@ impl AppState {
             storage.clone(),
             config.mcp.port_range_start,
             config.mcp.port_range_end,
-            policy_service.clone(),
             user_service.clone(),
             http_client.clone(),
         ));
@@ -445,6 +457,7 @@ impl AppState {
             notification_service: NotificationService::new(SurrealRepo::new(db.clone())),
             policy_service: policy_service.clone(),
             tool_manager,
+            sandbox_factory,
             sandbox_manager,
             cli_tools_config,
             search_provider,

@@ -39,7 +39,7 @@ async fn info_handler(_auth: AuthUser, State(state): State<AppState>) -> axum::J
         "version": env!("CARGO_PKG_VERSION"),
         "cpus": cpus,
         "total_memory_bytes": total_memory,
-        "sandbox_driver": state.sandbox_manager.driver_id(),
+        "sandbox_driver": state.sandbox_factory.driver_id(),
         "server_timezone": state.config.server.timezone,
     }))
 }
