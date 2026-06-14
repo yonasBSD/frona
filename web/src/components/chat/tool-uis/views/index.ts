@@ -4,6 +4,8 @@ import { NodeView } from "./node";
 import { ProduceFileView } from "./produce-file";
 import { PythonView } from "./python";
 import { ShellView } from "./shell";
+import { WebFetchView } from "./web-fetch";
+import { WebSearchView } from "./web-search";
 import type { ToolView } from "./types";
 
 export type ToolMatcher = { match: (toolName: string) => boolean; view: ToolView };
@@ -18,6 +20,8 @@ export const TOOL_VIEWS_EXACT: Record<string, ToolView> = {
   glob: FileView,
   grep: FileView,
   produce_file: ProduceFileView,
+  web_search: WebSearchView,
+  web_fetch: WebFetchView,
 };
 
 export const TOOL_VIEWS_PATTERN: ToolMatcher[] = [];
