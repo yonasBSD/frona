@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState, type ReactNode } from "react";
-import { ChevronDownIcon } from "@heroicons/react/24/outline";
+import { ChevronDownIcon, DocumentIcon } from "@heroicons/react/24/outline";
 import { PuffLoader } from "react-spinners";
 import {
   type ToolCallMessagePartStatus,
@@ -52,6 +52,52 @@ function getFileToolSubtitle(toolName: string, args: unknown): string | null {
     return pattern;
   }
   return typeof a.path === "string" ? a.path : null;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function ProduceFileExpanded({ args, result }: { args: unknown; result: unknown }) {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const path = typeof a.path === "string" ? a.path : null;
+
+  let parsed: Record<string, unknown> | null = null;
+  if (typeof result === "string") {
+    try {
+      const v = JSON.parse(result);
+      if (v && typeof v === "object") parsed = v as Record<string, unknown>;
+    } catch {}
+  } else if (result && typeof result === "object") {
+    parsed = result as Record<string, unknown>;
+  }
+
+  const filename =
+    parsed && typeof parsed.filename === "string" ? parsed.filename : path;
+  const contentType =
+    parsed && typeof parsed.content_type === "string" ? parsed.content_type : null;
+  const sizeBytes =
+    parsed && typeof parsed.size_bytes === "number" ? parsed.size_bytes : null;
+
+  return (
+    <div className="flex items-center gap-3 p-3 text-xs">
+      <DocumentIcon className="h-8 w-8 shrink-0 text-text-tertiary" />
+      <div className="flex flex-col gap-0.5 min-w-0">
+        {filename && (
+          <div className="font-mono text-text-primary truncate">{filename}</div>
+        )}
+        {(contentType || sizeBytes !== null) && (
+          <div className="flex gap-3 text-text-tertiary">
+            {sizeBytes !== null && <span>{formatBytes(sizeBytes)}</span>}
+            {contentType && <span>{contentType}</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ShellExpanded({ args, result }: { args: unknown; result: unknown }) {
@@ -342,6 +388,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
   const description = userDescription ?? getFileToolSubtitle(toolName, args);
   const isFileTool = FILE_TOOLS.has(toolName);
   const isShellTool = toolName === "shell";
+  const isProduceFileTool = toolName === "produce_file";
   const turnText =
     typeof args?.turnText === "string" ? args.turnText : null;
   const isToolError = args?.isError === true;
@@ -455,7 +502,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
             <div
               className={cn(
                 "mt-2 flex flex-col gap-2 rounded-md border border-border bg-surface-secondary text-sm",
-                (isFileTool || isShellTool) && !errorText ? "p-0 overflow-hidden" : "p-3",
+                (isFileTool || isShellTool || isProduceFileTool) && !errorText ? "p-0 overflow-hidden" : "p-3",
               )}
             >
               {errorText && (
@@ -478,6 +525,10 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
               ) : isShellTool ? (
                 <div className={cn(isCancelled && "opacity-60")}>
                   <ShellExpanded args={args} result={result} />
+                </div>
+              ) : isProduceFileTool ? (
+                <div className={cn(isCancelled && "opacity-60")}>
+                  <ProduceFileExpanded args={args} result={result} />
                 </div>
               ) : (
                 <>
