@@ -1,6 +1,7 @@
 import { DefaultView } from "./default";
 import { FileView } from "./file";
 import { NodeView } from "./node";
+import { ProduceFileView } from "./produce-file";
 import { PythonView } from "./python";
 import { ShellView } from "./shell";
 import type { ToolView } from "./types";
@@ -16,6 +17,7 @@ export const TOOL_VIEWS_EXACT: Record<string, ToolView> = {
   edit: FileView,
   glob: FileView,
   grep: FileView,
+  produce_file: ProduceFileView,
 };
 
 export const TOOL_VIEWS_PATTERN: ToolMatcher[] = [];
