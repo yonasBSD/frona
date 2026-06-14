@@ -1,8 +1,11 @@
+import { CreateTaskView } from "./create-task";
 import { DefaultView } from "./default";
+import { DeleteTaskView } from "./delete-task";
 import { FileView } from "./file";
 import { NodeView } from "./node";
 import { ProduceFileView } from "./produce-file";
 import { PythonView } from "./python";
+import { RecurringTaskView } from "./recurring-task";
 import { ShellView } from "./shell";
 import { WebFetchView } from "./web-fetch";
 import { WebSearchView } from "./web-search";
@@ -22,6 +25,9 @@ export const TOOL_VIEWS_EXACT: Record<string, ToolView> = {
   produce_file: ProduceFileView,
   web_search: WebSearchView,
   web_fetch: WebFetchView,
+  create_task: CreateTaskView,
+  create_recurring_task: RecurringTaskView,
+  delete_task: DeleteTaskView,
 };
 
 export const TOOL_VIEWS_PATTERN: ToolMatcher[] = [];
