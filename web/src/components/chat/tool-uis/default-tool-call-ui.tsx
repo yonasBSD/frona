@@ -54,6 +54,27 @@ function getFileToolSubtitle(toolName: string, args: unknown): string | null {
   return typeof a.path === "string" ? a.path : null;
 }
 
+function ShellExpanded({ args, result }: { args: unknown; result: unknown }) {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const command = typeof a.command === "string" ? a.command : "";
+  const resultText =
+    typeof result === "string"
+      ? result
+      : result !== undefined
+        ? JSON.stringify(result, null, 2)
+        : "";
+  return (
+    <div className="flex flex-col gap-2">
+      {command && <CodeBlock code={command} language="bash" wrap />}
+      {resultText && (
+        <pre className="whitespace-pre-wrap text-text-secondary text-xs overflow-x-auto px-3 pb-3">
+          {resultText}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function globLiteralsToRegex(pattern: string): RegExp | null {
   try {
     const literals = pattern
@@ -212,6 +233,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   web_fetch: "Web Fetch",
   web_search: "Web Search",
   cli: "Terminal",
+  shell: "Shell",
   python: "Python",
   browser_navigate: "Browser",
   manage_app: "App",
@@ -319,6 +341,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
     rawDescription && rawDescription !== toolName ? rawDescription : null;
   const description = userDescription ?? getFileToolSubtitle(toolName, args);
   const isFileTool = FILE_TOOLS.has(toolName);
+  const isShellTool = toolName === "shell";
   const turnText =
     typeof args?.turnText === "string" ? args.turnText : null;
   const isToolError = args?.isError === true;
@@ -432,7 +455,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
             <div
               className={cn(
                 "mt-2 flex flex-col gap-2 rounded-md border border-border bg-surface-secondary text-sm",
-                isFileTool && !errorText ? "p-0 overflow-hidden" : "p-3",
+                (isFileTool || isShellTool) && !errorText ? "p-0 overflow-hidden" : "p-3",
               )}
             >
               {errorText && (
@@ -451,6 +474,10 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
                     result={result}
                     description={description}
                   />
+                </div>
+              ) : isShellTool ? (
+                <div className={cn(isCancelled && "opacity-60")}>
+                  <ShellExpanded args={args} result={result} />
                 </div>
               ) : (
                 <>
