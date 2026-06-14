@@ -65,6 +65,7 @@ base64 = { workspace = true }
 serde_yaml = "0.9"
 config = { version = "0.15", features = ["yaml"] }
 frona-browser = { path = "../frona-browser" }
+frona-text = { path = "../frona-text" }
 tokio-util = "0.7"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
@@ -87,6 +88,11 @@ minijinja = "2"
 schemars = { version = "0.8", features = ["chrono"] }
 tempfile = "3"
 ignore = "0.4.25"
+globset = "0.4"
+unicode-normalization = "0.1"
+regex = "1"
+infer = "0.16"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 agent-skills = "0.2"
 notify = "8"
 rmcp = { version = "1", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }

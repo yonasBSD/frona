@@ -321,6 +321,7 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
     use super::heartbeat::HeartbeatTool;
     use super::memory::{StoreAgentMemoryTool, StoreUserMemoryTool};
     use super::notify_human::NotifyHumanTool;
+    use super::files::{EditTool, GlobTool, GrepTool, ReadTool, WriteTool};
     use super::produce_file::ProduceFileTool;
     use super::request_credentials::RequestCredentialsTool;
     use super::task::TaskTool;
@@ -343,6 +344,21 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
         )),
         Arc::new(ProduceFileTool::new(
             state.storage_service.clone(), prompts.clone(),
+        )),
+        Arc::new(ReadTool::new(
+            state.storage_service.clone(), state.sandbox_manager.clone(), prompts.clone(),
+        )),
+        Arc::new(WriteTool::new(
+            state.storage_service.clone(), state.sandbox_manager.clone(), prompts.clone(),
+        )),
+        Arc::new(EditTool::new(
+            state.storage_service.clone(), state.sandbox_manager.clone(), prompts.clone(),
+        )),
+        Arc::new(GlobTool::new(
+            state.storage_service.clone(), state.sandbox_manager.clone(), prompts.clone(),
+        )),
+        Arc::new(GrepTool::new(
+            state.storage_service.clone(), state.sandbox_manager.clone(), prompts.clone(),
         )),
         Arc::new(UpdateIdentityTool::new(state.agent_service.clone(), prompts.clone())),
         Arc::new(StoreAgentMemoryTool::new(
