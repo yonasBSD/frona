@@ -2,6 +2,7 @@ import { CreateTaskView } from "./create-task";
 import { DefaultView } from "./default";
 import { DeleteTaskView } from "./delete-task";
 import { FileView } from "./file";
+import { HeartbeatView } from "./heartbeat";
 import {
   memoryDefaultExpanded,
   StoreAgentMemoryView,
@@ -37,6 +38,7 @@ export const TOOL_VIEWS_EXACT: Record<string, ToolView> = {
   store_agent_memory: StoreAgentMemoryView,
   store_user_memory: StoreUserMemoryView,
   update_identity: UpdateIdentityView,
+  set_heartbeat: HeartbeatView,
 };
 
 export const TOOL_VIEWS_PATTERN: ToolMatcher[] = [];
