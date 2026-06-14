@@ -2,6 +2,11 @@ import { CreateTaskView } from "./create-task";
 import { DefaultView } from "./default";
 import { DeleteTaskView } from "./delete-task";
 import { FileView } from "./file";
+import {
+  memoryDefaultExpanded,
+  StoreAgentMemoryView,
+  StoreUserMemoryView,
+} from "./memory";
 import { NodeView } from "./node";
 import { ProduceFileView } from "./produce-file";
 import { PythonView } from "./python";
@@ -28,9 +33,21 @@ export const TOOL_VIEWS_EXACT: Record<string, ToolView> = {
   create_task: CreateTaskView,
   create_recurring_task: RecurringTaskView,
   delete_task: DeleteTaskView,
+  store_agent_memory: StoreAgentMemoryView,
+  store_user_memory: StoreUserMemoryView,
 };
 
 export const TOOL_VIEWS_PATTERN: ToolMatcher[] = [];
+
+/**
+ * Per-tool predicate that decides whether the row should start expanded.
+ * Called once at mount with the tool-call args. Omitting an entry keeps the
+ * default behavior (start collapsed).
+ */
+export const TOOL_VIEWS_DEFAULT_EXPANDED: Record<string, (args: unknown) => boolean> = {
+  store_agent_memory: memoryDefaultExpanded,
+  store_user_memory: memoryDefaultExpanded,
+};
 
 export function pickView(toolName: string): ToolView {
   const exact = TOOL_VIEWS_EXACT[toolName];

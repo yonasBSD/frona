@@ -11,7 +11,7 @@ import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { useToolTimeline } from "./tool-timeline-context";
 import { InlineCode } from "./inline-code";
-import { pickView } from "./views";
+import { pickView, TOOL_VIEWS_DEFAULT_EXPANDED } from "./views";
 
 type ToolStatus = ToolCallMessagePartStatus["type"];
 
@@ -70,7 +70,9 @@ function TimelineDot({
 const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
   const { toolName, toolCallId, args, result, status } = props;
   const timeline = useToolTimeline();
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(
+    () => TOOL_VIEWS_DEFAULT_EXPANDED[toolName]?.(args) ?? false,
+  );
 
   if (timeline && !timeline.isVisible(toolCallId)) return null;
 
