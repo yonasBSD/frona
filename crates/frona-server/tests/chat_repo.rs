@@ -347,6 +347,7 @@ fn test_task(user_id: &str, agent_id: &str, chat_id: Option<&str>) -> Task {
         error_message: None,
         quarantined: false,
         result_schema: None,
+        result_description: None,
         created_at: now,
         updated_at: now,
     }

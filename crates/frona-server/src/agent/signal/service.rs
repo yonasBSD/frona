@@ -721,6 +721,7 @@ mod tests {
             error_message: None,
             quarantined: false,
             result_schema: None,
+            result_description: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

@@ -277,6 +277,7 @@ async fn send_message_filtered_in_task_chat() {
         error_message: None,
         quarantined: false,
         result_schema: Some(serde_json::json!({"type": "string"})),
+        result_description: None,
         created_at: now,
         updated_at: now,
     };

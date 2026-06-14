@@ -136,6 +136,7 @@ fn make_task(kind: TaskKind) -> Task {
         error_message: None,
         quarantined: false,
         result_schema: None,
+        result_description: None,
         created_at: now,
         updated_at: now,
     }
@@ -730,7 +731,7 @@ async fn make_cron_template_with(
             None,
             CronMode::Singleton,
             CronConcurrency::Replace,
-            process_result, None)
+            process_result, None, None)
         .await
         .unwrap()
 }
@@ -948,6 +949,7 @@ async fn resume_all_marks_only_in_progress_cron_runs_failed() {
             frona::agent::task::models::CronMode::Singleton,
             frona::agent::task::models::CronConcurrency::Replace,
             false,
+            None,
             None,
         )
         .await

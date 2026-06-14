@@ -92,7 +92,7 @@ fn build_completion_body(
     if !matches!(status, TaskStatus::Completed) {
         return Some((legacy(), None));
     }
-    let Some(schema) = task.result_schema.as_ref() else {
+    let Some(schema) = task.effective_result_schema() else {
         return Some((legacy(), None));
     };
     let summary_str = summary.unwrap_or("");
@@ -121,7 +121,7 @@ fn build_completion_body(
         return None;
     }
     let json = serde_json::to_string(&value).unwrap_or_default();
-    Some((json, Some(schema.clone())))
+    Some((json, Some(schema)))
 }
 
 fn build_message_event(
@@ -1075,6 +1075,7 @@ mod tests {
             error_message: None,
             quarantined,
             result_schema: None,
+            result_description: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -1096,6 +1097,7 @@ mod tests {
             error_message: None,
             quarantined,
             result_schema: None,
+            result_description: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

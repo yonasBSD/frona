@@ -254,9 +254,8 @@ impl ToolManager {
         if let Some(ctx) = task_ctx {
             let result_schema = ctx
                 .task
-                .result_schema
-                .as_ref()
-                .and_then(|v| match crate::agent::task::schema::ResultSpec::new(v.clone()) {
+                .effective_result_schema()
+                .and_then(|v| match crate::agent::task::schema::ResultSpec::new(v) {
                     Ok(spec) => Some(Arc::new(spec)),
                     Err(e) => {
                         tracing::warn!("failed to compile task.result_schema: {e}");
