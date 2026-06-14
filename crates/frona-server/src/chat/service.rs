@@ -553,7 +553,7 @@ impl ChatService {
 
         let has_more = messages.len() > limit as usize;
         if has_more {
-            messages.truncate(limit as usize);
+            trim_overfetched_page(&mut messages, limit as usize, after.is_some());
         }
 
         let message_ids: Vec<String> = messages.iter().map(|m| m.id.clone()).collect();
@@ -1489,6 +1489,28 @@ impl ChatService {
     }
 }
 
+/// `find_by_chat_id_page` returns messages in oldest-first order. When we
+/// over-fetch by one to detect `has_more`, the extra item sits at whichever
+/// end was the "edge" of the SQL window:
+/// - default DESC + reverse path (`after.is_none()`): extra is the OLDEST item,
+///   sitting at the front of the returned vec.
+/// - ASC path (`after.is_some()`): extra is the NEWEST item, at the back.
+///
+/// Dropping from the wrong end silently hides one real message per page; in
+/// the default case it hides the newest message in the chat once the chat
+/// crosses the limit.
+fn trim_overfetched_page<T>(messages: &mut Vec<T>, limit: usize, after_is_some: bool) {
+    if messages.len() <= limit {
+        return;
+    }
+    let drop = messages.len() - limit;
+    if after_is_some {
+        messages.truncate(limit);
+    } else {
+        messages.drain(..drop);
+    }
+}
+
 fn parse_title_response(response: &str, fallback_content: &str) -> String {
     if let Some(title) = try_extract_title(response) {
         return title;
@@ -1528,6 +1550,27 @@ fn try_parse_title_json(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trim_overfetched_drops_oldest_when_loading_latest_page() {
+        let mut msgs = vec![1, 2, 3, 4, 5];
+        trim_overfetched_page(&mut msgs, 4, /* after_is_some */ false);
+        assert_eq!(msgs, vec![2, 3, 4, 5], "newest must be preserved");
+    }
+
+    #[test]
+    fn trim_overfetched_drops_newest_when_paging_forward_with_after() {
+        let mut msgs = vec![1, 2, 3, 4, 5];
+        trim_overfetched_page(&mut msgs, 4, /* after_is_some */ true);
+        assert_eq!(msgs, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn trim_overfetched_noop_when_under_limit() {
+        let mut msgs = vec![1, 2, 3];
+        trim_overfetched_page(&mut msgs, 4, false);
+        assert_eq!(msgs, vec![1, 2, 3]);
+    }
 
     #[test]
     fn test_parse_title_response_valid_json() {
