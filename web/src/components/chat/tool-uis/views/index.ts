@@ -1,9 +1,16 @@
 import { DefaultView } from "./default";
+import { NodeView } from "./node";
+import { PythonView } from "./python";
+import { ShellView } from "./shell";
 import type { ToolView } from "./types";
 
 export type ToolMatcher = { match: (toolName: string) => boolean; view: ToolView };
 
-export const TOOL_VIEWS_EXACT: Record<string, ToolView> = {};
+export const TOOL_VIEWS_EXACT: Record<string, ToolView> = {
+  shell: ShellView,
+  python: PythonView,
+  node: NodeView,
+};
 
 export const TOOL_VIEWS_PATTERN: ToolMatcher[] = [];
 
