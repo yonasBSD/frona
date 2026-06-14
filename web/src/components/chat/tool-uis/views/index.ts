@@ -12,6 +12,7 @@ import { ProduceFileView } from "./produce-file";
 import { PythonView } from "./python";
 import { RecurringTaskView } from "./recurring-task";
 import { ShellView } from "./shell";
+import { UpdateIdentityView } from "./update-identity";
 import { WebFetchView } from "./web-fetch";
 import { WebSearchView } from "./web-search";
 import type { ToolView } from "./types";
@@ -35,6 +36,7 @@ export const TOOL_VIEWS_EXACT: Record<string, ToolView> = {
   delete_task: DeleteTaskView,
   store_agent_memory: StoreAgentMemoryView,
   store_user_memory: StoreUserMemoryView,
+  update_identity: UpdateIdentityView,
 };
 
 export const TOOL_VIEWS_PATTERN: ToolMatcher[] = [];
