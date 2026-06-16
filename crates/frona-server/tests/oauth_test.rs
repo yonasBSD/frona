@@ -110,6 +110,47 @@ async fn test_oauth_identity_unique_sub() {
 }
 
 #[tokio::test]
+async fn test_oauth_identity_delete_by_user_id() {
+    let db = test_db().await;
+    let repo: SurrealRepo<OAuthIdentity> = SurrealRepo::new(db.clone());
+
+    let now = Utc::now();
+    repo.create(&OAuthIdentity {
+        id: frona::core::repository::new_id(),
+        user_id: "user-doomed".to_string(),
+        external_sub: "sub-A".to_string(),
+        external_email: None,
+        external_name: None,
+        created_at: now,
+        updated_at: now,
+    }).await.unwrap();
+    repo.create(&OAuthIdentity {
+        id: frona::core::repository::new_id(),
+        user_id: "user-doomed".to_string(),
+        external_sub: "sub-B".to_string(),
+        external_email: None,
+        external_name: None,
+        created_at: now,
+        updated_at: now,
+    }).await.unwrap();
+    repo.create(&OAuthIdentity {
+        id: frona::core::repository::new_id(),
+        user_id: "user-survivor".to_string(),
+        external_sub: "sub-C".to_string(),
+        external_email: None,
+        external_name: None,
+        created_at: now,
+        updated_at: now,
+    }).await.unwrap();
+
+    repo.delete_by_user_id("user-doomed").await.unwrap();
+
+    assert!(repo.find_identity_by_sub("sub-A").await.unwrap().is_none());
+    assert!(repo.find_identity_by_sub("sub-B").await.unwrap().is_none());
+    assert!(repo.find_identity_by_sub("sub-C").await.unwrap().is_some());
+}
+
+#[tokio::test]
 async fn test_email_matching_flow() {
     let db = test_db().await;
     let user_repo: SurrealRepo<User> = SurrealRepo::new(db.clone());

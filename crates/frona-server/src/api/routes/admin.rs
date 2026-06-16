@@ -303,6 +303,9 @@ async fn delete_user(
         .repo()
         .delete_by_user_id(&target_id)
         .await;
+    if let Some(oauth_svc) = &state.oauth_service {
+        let _ = oauth_svc.delete_identities_for_user(&target_id).await;
+    }
     state.user_service.ensure_admin_invariant().await?;
 
     Ok(StatusCode::NO_CONTENT)

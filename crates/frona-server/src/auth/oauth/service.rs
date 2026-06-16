@@ -79,6 +79,10 @@ impl OAuthService {
         })
     }
 
+    pub async fn delete_identities_for_user(&self, user_id: &str) -> Result<(), AppError> {
+        self.repo.delete_by_user_id(user_id).await
+    }
+
     fn issuer_url(&self) -> Result<IssuerUrl, AppError> {
         IssuerUrl::new(self.authority.clone())
             .map_err(|e| AppError::Internal(format!("Invalid SSO authority URL: {e}")))
@@ -195,17 +199,25 @@ impl OAuthService {
         }
 
         if let Some(identity) = self.repo.find_identity_by_sub(&external_sub).await? {
-            let user = user_service
-                .find_by_id(&identity.user_id)
-                .await?
-                .ok_or_else(|| AppError::Internal("Linked user not found".into()))?;
-            if user.deactivated_at.is_some() {
-                return Err(AppError::Auth {
-                    message: "Account deactivated".into(),
-                    code: AuthErrorCode::AccountDeactivated,
-                });
+            match user_service.find_by_id(&identity.user_id).await? {
+                Some(user) => {
+                    if user.deactivated_at.is_some() {
+                        return Err(AppError::Auth {
+                            message: "Account deactivated".into(),
+                            code: AuthErrorCode::AccountDeactivated,
+                        });
+                    }
+                    return Ok((user, false));
+                }
+                None => {
+                    tracing::warn!(
+                        identity_id = %identity.id,
+                        user_id = %identity.user_id,
+                        "Dropping orphaned SSO identity whose user no longer exists"
+                    );
+                    self.repo.delete(&identity.id).await?;
+                }
             }
-            return Ok((user, false));
         }
 
         if self.signups_match_email
