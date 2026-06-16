@@ -183,10 +183,12 @@ impl OAuthService {
 
         let external_sub = claims.subject().to_string();
         let external_email = claims.email().map(|e| e.to_string());
-        let external_name = claims
-            .name()
-            .and_then(|n| n.get(None))
-            .map(|n| n.to_string());
+        let external_name = pick_name(
+            claims.name().and_then(|n| n.get(None)).map(|n| n.as_str()),
+            claims.given_name().and_then(|n| n.get(None)).map(|n| n.as_str()),
+            claims.family_name().and_then(|n| n.get(None)).map(|n| n.as_str()),
+            claims.preferred_username().map(|n| n.as_str()),
+        );
 
         if !self.allow_unknown_email_verification
             && let Some(verified) = claims.email_verified()
@@ -260,6 +262,12 @@ impl OAuthService {
                 .unwrap_or_else(|| format!("sso-{external_sub}@unknown")),
             name: external_name
                 .clone()
+                .or_else(|| {
+                    external_email
+                        .as_deref()
+                        .and_then(|e| e.split('@').next())
+                        .map(|s| s.to_string())
+                })
                 .unwrap_or_else(|| "SSO User".to_string()),
             password_hash: String::new(),
             timezone: None,
@@ -284,4 +292,34 @@ impl OAuthService {
 
         Ok((user, true))
     }
+}
+
+fn pick_name(
+    name: Option<&str>,
+    given_name: Option<&str>,
+    family_name: Option<&str>,
+    preferred_username: Option<&str>,
+) -> Option<String> {
+    fn trimmed(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
+    if let Some(s) = trimmed(name) {
+        return Some(s.to_string());
+    }
+    let given = trimmed(given_name);
+    let family = trimmed(family_name);
+    if given.is_some() || family.is_some() {
+        let mut out = String::new();
+        if let Some(g) = given {
+            out.push_str(g);
+        }
+        if let Some(f) = family {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(f);
+        }
+        return Some(out);
+    }
+    trimmed(preferred_username).map(str::to_string)
 }
