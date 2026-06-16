@@ -182,7 +182,9 @@ impl OAuthService {
             .map_err(|e| AppError::Auth { message: format!("ID token validation failed: {e}"), code: AuthErrorCode::TokenInvalid })?;
 
         let external_sub = claims.subject().to_string();
-        let external_email = claims.email().map(|e| e.to_string());
+        let external_email = claims
+            .email()
+            .map(|e| AuthService::normalize_email(e.as_str()));
         let external_name = pick_name(
             claims.name().and_then(|n| n.get(None)).map(|n| n.as_str()),
             claims.given_name().and_then(|n| n.get(None)).map(|n| n.as_str()),

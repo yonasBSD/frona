@@ -49,7 +49,8 @@ impl AuthService {
         let handle = crate::core::Handle::try_new(req.handle)?;
         Self::validate_password(&req.password)?;
 
-        if user_service.find_by_email(&req.email).await?.is_some() {
+        let email = Self::normalize_email(&req.email);
+        if user_service.find_by_email(&email).await?.is_some() {
             return Err(AppError::Validation("Email already registered".into()));
         }
         if user_service.find_by_handle(&handle).await?.is_some() {
@@ -61,7 +62,7 @@ impl AuthService {
         let user = User {
             id: crate::core::repository::new_id(),
             handle,
-            email: req.email,
+            email,
             name: req.name,
             password_hash,
             timezone: None,
@@ -157,6 +158,10 @@ impl AuthService {
             ));
         }
         Ok(())
+    }
+
+    pub fn normalize_email(email: &str) -> String {
+        email.trim().to_lowercase()
     }
 
     pub fn derive_handle_from_email(email: &str) -> String {
