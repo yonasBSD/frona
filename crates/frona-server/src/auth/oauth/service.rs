@@ -79,10 +79,6 @@ impl OAuthService {
         })
     }
 
-    pub async fn delete_identities_for_user(&self, user_id: &str) -> Result<(), AppError> {
-        self.repo.delete_by_user_id(user_id).await
-    }
-
     fn issuer_url(&self) -> Result<IssuerUrl, AppError> {
         IssuerUrl::new(self.authority.clone())
             .map_err(|e| AppError::Internal(format!("Invalid SSO authority URL: {e}")))

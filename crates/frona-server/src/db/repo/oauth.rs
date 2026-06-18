@@ -54,12 +54,4 @@ impl OAuthRepository for SurrealRepo<OAuthIdentity> {
         Ok(identities)
     }
 
-    async fn delete_by_user_id(&self, user_id: &str) -> Result<(), AppError> {
-        self.db()
-            .query("DELETE FROM oauth_identity WHERE user_id = $user_id")
-            .bind(("user_id", user_id.to_string()))
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
-    }
 }

@@ -8,5 +8,4 @@ use crate::core::repository::Repository;
 pub trait OAuthRepository: Repository<OAuthIdentity> {
     async fn find_identity_by_sub(&self, external_sub: &str) -> Result<Option<OAuthIdentity>, AppError>;
     async fn find_identities_by_user(&self, user_id: &str) -> Result<Vec<OAuthIdentity>, AppError>;
-    async fn delete_by_user_id(&self, user_id: &str) -> Result<(), AppError>;
 }
