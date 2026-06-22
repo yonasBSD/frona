@@ -22,10 +22,14 @@ function ChatView({
   chatId,
   agentId,
   onChatPromoted,
+  hideHeader = false,
 }: {
   chatId?: string;
   agentId: string;
   onChatPromoted?: (chatId: string) => void;
+  /** When true, ChatView does NOT render its own `ChatHeader` — used in
+   *  task mode where the panel shows `TaskHeader` instead. */
+  hideHeader?: boolean;
 }) {
   const { setActiveChat, getPendingMessage } = useSession();
   const { addStandaloneChat } = useNavigation();
@@ -38,7 +42,7 @@ function ChatView({
     onChatPromoted?.(chat.id);
   }, [addStandaloneChat, setActiveChat, onChatPromoted]);
 
-  const { runtime, loaded, sendMessage, retryInfo, pendingTools, hasMore, loadingMore, loadOlder } = useChatRuntime({ chatId, agentId, onChatCreated });
+  const { runtime, loaded, sendMessage, retryInfo, pendingTools, hasMore, loadingMore, loadOlder, usagePerChat, lastFallbackIndex, lastChatInputTokens, totalToolCalls } = useChatRuntime({ chatId, agentId, onChatCreated });
   const pagination = useMemo(
     () => ({ hasMore, loadingMore, loadOlder }),
     [hasMore, loadingMore, loadOlder],
@@ -56,6 +60,18 @@ function ChatView({
 
   const content = (
     <>
+      {!hideHeader && (
+        <div className="mx-auto w-full max-w-3xl">
+          <ChatHeader
+            chatId={currentChatId ?? undefined}
+            agentId={agentId}
+            totals={usagePerChat}
+            lastFallbackIndex={lastFallbackIndex}
+            lastChatInputTokens={lastChatInputTokens}
+            totalToolCalls={totalToolCalls}
+          />
+        </div>
+      )}
       <ToolUIRegistry />
       {loaded ? <AssistantThread /> : <div className="flex-1" />}
     </>
@@ -167,7 +183,7 @@ export function ConversationPanel() {
         {isCronTemplate ? (
           <CronRunsTable cronId={activeTask.id} task={activeTask} />
         ) : activeChatId ? (
-          <ChatView key={activeChatId} chatId={activeChatId} agentId={effectiveAgentId} />
+          <ChatView key={activeChatId} chatId={activeChatId} agentId={effectiveAgentId} hideHeader />
         ) : (
           <div className="flex flex-1 items-center justify-center">
             <p className="text-sm text-text-tertiary">Task has not started yet.</p>
@@ -183,9 +199,6 @@ export function ConversationPanel() {
 
   return (
     <div className="flex-1 overflow-hidden bg-surface flex flex-col min-w-0">
-      <div className="mx-auto w-full max-w-3xl">
-        <ChatHeader />
-      </div>
       <div className="relative flex flex-1 flex-col min-h-0">
         {slots.map((s) => (
           <div
