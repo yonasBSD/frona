@@ -338,8 +338,10 @@ impl ModelCatalogSnapshot {
 
     /// Like `lookup` but falls back to a longest-prefix walk so dated-suffix
     /// ids returned by provider APIs (e.g. `claude-opus-4-7-20250708`) still
-    /// resolve to their family entry. Only entries scoped to `provider` or
-    /// bare-keyed participate in the walk.
+    /// resolve to their family entry. When the model_id itself contains a
+    /// vendor prefix (`qwen/qwen3.6-flash` from OpenRouter, Together AI etc.),
+    /// the walk re-scopes to that vendor so provider-of-providers IDs resolve
+    /// against the underlying vendor's catalog section.
     pub fn lookup_prefix(&self, provider: &str, model_id: &str) -> Option<&ModelEntry> {
         let mref = ModelRef {
             provider: provider.to_string(),
@@ -349,6 +351,23 @@ impl ModelCatalogSnapshot {
         if let Some(e) = self.lookup(&mref) {
             return Some(e);
         }
+
+        if let Some((vendor, rest)) = model_id.split_once('/') {
+            let mref = ModelRef {
+                provider: vendor.to_string(),
+                model_id: rest.to_string(),
+                additional_params: None,
+            };
+            if let Some(e) = self.lookup(&mref) {
+                return Some(e);
+            }
+            return self.prefix_walk(vendor, rest);
+        }
+
+        self.prefix_walk(provider, model_id)
+    }
+
+    fn prefix_walk(&self, provider: &str, model_id: &str) -> Option<&ModelEntry> {
         let provider_prefix = format!("{provider}/");
         let mut best: Option<(usize, &str)> = None;
         for key in self.entries.keys() {
@@ -444,6 +463,24 @@ mod tests {
             .lookup_prefix("openai", "gpt-4o-mini-2024-07-18")
             .expect("longest prefix should win");
         assert_eq!(entry.limit.output, 32_768);
+    }
+
+    #[test]
+    fn lookup_prefix_resolves_openrouter_vendor_namespace() {
+        let mut entries = HashMap::new();
+        entries.insert(
+            "qwen/qwen3-coder".into(),
+            ModelEntry { limit: Limit { context: 256_000, output: 65_536, input: None }, ..Default::default() },
+        );
+        let snap = ModelCatalogSnapshot {
+            version: "test".into(),
+            fetched_at: Utc::now(),
+            entries,
+        };
+        let entry = snap
+            .lookup_prefix("openrouter", "qwen/qwen3-coder-plus")
+            .expect("vendor-namespaced openrouter id should resolve");
+        assert_eq!(entry.limit.context, 256_000);
     }
 
     #[test]
