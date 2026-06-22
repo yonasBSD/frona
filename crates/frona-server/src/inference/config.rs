@@ -127,8 +127,7 @@ impl ModelRegistryConfig {
             // window surfaces as an inference error on its turn and falls over.
             let context_window = common.context_window.unwrap_or_else(|| {
                 catalog
-                    .entries
-                    .get(&main.model_id)
+                    .lookup(&main)
                     .and_then(|e| e.max_input_tokens().map(|n| n as usize))
                     .unwrap_or(crate::inference::context::DEFAULT_CONTEXT_WINDOW)
             });

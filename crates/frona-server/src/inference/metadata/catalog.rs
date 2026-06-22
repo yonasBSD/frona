@@ -335,6 +335,39 @@ impl ModelCatalogSnapshot {
         }
         self.entries.get(&m.model_id)
     }
+
+    /// Like `lookup` but falls back to a longest-prefix walk so dated-suffix
+    /// ids returned by provider APIs (e.g. `claude-opus-4-7-20250708`) still
+    /// resolve to their family entry. Only entries scoped to `provider` or
+    /// bare-keyed participate in the walk.
+    pub fn lookup_prefix(&self, provider: &str, model_id: &str) -> Option<&ModelEntry> {
+        let mref = ModelRef {
+            provider: provider.to_string(),
+            model_id: model_id.to_string(),
+            additional_params: None,
+        };
+        if let Some(e) = self.lookup(&mref) {
+            return Some(e);
+        }
+        let provider_prefix = format!("{provider}/");
+        let mut best: Option<(usize, &str)> = None;
+        for key in self.entries.keys() {
+            let normalized = if let Some(stripped) = key.strip_prefix(&provider_prefix) {
+                stripped
+            } else if !key.contains('/') {
+                key.as_str()
+            } else {
+                continue;
+            };
+            if !normalized.is_empty()
+                && model_id.starts_with(normalized)
+                && best.is_none_or(|(len, _)| normalized.len() > len)
+            {
+                best = Some((normalized.len(), key.as_str()));
+            }
+        }
+        best.and_then(|(_, key)| self.entries.get(key))
+    }
 }
 
 /// Hot-swappable wrapper around `Arc<ModelCatalogSnapshot>`. Readers call
@@ -375,5 +408,56 @@ impl ModelCatalogStore {
 
     pub fn seconds_since_refresh(&self) -> i64 {
         (Utc::now().timestamp() - self.last_refresh_unix.load(Ordering::Relaxed)).max(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_prefix_matches_dated_suffix_against_bare_key() {
+        let snap = ModelCatalogSnapshot::defaults();
+        let entry = snap
+            .lookup_prefix("anthropic", "claude-opus-4-7-20251210")
+            .expect("dated suffix should fall back to bare prefix");
+        assert_eq!(entry.limit.context, 200_000);
+    }
+
+    #[test]
+    fn lookup_prefix_prefers_longest_match() {
+        let mut entries = HashMap::new();
+        entries.insert(
+            "openai/gpt-4o".into(),
+            ModelEntry { limit: Limit { context: 128_000, output: 16_384, input: None }, ..Default::default() },
+        );
+        entries.insert(
+            "openai/gpt-4o-mini".into(),
+            ModelEntry { limit: Limit { context: 128_000, output: 32_768, input: None }, ..Default::default() },
+        );
+        let snap = ModelCatalogSnapshot {
+            version: "test".into(),
+            fetched_at: Utc::now(),
+            entries,
+        };
+        let entry = snap
+            .lookup_prefix("openai", "gpt-4o-mini-2024-07-18")
+            .expect("longest prefix should win");
+        assert_eq!(entry.limit.output, 32_768);
+    }
+
+    #[test]
+    fn lookup_prefix_does_not_cross_providers() {
+        let mut entries = HashMap::new();
+        entries.insert(
+            "openai/gpt-4o".into(),
+            ModelEntry { limit: Limit { context: 128_000, output: 16_384, input: None }, ..Default::default() },
+        );
+        let snap = ModelCatalogSnapshot {
+            version: "test".into(),
+            fetched_at: Utc::now(),
+            entries,
+        };
+        assert!(snap.lookup_prefix("anthropic", "gpt-4o-mini").is_none());
     }
 }
