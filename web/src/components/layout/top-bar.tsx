@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Bars3Icon, XMarkIcon, Cog6ToothIcon, ArrowRightStartOnRectangleIcon, CubeIcon, PuzzlePieceIcon, KeyIcon, CpuChipIcon } from "@heroicons/react/24/outline";
+import { Bars3Icon, XMarkIcon, Cog6ToothIcon, ArrowRightStartOnRectangleIcon, CubeIcon, PuzzlePieceIcon, KeyIcon, CpuChipIcon, ChartBarIcon } from "@heroicons/react/24/outline";
 import { useAuth } from "@/lib/auth";
 import { useSession } from "@/lib/session-context";
 import { useNavigation } from "@/lib/navigation-context";
@@ -142,6 +142,13 @@ export function TopBar() {
                 </button>
                 <div className="border-t border-border my-1" />
                 <button
+                  onClick={() => { router.push("/usage"); setMenuOpen(false); }}
+                  className="w-full flex items-center gap-3 px-5 py-3 text-base text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+                >
+                  <ChartBarIcon className="h-5 w-5" />
+                  Usage
+                </button>
+                <button
                   onClick={() => { router.push("/settings"); setMenuOpen(false); }}
                   className="w-full flex items-center gap-3 px-5 py-3 text-base text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
                 >
@@ -182,7 +189,6 @@ export function TopBar() {
         </button>
       </div>
 
-      {/* Top-level tabs — bottom-aligned with tab shape */}
       <div className="flex items-end self-end gap-1">
         {topTabs.map((tab) => (
           <button
@@ -199,10 +205,8 @@ export function TopBar() {
         ))}
       </div>
 
-      {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Right: Notifications + User profile */}
       <div className="flex items-center gap-2">
       <AgentDropdown />
       <AppDropdown />
@@ -256,6 +260,13 @@ export function TopBar() {
                 Vault
               </button>
               <div className="border-t border-border" />
+              <button
+                onClick={() => { router.push("/usage"); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
+              >
+                <ChartBarIcon className="h-4 w-4" />
+                Usage
+              </button>
               <button
                 onClick={() => { router.push("/settings"); setMenuOpen(false); }}
                 className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition"
