@@ -92,6 +92,7 @@ async fn build_state(provider: Arc<MockModelProvider>) -> (AppState, tempfile::T
         state.prompts.clone(),
         state.broadcast_service.clone(),
             state.presign_service.clone(),
+            state.usage_service.clone(),
     );
     state.chat_service = chat_service.clone();
     state.harness = Arc::new(frona::agent::harness::Harness::new(
@@ -111,6 +112,7 @@ async fn build_state(provider: Arc<MockModelProvider>) -> (AppState, tempfile::T
         state.shutdown_token.clone(),
         state.prompts.clone(),
         state.config.clone(),
+        state.usage_service.clone(),
     ));
     state.task_executor = Arc::new(frona::agent::task::executor::TaskExecutor::new(state.harness.clone()));
 
@@ -310,7 +312,7 @@ impl frona::inference::provider::ModelProvider for ForbidToolsProvider {
         _temperature: Option<f64>,
         _additional_params: Option<serde_json::Value>,
     ) -> Result<
-        (Vec<rig_core::completion::AssistantContent>, frona::inference::Usage),
+        frona::inference::provider::InferenceOutput,
         frona::inference::InferenceError,
     > {
         self.inference_calls.fetch_add(1, Ordering::SeqCst);
@@ -329,7 +331,7 @@ impl frona::inference::provider::ModelProvider for ForbidToolsProvider {
         _max_tokens: Option<u64>,
         _temperature: Option<f64>,
         _additional_params: Option<serde_json::Value>,
-    ) -> Result<Vec<rig_core::completion::AssistantContent>, frona::inference::InferenceError> {
+    ) -> Result<frona::inference::provider::InferenceOutput, frona::inference::InferenceError> {
         self.stream_calls.fetch_add(1, Ordering::SeqCst);
         panic!(
             "ForbidToolsProvider::stream_inference invoked — Signal mode must not stream"
@@ -394,6 +396,7 @@ async fn build_state_with_dyn(
         state.prompts.clone(),
         state.broadcast_service.clone(),
             state.presign_service.clone(),
+            state.usage_service.clone(),
     );
     state.chat_service = chat_service.clone();
     state.harness = Arc::new(frona::agent::harness::Harness::new(
@@ -413,6 +416,7 @@ async fn build_state_with_dyn(
         state.shutdown_token.clone(),
         state.prompts.clone(),
         state.config.clone(),
+        state.usage_service.clone(),
     ));
     state.task_executor = Arc::new(frona::agent::task::executor::TaskExecutor::new(state.harness.clone()));
 
@@ -585,6 +589,7 @@ async fn rebuild_from_db_hydrates_pending_signal_tasks() {
         state.contact_service.clone(),
         state.policy_service.clone(),
         state.prompts.clone(),
+        state.usage_service.clone(),
     ));
     fresh.start().await.unwrap();
     assert_eq!(fresh.watch_count("user-1").await, 1);

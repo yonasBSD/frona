@@ -110,6 +110,15 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE TABLE IF NOT EXISTS call SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_call_chat ON TABLE call COLUMNS chat UNIQUE;
 
+        DEFINE TABLE IF NOT EXISTS inference_usage SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_iu_user_created ON TABLE inference_usage COLUMNS user_id, created_at;
+        DEFINE INDEX IF NOT EXISTS idx_iu_chat_created ON TABLE inference_usage COLUMNS chat_id, created_at;
+        DEFINE INDEX IF NOT EXISTS idx_iu_agent_created ON TABLE inference_usage COLUMNS agent_id, created_at;
+        DEFINE INDEX IF NOT EXISTS idx_iu_space_created ON TABLE inference_usage COLUMNS space_id, created_at;
+        DEFINE INDEX IF NOT EXISTS idx_iu_kind_created ON TABLE inference_usage COLUMNS kind_tag, created_at;
+        DEFINE INDEX IF NOT EXISTS idx_iu_model_created ON TABLE inference_usage COLUMNS model_ref, created_at;
+        DEFINE INDEX IF NOT EXISTS idx_iu_pricing_version ON TABLE inference_usage COLUMNS pricing_version;
+
         DEFINE TABLE IF NOT EXISTS app SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_app_agent ON TABLE app COLUMNS agent_id;
         DEFINE INDEX IF NOT EXISTS idx_app_user ON TABLE app COLUMNS user_id;
