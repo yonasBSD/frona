@@ -82,10 +82,10 @@ const PER_MILLION_TO_PER_TOKEN: f64 = 1.0 / 1_000_000.0;
 ///   cache reads already. No adjustment needed.
 fn normalize_usage(provider: &str, u: &Usage) -> Usage {
     match provider {
-        "anthropic" => u.clone(),
+        "anthropic" => *u,
         _ => Usage {
             input_tokens: u.input_tokens.saturating_sub(u.cached_input_tokens),
-            ..u.clone()
+            ..*u
         },
     }
 }
