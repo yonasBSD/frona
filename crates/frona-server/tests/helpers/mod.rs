@@ -1,3 +1,8 @@
+// Each integration test file compiles as its own binary and pulls in this
+// helpers module; helpers used only by other test files surface as dead-code
+// warnings in every binary that doesn't reference them. Silencing module-wide.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
