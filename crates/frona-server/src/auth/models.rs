@@ -78,6 +78,7 @@ pub struct AuthResponse {
 #[derive(Debug, Serialize, Default)]
 pub struct UserPermissions {
     pub list_users: bool,
+    pub is_admin: bool,
 }
 
 #[derive(Debug, Serialize)]

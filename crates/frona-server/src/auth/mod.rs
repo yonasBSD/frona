@@ -11,7 +11,7 @@ use async_trait::async_trait;
 
 pub use self::models::User;
 pub use self::user_service::UserService;
-use self::models::{AuthResponse, LoginRequest, RegisterRequest, UpdateProfileRequest, UpdateHandleRequest, UserInfo, UserPermissions};
+use self::models::{ADMINS_GROUP, AuthResponse, LoginRequest, RegisterRequest, UpdateProfileRequest, UpdateHandleRequest, UserInfo, UserPermissions};
 use crate::auth::token::service::TokenService;
 use crate::core::config::Config;
 use crate::core::error::{AppError, AuthErrorCode};
@@ -31,6 +31,7 @@ pub async fn build_user_info(
     let list_users = policy_service
         .authorize_user(&user, PolicyAction::ListUsers)
         .await?;
+    let is_admin = user.groups.iter().any(|g| g == ADMINS_GROUP);
     Ok(UserInfo {
         id: user.id,
         handle: user.handle,
@@ -40,6 +41,7 @@ pub async fn build_user_info(
         needs_setup,
         permissions: UserPermissions {
             list_users: list_users.allowed,
+            is_admin,
         },
     })
 }
