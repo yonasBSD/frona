@@ -1,5 +1,6 @@
 export interface UserPermissions {
   list_users: boolean;
+  is_admin: boolean;
 }
 
 export interface UserInfo {
